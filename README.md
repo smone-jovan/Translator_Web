@@ -1,75 +1,82 @@
-# translator-web
-> Baca novel web dan epub pakai AI lokal. Fokus ke privasi dan konsistensi istilah.
+# 🌌 translator-web
+> **Privacy-focused web novel reader and translator powered by local AI.**
 
-Aplikasi ini buat saya (dan mungkin kamu) yang suka baca novel terjemahan tapi mau kontrol penuh. Kita pakai **LM Studio** di laptop sendiri buat proses translasinya, jadi gak ada data yang bocor ke cloud.
+[![Project Status](https://img.shields.io/badge/status-stable-greenviolet?style=flat-square)](docs/Handoff.md)
+[![Tech Stack](https://img.shields.io/badge/stack-React%20%7C%20FastAPI%20%7C%20SQLite-blue?style=flat-square)](#tech-stack)
+[![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio-orange?style=flat-square)](https://lmstudio.ai/)
 
----
-
-## apa saja fiturnya?
-
-### context engine yang gak asal-asalan
-Beda sama translator biasa yang cuma lempar teks ke AI, sistem ini pakai cara yang lebih rapi:
-- **Usage-based glossary**: Gak semua istilah dimasukkan ke prompt. Kita cuma ambil 50 istilah paling relevan yang muncul di bab tersebut biar AI gak bingung dan hemat token.
-- **Aturan etika translasi**: Ada instruksi ketat buat jaga honorifik (kayak Senior Brother, -san, dsb) dan istilah dunia fantasi (biar Kyoto gak tiba-tiba jadi Ibu Kota kalau settingnya lagi di dunia lain).
-- **Auto-save**: Kalau AI nemu istilah baru dan ngasih catatan di akhir bab, sistem bakal langsung simpan ke database.
-
-### pengalaman baca yang "clean"
-- **UI glassmorphism**: Tampilan transparan dan simpel. Enak dilihat lama-lama.
-- **Flicker protection**: Gak ada layar putih kedip-kedip pas ganti bab.
-- **Background processing**: AI bakal terus nerjemahin di belakang layar walaupun kamu tutup tab-nya.
-- **Auto-prefetch**: Pas kamu lagi asik baca, bab selanjutnya sudah antre diterjemahin otomatis.
-
-### ambil konten darimana saja
-- **One-click scraper**: Paste link novelnya, nanti langsung jadi Markdown bersih tanpa iklan.
-- **Epub support**: Upload file .epub, nanti sistem yang pecah jadi bab-bab di database.
+A self-hosted web application built for reading and translating web novels with complete privacy. By integrating with **LM Studio**, the translation process happens entirely on your local machine, ensuring no data ever leaves your network.
 
 ---
 
-## tech stack
+## 🚀 Key Features
 
-Aplikasi ini pakai kombinasi teknologi yang saya rasa paling pas:
+### 🧠 Context-Aware Engine
+A sophisticated translation pipeline that maintains consistency across thousands of chapters:
+- **Usage-Based Glossary**: Automatically identifies and injects the top 50 most relevant terms into the AI prompt to optimize token usage and accuracy.
+- **Translation Ethics**: Enforces strict rules for honorifics, character names, and world-building terminology to prevent generic dictionary errors.
+- **Auto-Discovery**: Automatically extracts "Translator Notes" from AI output and saves new terms directly to the database.
 
-| bagian | teknologi |
-|:---:|:---|
-| **frontend** | React 19 + Vite |
-| **styling** | TailwindCSS v4 |
-| **backend** | Python 3.11 + FastAPI |
-| **ai engine** | LM Studio (Local) |
-| **database** | SQLite + SQLAlchemy |
-| **parsing** | Crawl4AI + EbookLib |
+### 📖 Premium Reading Interface
+- **Glassmorphism Design**: A clean, modern interface optimized for long reading sessions.
+- **Mobile-First**: Fully responsive design that feels like a native app on iOS and Android.
+- **Background Persistence**: Translation tasks continue in the background even if you close the browser tab.
+- **Smart Prefetching**: Predicts your reading progress and translates the next chapter automatically.
+
+### 📥 Content Management
+- **Universal Scraper**: Clean extraction of novel content from URLs, converting them into readable Markdown.
+- **EPUB Support**: Upload your own EPUB library and organize it into chapters automatically.
 
 ---
 
-## cara install
+## 🛠️ Tech Stack
 
-### persiapan
-- Install **Node.js** v20 dan **Python** v3.11.
-- Jalankan **[LM Studio](https://lmstudio.ai/)** (pastikan server lokalnya nyala di port 1234).
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | React 19, Vite, TailwindCSS v4 |
+| **Backend** | Python 3.11, FastAPI |
+| **Database** | SQLite with SQLAlchemy ORM |
+| **AI Integration** | LM Studio (OpenAI-compatible API) |
+| **Processing** | Crawl4AI (Scraping), EbookLib (EPUB) |
 
-### 1. setup backend
+---
+
+## 💻 Getting Started
+
+### Prerequisites
+- **Node.js** v20+
+- **Python** v3.11+
+- **[LM Studio](https://lmstudio.ai/)** running on port 1234
+
+### 1. Backend Installation
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # atau venv\Scripts\activate di Windows
+source venv/bin/activate  # venv\Scripts\activate on Windows
 pip install -r requirements.txt
-python main.py  # atau pakai uvicorn
+python main.py
 ```
 
-### 2. setup frontend
+### 2. Frontend Installation
 ```bash
 npm install
 npm run dev
 ```
-Buka saja `http://localhost:5173`.
+Access the application at `http://localhost:5173`.
 
 ---
 
-## dokumentasi lainnya
+## 📂 Documentation
 
-Kalau mau liat jeroannya:
-- [Implementation plan](docs/implementation_plan.md): Rencana kerja dan fitur yang sudah ada.
-- [Handoff guide](docs/Handoff.md): Status teknis buat yang mau ngulik kodenya.
-- [Architectural decisions](docs/decisions/): Kenapa saya pakai cara ini, bukan cara itu.
+For deeper technical details, refer to the following documents:
+- [Implementation Plan](docs/implementation_plan.md) — Feature roadmap and progress.
+- [Architectural Decisions](docs/decisions/) — Deep dives into why certain patterns were used.
+- [Handoff Guide](docs/Handoff.md) — Technical overview for developers.
 
 ---
-*Dibuat biar baca novel jadi lebih enak.*
+
+## 🛡️ Privacy
+This project is built on the principle of **absolute privacy**. All novel data, reading history, and AI processing remain on your local hardware. No external APIs (other than your own LM Studio instance) are required.
+
+---
+*Developed for a better reading experience.*
