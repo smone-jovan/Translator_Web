@@ -118,7 +118,7 @@ async def upload_epub(
         chapter = Chapter(
             thread_id=thread.id,
             order=order,
-            title=title,
+            title_original=title,
             content_original=text,
         )
         db.add(chapter)

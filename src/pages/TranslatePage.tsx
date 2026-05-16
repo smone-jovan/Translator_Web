@@ -1,255 +1,297 @@
-import { useState, useRef, useEffect } from 'react';
-import { UploadCloud, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2 } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { getApiUrl } from '@/lib/api';
 
-export default function TranslatePage() {
-  const [url, setUrl] = useState('');
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [originalText, setOriginalText] = useState('');
-  const [translatedText, setTranslatedText] = useState('');
-  const [threadId, setThreadId] = useState<number | null>(null);
+interface BookCardProps {
+  id?: number;
+  imageUrl?: string;
+  title: string;
+  author: string;
+  status: string;
+  translations_count?: number;
+}
+
+const BookCard: React.FC<BookCardProps> = ({ imageUrl, title, author, status, translations_count }) => {
+  return (
+    <Card className="overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-md bg-[var(--card)] border-[var(--border)] group cursor-pointer">
+      <CardContent className="p-4">
+        <div className="flex gap-4">
+          <div className="w-16 h-24 flex-shrink-0 overflow-hidden rounded-md bg-[var(--muted)] flex items-center justify-center">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={title}
+                className="w-full h-full object-cover transition-transform group-hover:scale-105"
+              />
+            ) : (
+              <History className="text-[var(--muted-foreground)] w-8 h-8" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-sm text-[var(--foreground)] truncate">{title}</h3>
+            <p className="text-xs text-[var(--muted-foreground)] mt-1 truncate">{author}</p>
+            <div className="flex items-center gap-2 mt-3">
+              <span className={cn(
+                "text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider",
+                status === 'Translated' ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                status === 'In Progress' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
+                "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+              )}>
+                {status}
+              </span>
+              {translations_count !== undefined && (
+                <span className="text-[10px] text-[var(--muted-foreground)]">
+                  {translations_count} translations
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+interface ThreadItem {
+  id: number;
+  title: string;
+  author: string;
+  status: string;
+  translations_count?: number;
+  image_url?: string;
+}
+
+interface TranslatePageProps {
+  onOpenThread?: (id: number) => void;
+}
+
+export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
+  const [inputText, setInputText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [recentThreads, setRecentThreads] = useState<ThreadItem[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('lm_model') || '');
+  const [selectedThreadId, setSelectedThreadId] = useState<string>('new');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // EPUB handling state
-  const [epubData, setEpubData] = useState<any>(null);
-  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
-  const [isLoadingChapter, setIsLoadingChapter] = useState(false);
-
-  // Fetch chapter text when index changes
-  useEffect(() => {
-    if (epubData && epubData.chapters && epubData.chapters.length > 0) {
-      const fetchChapter = async () => {
-        setIsLoadingChapter(true);
-        try {
-          const ch = epubData.chapters[currentChapterIndex];
-          const res = await fetch(`http://localhost:8000/api/threads/${epubData.thread_id}/chapters/${ch.id}`);
-          const data = await res.json();
-          setOriginalText(data.content_original || '');
-          setTranslatedText(data.content_translated || '');
-        } catch {
-          setOriginalText('⚠️ Failed to load chapter.');
-        } finally {
-          setIsLoadingChapter(false);
-        }
-      };
-      fetchChapter();
-    }
-  }, [currentChapterIndex, epubData]);
-
-  const handleExtract = async () => {
-    if (!url.trim()) return;
-    setIsExtracting(true);
-    setOriginalText('');
-    setTranslatedText('');
-    setEpubData(null);
-    setThreadId(null);
-
+  const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      });
-      const data = await res.json();
-      setOriginalText(data.markdown || data.error || 'No content returned.');
-      if (data.thread_id) setThreadId(data.thread_id);
-    } catch {
-      setOriginalText('⚠️ Backend unreachable. Is FastAPI running on :8000?');
-    } finally {
-      setIsExtracting(false);
-    }
-  };
+      const resThreads = await fetch(getApiUrl('/api/threads'));
+      const threads = await resThreads.json();
+      setRecentThreads(threads);
 
-  const handleTranslate = async () => {
-    if (!originalText.trim()) return;
-    setTranslatedText('');
-
-    try {
-      const lmUrl = localStorage.getItem('lm_url') || undefined;
-      const lmModel = localStorage.getItem('lm_model') || undefined;
-
-      const res = await fetch('http://localhost:8000/api/translate/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          text: originalText,
-          lm_url: lmUrl,
-          model: lmModel,
-          thread_id: epubData ? epubData.thread_id : threadId,
-        }),
-      });
-
-      if (!res.body) throw new Error('No readable stream');
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
-            if (dataStr === '[DONE]') break;
-            try {
-              const data = JSON.parse(dataStr);
-              if (data.content) {
-                setTranslatedText(prev => prev + data.content);
-              } else if (data.error) {
-                setTranslatedText(prev => prev + '\n⚠️ ' + data.error);
-              }
-            } catch (e) {
-              // Ignore parse errors on incomplete chunks
-            }
-          }
-        }
+      // Fetch global settings to get default LM URL
+      const resGs = await fetch(getApiUrl('/api/global-context'));
+      const gs = await resGs.json();
+      
+      const lmUrl = localStorage.getItem('lm_url') || gs.lm_url || 'http://localhost:1234';
+      const resModels = await fetch(`${lmUrl}/v1/models`);
+      const modelData = await resModels.json();
+      const models = modelData.data?.map((m: { id: string }) => m.id) || [];
+      setAvailableModels(models);
+      
+      if (models.length > 0 && !selectedModel) {
+        setSelectedModel(models[0]);
       }
     } catch {
-      setTranslatedText(prev => prev + '\n⚠️ Streaming failed or endpoint unreachable.');
+      console.error('Failed to fetch data');
+    }
+  }, [selectedModel]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+    fetchData();
+  }, [fetchData]);
+
+  const handleProcess = async () => {
+    if (!inputText.trim()) return;
+    
+    const isUrl = inputText.trim().startsWith('http');
+    setIsProcessing(true);
+
+    try {
+      const endpoint = isUrl ? getApiUrl('/api/scrape') : getApiUrl('/api/translate');
+      const body: Record<string, string | number> = isUrl ? { url: inputText.trim() } : { text: inputText.trim() };
+      
+      if (selectedThreadId !== 'new') {
+        body.thread_id = parseInt(selectedThreadId);
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      
+      const data = await res.json();
+      if (data.thread_id) {
+        setInputText('');
+        onOpenThread?.(data.thread_id);
+      }
+    } catch {
+      alert('Operation failed.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleEpubUpload = async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    setIsExtracting(true);
-    setEpubData(null);
-    setOriginalText('');
-    setTranslatedText('');
+    setIsProcessing(true);
 
     try {
-      const res = await fetch('http://localhost:8000/api/upload-epub', {
+      const res = await fetch(getApiUrl('/api/upload-epub'), {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to upload EPUB');
+      if (res.ok) {
+        const data = await res.json();
+        onOpenThread?.(data.thread_id);
+      } else {
+        alert('Failed to upload EPUB.');
       }
-      setEpubData(data);
-      setCurrentChapterIndex(0);
-      setThreadId(data.thread_id);
-    } catch (err: any) {
-      setOriginalText(`⚠️ Failed to upload EPUB: ${err.message || 'Backend unreachable'}`);
+    } catch {
+      alert('Upload failed.');
     } finally {
-      setIsExtracting(false);
+      setIsProcessing(false);
     }
   };
 
   return (
-    <div className="space-y-4">
-      {/* Input area */}
-      <div className="glass rounded-xl p-5">
-        <h2 className="text-lg font-medium mb-4 flex items-center gap-2">
-          <FileText className="w-5 h-5 text-[var(--accent)]" /> 
-          New Translation
-        </h2>
-        
-        <div className="flex flex-col md:flex-row gap-3">
-          <div className="flex-1 flex gap-2">
-            <input
-              type="text"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleExtract()}
-              placeholder="Paste URL here to scrape..."
-              className="flex-1 bg-[var(--secondary)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--ring)] transition-colors placeholder:text-[var(--muted-foreground)]"
-            />
-            <button
-              onClick={handleExtract}
-              disabled={isExtracting}
-              className="bg-[var(--accent)] hover:bg-[var(--muted)] border border-[var(--border)] text-[var(--foreground)] px-5 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              {isExtracting && !epubData ? '...' : 'Extract'}
-            </button>
-          </div>
+    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] w-full py-12">
+      <div className="w-full max-w-3xl px-4">
+        <header className="text-center mb-10">
+          <h1 className="text-4xl font-bold text-[var(--foreground)] mb-3 tracking-tight">
+            What can I translate for you?
+          </h1>
+          <p className="text-[var(--muted-foreground)] text-lg">
+            Paste a URL, upload an EPUB, or enter text to start.
+          </p>
+        </header>
 
-          <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)] px-2 md:py-0 py-1 justify-center">
-            or
-          </div>
+        <Card className="rounded-3xl bg-[var(--card)] border-[var(--border)] shadow-2xl mb-12 overflow-hidden ring-1 ring-black/5 dark:ring-white/5">
+          <CardContent className="p-0">
+            <div className="p-8 pb-2">
+              <Textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Paste a URL or text to translate..."
+                className="min-h-[200px] bg-transparent border-none text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] resize-none focus-visible:ring-0 text-xl leading-relaxed font-hyperlegible"
+              />
+            </div>
 
-          {/* EPUB upload button */}
-          <div className="flex-shrink-0">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".epub"
-              className="hidden"
-              onChange={e => {
-                const file = e.target.files?.[0];
-                if (file) handleEpubUpload(file);
-              }}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isExtracting}
-              className="w-full md:w-auto flex items-center justify-center gap-2 bg-[var(--secondary)] hover:bg-[var(--border)] border border-[var(--border)] text-[var(--foreground)] px-5 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              <UploadCloud className="w-4 h-4" />
-              Upload EPUB
-            </button>
-          </div>
-        </div>
-        {epubData && (
-          <div className="mt-3 text-sm text-[var(--accent)] font-medium">
-            Loaded EPUB: {epubData.title} ({epubData.total_chapters} chapters)
-          </div>
-        )}
-      </div>
-
-      {/* Two-pane view */}
-      <div className="grid md:grid-cols-2 gap-3" style={{ minHeight: '500px' }}>
-        {/* Original */}
-        <div className="glass rounded-xl p-4 flex flex-col">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-sm flex items-center gap-2 text-[var(--foreground)]">
-              Original
-            </h3>
-            
-            {/* Slider / Chapter Selector for EPUB */}
-            {epubData && epubData.chapters && epubData.chapters.length > 0 && (
-              <div className="flex items-center gap-2 bg-[var(--secondary)] border border-[var(--border)] rounded-md px-2 py-1">
-                <button 
-                  onClick={() => setCurrentChapterIndex(Math.max(0, currentChapterIndex - 1))}
-                  disabled={currentChapterIndex === 0}
-                  className="p-1 hover:bg-[var(--accent)] rounded disabled:opacity-30 transition-colors"
+            {/* Bottom Toolbar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 bg-[var(--muted)]/30 border-t border-[var(--border)] gap-4">
+              {/* Left Icons */}
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".epub"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (file) handleEpubUpload(file);
+                  }}
+                />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Upload EPUB"
                 >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="text-xs font-medium min-w-[80px] text-center truncate">
-                  Ch. {epubData.chapters[currentChapterIndex].order + 1} / {epubData.total_chapters}
-                </span>
-                <button 
-                  onClick={() => setCurrentChapterIndex(Math.min(epubData.chapters.length - 1, currentChapterIndex + 1))}
-                  disabled={currentChapterIndex === epubData.chapters.length - 1}
-                  className="p-1 hover:bg-[var(--accent)] rounded disabled:opacity-30 transition-colors"
+                  <UploadCloud size={20} />
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  title="Quick Settings"
                 >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                  <Settings2 size={20} />
+                </Button>
               </div>
-            )}
-          </div>
-          <div className="flex-1 bg-[var(--secondary)] rounded-lg p-4 text-sm leading-relaxed overflow-auto whitespace-pre-wrap text-[var(--foreground)]">
-            {isLoadingChapter ? 'Loading chapter...' : (originalText || 'Extracted source text will appear here...')}
-          </div>
-        </div>
 
-        {/* Translation */}
-        <div className="glass rounded-xl p-4 flex flex-col border border-[var(--border)]">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-sm text-[var(--foreground)]">Translation</h3>
-            <button
-              onClick={handleTranslate}
-              disabled={!originalText || isLoadingChapter}
-              className="text-xs bg-[var(--accent)] hover:bg-[var(--muted)] border border-[var(--border)] px-4 py-1.5 font-medium rounded-md transition-colors disabled:opacity-30"
-            >
-              Translate
-            </button>
+              {/* Right Controls */}
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="flex items-center gap-2 bg-[var(--secondary)] rounded-full border border-[var(--border)] p-1 pr-3 flex-1 sm:flex-initial overflow-hidden">
+                  <div className="relative flex-1 sm:flex-initial">
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => {
+                        setSelectedModel(e.target.value);
+                        localStorage.setItem('lm_model', e.target.value);
+                      }}
+                      className="appearance-none bg-transparent text-[var(--foreground)] text-xs font-medium pl-3 pr-8 py-2 focus:outline-none cursor-pointer w-full sm:min-w-[120px] sm:max-w-[200px] truncate"
+                    >
+                      {availableModels.length > 0 ? (
+                        availableModels.map(m => <option key={m} value={m}>{m}</option>)
+                      ) : (
+                        <option value="">No Models</option>
+                      )}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--muted-foreground)] opacity-50" />
+                  </div>
+
+                  <div className="w-px h-5 bg-[var(--border)] shrink-0" />
+
+                  {/* Thread Selector */}
+                  <div className="relative flex-1 sm:flex-initial">
+                    <select
+                      value={selectedThreadId}
+                      onChange={(e) => setSelectedThreadId(e.target.value)}
+                      className="appearance-none bg-transparent text-[var(--foreground)] text-xs font-medium pl-3 pr-8 py-2 focus:outline-none cursor-pointer w-full sm:min-w-[100px] sm:max-w-[180px] truncate"
+                    >
+                      <option value="new">New Thread</option>
+                      {recentThreads.map(t => (
+                        <option key={t.id} value={t.id}>{t.title}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--muted-foreground)] opacity-50" />
+                  </div>
+                </div>
+
+                <Button
+                  onClick={handleProcess}
+                  disabled={!inputText.trim() || isProcessing}
+                  size="icon"
+                  className="rounded-full w-12 h-12 bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-[var(--primary-foreground)] shadow-xl transition-all active:scale-90 shrink-0"
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" size={24} /> : <ArrowUp size={24} />}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-2xl font-bold text-[var(--foreground)] flex items-center gap-3">
+              Recent Library
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[var(--accent)] text-[var(--primary)] uppercase tracking-widest font-black">History</span>
+            </h2>
+            <Button variant="link" className="text-[var(--primary)] font-bold">See full library</Button>
           </div>
-          <div className="flex-1 bg-[var(--secondary)] rounded-lg p-4 text-sm leading-relaxed overflow-auto whitespace-pre-wrap text-[var(--foreground)]">
-            {translatedText || 'AI translation will appear here...'}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {recentThreads.slice(0, 3).map((thread) => (
+              <div key={thread.id} onClick={() => onOpenThread?.(thread.id)}>
+                <BookCard 
+                  title={thread.title} 
+                  author={thread.author || 'Ancient Author'} 
+                  status={thread.chapters_count > 0 ? 'In Progress' : 'Unread'} 
+                  translations_count={thread.chapters_count}
+                />
+              </div>
+            ))}
           </div>
         </div>
       </div>

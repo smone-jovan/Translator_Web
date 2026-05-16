@@ -26,20 +26,19 @@ export default function Layout({ children, onTabChange }: LayoutProps) {
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Header */}
-        <header className="h-14 glass border-b border-white/10 flex items-center px-4 md:px-6 sticky top-0 z-30">
+        {/* Mobile Menu Button (Only visible on mobile) */}
+        <div className="md:hidden absolute top-4 left-4 z-50">
           <button
-            className="md:hidden mr-4 p-2 rounded-lg hover:bg-[var(--secondary)]"
+            className="p-2 rounded-lg bg-[var(--card)] border border-[var(--border)] shadow-md text-[var(--foreground)]"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu size={20} />
           </button>
-          <h1 className="font-semibold text-base capitalize">{activeTab}</h1>
-        </header>
+        </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4 md:p-6">
-          <div className="max-w-5xl mx-auto fade-in">
+        <div className="flex-1 overflow-auto p-4 md:p-8">
+          <div className="max-w-6xl mx-auto h-full fade-in">
             {children(activeTab)}
           </div>
         </div>

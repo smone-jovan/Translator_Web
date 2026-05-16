@@ -1,110 +1,389 @@
-import { useState, useEffect } from 'react';
-import { Wifi, WifiOff, Server, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { 
+  Wifi, WifiOff, Server, RefreshCw, Moon, Sun, 
+  CheckCircle2, Languages, Eye, Layout, ShieldCheck, Database, Info, Globe
+} from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { getApiUrl } from '@/lib/api';
 
 interface ModelInfo {
   id: string;
   object: string;
 }
 
+const ThemeCard = ({ 
+  label, 
+  active, 
+  onClick, 
+  gradient, 
+  textColor, 
+  icon: Icon 
+}: { 
+  label: string, 
+  active: boolean, 
+  onClick: () => void, 
+  gradient: string, 
+  textColor: string, 
+  icon: React.ElementType 
+}) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "relative flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all duration-300 group",
+      active 
+        ? "border-[var(--primary)] scale-105 shadow-lg" 
+        : "border-transparent hover:border-[var(--border)]"
+    )}
+  >
+    <div 
+      className="w-full aspect-video rounded-xl mb-3 flex items-center justify-center shadow-inner overflow-hidden"
+      style={{ background: gradient }}
+    >
+      <Icon className={cn("w-8 h-8 transition-transform group-hover:scale-110")} style={{ color: textColor }} />
+    </div>
+    <span className="text-sm font-bold text-[var(--foreground)]">{label}</span>
+    {active && (
+      <div className="absolute top-2 right-2 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full p-1">
+        <CheckCircle2 size={14} />
+      </div>
+    )}
+  </button>
+);
+
 export default function SettingsPage() {
   const [lmUrl, setLmUrl] = useState(() => localStorage.getItem('lm_url') || 'http://localhost:1234');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('lm_model') || '');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [status, setStatus] = useState<'idle' | 'checking' | 'connected' | 'error'>('idle');
+  const [targetLang, setTargetLang] = useState(() => localStorage.getItem('target_language') || 'Indonesian');
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'sepia');
+  const [displayMode, setDisplayMode] = useState(() => localStorage.getItem('display_mode') || 'both');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const fetchGlobalSettings = useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl('/api/global-context'));
+      const data = await res.json();
+      if (data.lm_url) {
+        setLmUrl(data.lm_url);
+        localStorage.setItem('lm_url', data.lm_url);
+      }
+      if (data.lm_model) {
+        setSelectedModel(data.lm_model);
+        localStorage.setItem('lm_model', data.lm_model);
+      }
+      if (data.target_language) {
+        setTargetLang(data.target_language);
+        localStorage.setItem('target_language', data.target_language);
+      }
+    } catch {
+      console.error('Failed to fetch server settings');
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchGlobalSettings();
+  }, [fetchGlobalSettings]);
+
+  const saveSettingsToServer = async (updates: Record<string, string>) => {
+    setIsSaving(true);
+    try {
+      await fetch(getApiUrl('/api/settings'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+    } catch (e) {
+      console.error('Failed to sync settings', e);
+    } finally {
+      setTimeout(() => setIsSaving(false), 800);
+    }
+  };
 
   // Persist
   useEffect(() => { localStorage.setItem('lm_url', lmUrl); }, [lmUrl]);
   useEffect(() => { localStorage.setItem('lm_model', selectedModel); }, [selectedModel]);
+  useEffect(() => { 
+    localStorage.setItem('target_language', targetLang);
+    // Sync to server without showing the saving indicator to avoid render cycle warning
+    const sync = async () => {
+      try {
+        await fetch(getApiUrl('/api/settings'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_language: targetLang })
+        });
+      } catch { /* silent fail */ }
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    sync();
+  }, [targetLang]);
+
+  useEffect(() => { localStorage.setItem('display_mode', displayMode); }, [displayMode]);
+  useEffect(() => { 
+    localStorage.setItem('theme', theme); 
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   const testConnection = async () => {
     setStatus('checking');
-    setModels([]);
     try {
       const res = await fetch(`${lmUrl}/v1/models`);
       const data = await res.json();
       const list: ModelInfo[] = data.data || [];
       setModels(list);
       setStatus('connected');
+      
+      // Save URL to server on successful connection
+      saveSettingsToServer({ lm_url: lmUrl });
+
       if (list.length > 0 && !selectedModel) {
         setSelectedModel(list[0].id);
+        saveSettingsToServer({ lm_model: list[0].id });
       }
     } catch {
       setStatus('error');
     }
   };
 
+  const handleModelChange = (val: string) => {
+    setSelectedModel(val);
+    localStorage.setItem('lm_model', val);
+    saveSettingsToServer({ lm_model: val });
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="glass rounded-xl p-5">
-        <h2 className="text-lg font-medium mb-1">Settings</h2>
-        <p className="text-xs text-[var(--muted-foreground)] mb-5">Configure LM Studio connection.</p>
-
-        {/* LM Studio URL */}
-        <div className="space-y-4">
+    <div className="max-w-4xl mx-auto py-8 space-y-12 pb-20">
+      {/* Header */}
+      <header>
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1.5">LM Studio Base URL</label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Server size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" />
-                <input
-                  value={lmUrl}
-                  onChange={e => setLmUrl(e.target.value)}
-                  className="w-full bg-[var(--secondary)] border border-[var(--border)] rounded-lg pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:border-[var(--ring)]"
-                />
-              </div>
-              <button
-                onClick={testConnection}
-                disabled={status === 'checking'}
-                className="flex items-center gap-1.5 bg-[var(--accent)] hover:bg-[var(--muted)] border border-[var(--border)] px-4 py-2.5 rounded-lg text-sm transition-colors disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={status === 'checking' ? 'animate-spin' : ''} />
-                Test
-              </button>
-            </div>
+            <h1 className="text-4xl font-bold text-[var(--foreground)] tracking-tight">Settings</h1>
+            <p className="text-[var(--muted-foreground)] text-lg">Personalize your translation environment.</p>
           </div>
-
-          {/* Connection status */}
-          {status !== 'idle' && (
-            <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg border fade-in ${
-              status === 'connected'
-                ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                : status === 'error'
-                ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                : 'bg-[var(--secondary)] border-[var(--border)] text-[var(--muted-foreground)]'
-            }`}>
-              {status === 'connected' && <><Wifi size={14} /> Connected — {models.length} model(s) found</>}
-              {status === 'error' && <><WifiOff size={14} /> Cannot reach LM Studio at {lmUrl}</>}
-              {status === 'checking' && <>Checking...</>}
-            </div>
-          )}
-
-          {/* Model selector */}
-          {models.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Model</label>
-              <select
-                value={selectedModel}
-                onChange={e => setSelectedModel(e.target.value)}
-                className="w-full bg-[var(--secondary)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--ring)]"
-              >
-                {models.map(m => (
-                  <option key={m.id} value={m.id}>{m.id}</option>
-                ))}
-              </select>
+          {isSaving && (
+            <div className="flex items-center gap-2 text-[var(--primary)] text-sm font-bold bg-[var(--primary)]/10 px-4 py-2 rounded-full animate-pulse">
+              <RefreshCw size={14} className="animate-spin" />
+              Syncing to server...
             </div>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Backend status */}
-      <div className="glass rounded-xl p-5">
-        <h3 className="text-sm font-medium mb-3">Backend (FastAPI)</h3>
-        <div className="text-xs text-[var(--muted-foreground)] space-y-1">
-          <div>URL: <code className="text-[var(--foreground)]">http://localhost:8000</code></div>
-          <div>DB: <code className="text-[var(--foreground)]">SQLite (app.db)</code></div>
-          <div>Scraping: <code className="text-[var(--foreground)]">Crawl4AI</code></div>
+      {/* Section: Connection */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Server size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Local AI Connection</h2>
         </div>
-      </div>
+        
+        <Card>
+          <CardContent className="p-8 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">LM Studio Base URL</label>
+                  <div className="flex gap-2">
+                    <input 
+                      value={lmUrl}
+                      onChange={e => setLmUrl(e.target.value)}
+                      className="flex-1 bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                    />
+                    <Button 
+                      variant="outline" 
+                      onClick={testConnection}
+                      className="rounded-xl"
+                      disabled={status === 'checking'}
+                    >
+                      <RefreshCw size={16} className={status === 'checking' ? 'animate-spin' : ''} />
+                    </Button>
+                  </div>
+                </div>
+
+                {status !== 'idle' && (
+                  <div className={cn(
+                    "flex items-center gap-3 px-4 py-3 rounded-xl border text-sm transition-all animate-in fade-in slide-in-from-top-1",
+                    status === 'connected' ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400" :
+                    status === 'error' ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400" :
+                    "bg-[var(--secondary)] border-[var(--border)] text-[var(--muted-foreground)]"
+                  )}>
+                    {status === 'connected' ? <Wifi size={18} /> : <WifiOff size={18} />}
+                    <span>
+                      {status === 'connected' ? `Connected: ${models.length} models available` : 
+                       status === 'error' ? 'Connection failed. Ensure LM Studio is running.' : 'Checking connection...'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Active Model</label>
+                  <select
+                    value={selectedModel}
+                    onChange={e => handleModelChange(e.target.value)}
+                    className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all appearance-none"
+                  >
+                    <option value="">No model selected</option>
+                    {models.map(m => (
+                      <option key={m.id} value={m.id}>{m.id}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
+                  Tip: Use models optimized for creative writing (like Llama-3 or Mistral) for better literary translations.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Section: Preferences */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Languages size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Translation Preferences</h2>
+        </div>
+
+        <Card>
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="flex items-start gap-5">
+                <div className="w-12 h-12 rounded-2xl bg-[var(--secondary)] flex items-center justify-center shrink-0">
+                  <Globe className="text-[var(--muted-foreground)]" size={24} />
+                </div>
+                <div className="space-y-3 flex-1">
+                  <div>
+                    <h3 className="font-bold">Target Language</h3>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Translate all content into this language.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    {['Indonesian', 'English'].map(lang => (
+                      <button
+                        key={lang}
+                        onClick={() => setTargetLang(lang)}
+                        className={cn(
+                          "flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all border",
+                          targetLang === lang 
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-[var(--primary)] shadow-md"
+                            : "bg-[var(--card)] text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]"
+                        )}
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-5">
+                <div className="w-12 h-12 rounded-2xl bg-[var(--secondary)] flex items-center justify-center shrink-0">
+                  <Eye className="text-[var(--muted-foreground)]" size={24} />
+                </div>
+                <div className="space-y-3 flex-1">
+                  <div>
+                    <h3 className="font-bold">Reader Display</h3>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Default view for new translations.</p>
+                  </div>
+                  <select
+                    value={displayMode}
+                    onChange={e => setDisplayMode(e.target.value)}
+                    className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2 text-sm focus:outline-none"
+                  >
+                    <option value="both">Side-by-side (Original & Translated)</option>
+                    <option value="translated">Translated Only</option>
+                    <option value="original">Original Only</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Section: Appearance */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Layout size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Appearance</h2>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+          <ThemeCard 
+            id="white" label="White" active={theme === 'white'} 
+            onClick={() => setTheme('white')} gradient="linear-gradient(135deg, #ffffff, #e2e8f0)" 
+            textColor="#0f172a" icon={Sun} 
+          />
+          <ThemeCard 
+            id="sepia" label="Sepia" active={theme === 'sepia'} 
+            onClick={() => setTheme('sepia')} gradient="linear-gradient(135deg, #fdf6e3, #d4c2aa)" 
+            textColor="#5c4a3d" icon={Sun} 
+          />
+          <ThemeCard 
+            id="omni" label="Omni" active={theme === 'omni'} 
+            onClick={() => setTheme('omni')} gradient="linear-gradient(135deg, #1e4591, #0f2b60)" 
+            textColor="#e0e7ff" icon={Moon} 
+          />
+          <ThemeCard 
+            id="black" label="Black" active={theme === 'black'} 
+            onClick={() => setTheme('black')} gradient="linear-gradient(135deg, #1e293b, #0f172a)" 
+            textColor="#fff" icon={Moon} 
+          />
+          <ThemeCard 
+            id="oled" label="OLED" active={theme === 'oled'} 
+            onClick={() => setTheme('oled')} gradient="linear-gradient(135deg, #0a0a0a, #000000)" 
+            textColor="#fff" icon={Moon} 
+          />
+        </div>
+      </section>
+
+      {/* Section: System Info */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Info size={18} />
+          </div>
+          <h2 className="text-xl font-bold">System Information</h2>
+        </div>
+
+        <Card className="bg-[var(--secondary)]/30">
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div className="flex items-center gap-4">
+                <ShieldCheck className="text-[var(--primary)]" size={32} />
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Version</h4>
+                  <p className="font-bold">v1.2.0 (Premium)</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <Database className="text-[var(--primary)]" size={32} />
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Database</h4>
+                  <p className="font-bold">Local SQLite (app.db)</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-[var(--muted-foreground)]">
+                <Server size={32} className="opacity-50" />
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest">Backend</h4>
+                  <p className="font-bold">Python FastAPI</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

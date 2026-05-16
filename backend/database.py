@@ -19,11 +19,14 @@ class Base(DeclarativeBase):
 
 
 class GlobalSetting(Base):
-    """Global context settings."""
+    """Global context settings and permanent config."""
     __tablename__ = "global_settings"
 
     id = Column(Integer, primary_key=True, index=True)
     global_context = Column(Text, nullable=True)
+    lm_url = Column(String(500), default="http://localhost:1234")
+    lm_model = Column(String(500), nullable=True)
+    target_language = Column(String(50), default="Indonesian")
 
 
 class Thread(Base):
@@ -49,12 +52,29 @@ class Chapter(Base):
     id = Column(Integer, primary_key=True, index=True)
     thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
     order = Column(Integer, default=0)
-    title = Column(String(500), nullable=True)
+    title_original = Column(String(500), nullable=True)
+    title_translated = Column(String(500), nullable=True)
     content_original = Column(Text, nullable=True)
     content_translated = Column(Text, nullable=True)
+    translation_status = Column(String(20), default="idle") # "idle", "processing", "done", "error"
     created_at = Column(DateTime, default=func.now())
 
     thread = relationship("Thread", back_populates="chapters")
+    segments = relationship("TranslationSegment", back_populates="chapter", cascade="all, delete")
+
+
+class TranslationSegment(Base):
+    """Satu paragraf/kalimat untuk keperluan toggle show original/translated."""
+    __tablename__ = "translation_segments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chapter_id = Column(Integer, ForeignKey("chapters.id"), nullable=False)
+    order = Column(Integer, default=0)
+    original_text = Column(Text, nullable=True)
+    translated_text = Column(Text, nullable=True)
+    display_mode = Column(String(20), default="translated") # "original", "translated", "both", "hidden"
+    
+    chapter = relationship("Chapter", back_populates="segments")
 
 
 class LorebookEntry(Base):

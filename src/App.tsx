@@ -12,8 +12,8 @@ export default function App() {
   return (
     <Layout onTabChange={() => setOpenThreadId(null)}>
       {(activeTab) => {
-        // If thread is open from library, show reader
-        if (activeTab === 'library' && openThreadId !== null) {
+        // Global Reader Overlay
+        if (openThreadId !== null) {
           return (
             <ReaderPage
               threadId={openThreadId}
@@ -23,7 +23,7 @@ export default function App() {
         }
 
         switch (activeTab) {
-          case 'translate': return <TranslatePage />;
+          case 'translate': return <TranslatePage onOpenThread={(id) => setOpenThreadId(id)} />;
           case 'library': return <LibraryPage onOpenThread={(id) => setOpenThreadId(id)} />;
           case 'context': return <ContextLibraryPage />;
           case 'settings': return <SettingsPage />;

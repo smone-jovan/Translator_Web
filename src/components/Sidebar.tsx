@@ -1,5 +1,6 @@
-import { BookOpen, Languages, Library, Settings, X } from 'lucide-react';
+import { BookOpen, Languages, Library, Settings, X, Globe, User, Star } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { cn } from '@/lib/utils';
 
 export type TabId = 'translate' | 'library' | 'context' | 'settings';
 
@@ -10,10 +11,10 @@ interface NavItem {
 }
 
 export const navItems: NavItem[] = [
-  { id: 'translate', icon: <Languages size={20} />, label: 'Translate' },
-  { id: 'library', icon: <Library size={20} />, label: 'Library' },
-  { id: 'context', icon: <BookOpen size={20} />, label: 'Context' },
-  { id: 'settings', icon: <Settings size={20} />, label: 'Settings' },
+  { id: 'translate', icon: <Languages size={24} />, label: 'Translate' },
+  { id: 'library', icon: <Library size={24} />, label: 'Library' },
+  { id: 'context', icon: <BookOpen size={24} />, label: 'Context' },
+  { id: 'settings', icon: <Settings size={24} />, label: 'Settings' },
 ];
 
 interface SidebarProps {
@@ -29,52 +30,62 @@ export default function Sidebar({ isOpen, activeTab, onTabChange, onClose }: Sid
       {/* Mobile overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm"
+          className="fixed inset-0 bg-black/20 z-40 md:hidden backdrop-blur-sm"
           onClick={onClose}
         />
       )}
 
-      <aside className={`
-        fixed md:static inset-y-0 left-0 z-50 w-64 glass border-r border-white/10
-        transform transition-transform duration-300 ease-in-out flex flex-col
-        ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
-        {/* Brand */}
-        <div className="flex items-center justify-between p-4 border-b border-white/10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded bg-[var(--accent)] flex items-center justify-center font-bold text-[var(--foreground)]">
-              翻
-            </div>
-            <span className="font-semibold text-lg tracking-wide">
-              Trans<span className="text-[var(--muted-foreground)]">lator</span>
-            </span>
+      <aside className={cn(
+        "fixed md:static inset-y-0 left-0 z-50 w-20 bg-[var(--card)] border-r border-[var(--border)] flex flex-col items-center py-8 transition-transform duration-300 ease-in-out shadow-sm",
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
+        {/* Brand/Logo */}
+        <div className="mb-12">
+          <div className="w-10 h-10 rounded-xl bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] font-bold text-xl shadow-lg shadow-[var(--primary)]/20">
+            翻
           </div>
-          <button className="md:hidden" onClick={onClose}>
-            <X size={20} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]" />
-          </button>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 p-4 space-y-1">
+        {/* Main Nav */}
+        <nav className="flex-1 space-y-6 w-full px-2">
           {navItems.map(item => (
             <button
               key={item.id}
               onClick={() => { onTabChange(item.id); onClose(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-sm ${
+              className={cn(
+                "w-full flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 group relative",
                 activeTab === item.id
-                  ? 'bg-[var(--accent)] text-[var(--foreground)] border border-[var(--border)]'
-                  : 'text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]'
-              }`}
+                  ? "bg-[var(--accent)] text-[var(--primary)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+              )}
+              title={item.label}
             >
-              {item.icon}
-              <span className="font-medium">{item.label}</span>
+              <div className={cn(
+                "transition-transform group-hover:scale-110",
+                activeTab === item.id && "scale-110"
+              )}>
+                {item.icon}
+              </div>
+              
+              {/* Tooltip (CSS only for simplicity) */}
+              <div className="absolute left-full ml-4 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
+                {item.label}
+              </div>
             </button>
           ))}
         </nav>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-white/10 text-xs text-[var(--muted-foreground)]">
-          Self-hosted · LM Studio
+        {/* Bottom Section */}
+        <div className="mt-auto space-y-6 w-full px-2">
+           <button className="w-full flex flex-col items-center p-3 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors group">
+            <Globe size={22} />
+          </button>
+          <button className="w-full flex flex-col items-center p-3 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors group">
+            <Star size={22} />
+          </button>
+          <div className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center mx-auto cursor-pointer hover:border-[var(--primary)] transition-all">
+            <User size={20} className="text-[var(--muted-foreground)]" />
+          </div>
         </div>
       </aside>
     </>

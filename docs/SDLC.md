@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
 > **Terakhir diperbarui:** 16 Mei 2026  
-> **Status Aktif:** Phase 1 — Foundation  
+> **Status Aktif:** Phase 6 — Bulk Translation & Navigation Polish  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -46,10 +46,23 @@
 
 | Phase | Fokus | Status |
 |:---|:---|:---|
-| **Phase 1** | Foundation: Design system, Backend setup, DB schema | 🟡 Sedang berjalan |
-| **Phase 2** | Core: UI Shell, Scraping, EPUB, API connect | ⬜ Belum |
-| **Phase 3** | Translation: LM Studio, Lorebook, Streaming | ⬜ Belum |
-| **Phase 4** | Polish: Settings, Library, Docs | ⬜ Belum |
+| **Phase 1** | Foundation: Design system, Backend setup, DB schema | ✅ Selesai |
+| **Phase 2** | Core: UI Shell, Scraping, EPUB, API connect | ✅ Selesai |
+| **Phase 3** | Translation: Lorebook Engine, AI Etik Enforcement | ✅ Selesai |
+| **Phase 4** | Automation: Auto-save, Glossary Extraction Loop | ✅ Selesai |
+| **Phase 5** | UI/UX Overhaul: Omni-Sepia & Background Persistence | ✅ Selesai |
+| **Phase 6** | Navigation: Bulk Title Translation & Navigation Polish | ✅ Selesai |
+| **Phase 7** | Polish: Multi-Format (PDF), Performance, Deploy | ✅ Selesai |
+| **Phase 8** | Advanced Monitoring & Performance | 🟡 Sedang berjalan |
+
+## Phase 7: Server-Side Configuration (COMPLETE)
+- **Goal**: Cross-device sync for LM Studio settings.
+- **Tech**: `global_settings` table, Dynamic API Discovery (src/lib/api.ts).
+- **Status**: Finished. Mobile devices now follow server defaults.
+
+## Phase 8: Advanced Monitoring & Performance (PLANNING)
+- **Goal**: Better visibility into background tasks and LLM performance.
+- **Tech**: Websockets for real-time progress, Prometheus/Grafana (maybe), UI Dashboard.
 
 Detail task ada di [`docs/implementation_plan.md`](./implementation_plan.md).
 
