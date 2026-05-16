@@ -4,20 +4,16 @@ from database import LorebookEntry, Thread, GlobalSetting
 
 class ContextEngine:
     """
-    Expert Context Engine that builds highly detailed system prompts 
-    based on literary translation ethics and provided guidelines.
+    Urusan bikin prompt buat LLM biar translasinya gak ngaco dan konsisten sama istilah sebelumnya.
     """
 
     @staticmethod
     def build_translation_prompt(db: Session, thread_id: int | None, target_lang: str, original_text: str | None = None) -> str:
-        # User provided guidelines (The "Etik")
-        # We adapt the language mention based on target_lang
-        
+        # Atur bahasa target (Indo atau Inggris)
         is_indo = target_lang.lower() == "indonesian"
         lang_name = "Indonesian" if is_indo else "English"
         
-        # Base guidelines based on user's request (The "Etik")
-        # Added the 4 specific Rules requested by USER
+        # Ini core instruksi buat AI-nya. Isinya aturan etika translasi yang diminta user.
         guidelines = f"""Role:
 You are an expert translator of Chinese web novels (urban / system / transmigration).
 You must translate only the chapter body and title provided by the user.
@@ -68,7 +64,7 @@ Do NOT include terms from the Style Reference examples unless they are in the ch
 If no new terms, skip.
 """
 
-        # Fetch Contexts from DB
+        # Gabungkan semua context tambahan (Global & Thread-specific)
         full_prompt = guidelines + "\n\n### ADDITIONAL CONTEXT & KNOWLEDGE\n"
         
         gs_stmt = select(GlobalSetting)
@@ -82,7 +78,7 @@ If no new terms, skip.
             if thread and thread.thread_context:
                 full_prompt += f"\n[Thread-Specific Context]:\n{thread.thread_context}\n"
 
-            # Fetch top 50 entries based on usage and recency
+            # Ambil 50 istilah yang paling sering dipakai atau yang terbaru biar AI gak overload
             from sqlalchemy import desc
             entries_stmt = (
                 select(LorebookEntry)
@@ -92,7 +88,7 @@ If no new terms, skip.
             )
             entries = db.execute(entries_stmt).scalars().all()
             
-            # --- Auto-Increment Usage based on current text ---
+            # Update counter kalau istilah tersebut muncul di teks asli
             if original_text and entries:
                 updated = False
                 for e in entries:
@@ -102,10 +98,10 @@ If no new terms, skip.
                 if updated:
                     db.commit()
 
-            # --- Auto-Cleanup rare terms if too many ---
+            # Bersihkan glossary kalau sudah kebanyakan (limit 100 per thread)
             total_count = db.query(LorebookEntry).filter(LorebookEntry.thread_id == thread_id).count()
             if total_count > 100:
-                # Remove 20 oldest/least used terms
+                # Hapus 20 istilah yang jarang dipakai
                 cleanup_stmt = (
                     select(LorebookEntry)
                     .where(LorebookEntry.thread_id == thread_id)
@@ -129,22 +125,21 @@ If no new terms, skip.
     @staticmethod
     def auto_save_glossary(db: Session, thread_id: int, full_text: str):
         """
-        Parses 'Translator Notes' section from full_text and saves new terms to Lorebook.
-        Supports various separators: :, ->, →
+        Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
+        Mendukung pemisah kayak :, ->, →, atau —
         """
         import re
         
-        # Look for headers like "Translator Notes:", "Translator's Note:", "Notes:", etc.
+        # Cari header semacam "Translator Notes:", "Notes:", dsb.
         header_pattern = re.compile(r"(Translator['s]*\s*Notes?[:\s]*|### Translator['s]*\s*Notes?[:\s]*|Notes?[:\s]*)", re.IGNORECASE)
         match = header_pattern.search(full_text)
         
         if not match:
             return
 
-        # Extract everything after the header
+        # Ambil semua teks setelah header tersebut
         notes_section = full_text[match.end():].strip()
         
-        # Split by lines and process
         lines = notes_section.split("\n")
         new_entries = []
         
@@ -152,9 +147,9 @@ If no new terms, skip.
             line = line.strip()
             if not line or len(line) < 3: continue
             
-            # Try to find a separator
+            # Cek pakai separator apa
             separator = None
-            for sep in ["→", "->", ":", "—"]: # Order matters, specific first
+            for sep in ["→", "->", ":", "—"]: 
                 if sep in line:
                     separator = sep
                     break
@@ -164,17 +159,15 @@ If no new terms, skip.
                 term = parts[0].strip().lstrip("-*• ").strip()
                 desc = parts[1].strip()
                 
-                # Filter out "Not present", "Not found", etc.
+                # Abaikan kalau AI cuma bilang "tidak ada istilah baru"
                 skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a", "unknown"]
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
-                # Validation
                 if term and len(term) < 100 and len(term) > 1:
-                    # Clean up term (remove quotes if any)
                     term = term.strip('"\'')
                     
-                    # Check if already exists in this thread
+                    # Cek dulu biar gak dobel
                     exists_stmt = select(LorebookEntry).where(
                         LorebookEntry.thread_id == thread_id,
                         LorebookEntry.original_term == term
@@ -182,12 +175,12 @@ If no new terms, skip.
                     exists = db.execute(exists_stmt).scalar_one_or_none()
                     
                     if not exists:
-                        # Refinement: Split desc by '(' to separate translated_term and notes
+                        # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
                         final_translated = desc
                         final_notes = f"Auto-extracted"
                         
                         if "(" in desc and desc.endswith(")"):
-                            p_start = desc.rfind("(") # Use rfind for the last parenthesis
+                            p_start = desc.rfind("(") 
                             final_translated = desc[:p_start].strip()
                             final_notes = desc[p_start+1:-1].strip()
 
@@ -202,4 +195,4 @@ If no new terms, skip.
         
         if new_entries:
             db.commit()
-            print(f"✅ [LOREBOOK] Auto-saved {len(new_entries)} new terms to thread {thread_id}: {new_entries}")
+            print(f"✅ [LOREBOOK] Simpan {len(new_entries)} istilah baru di thread {thread_id}: {new_entries}")

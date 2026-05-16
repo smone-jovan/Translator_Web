@@ -1,41 +1,36 @@
-# ADR-012: Context-Aware Translation Pipeline & Glossary Management
+# adr-012: manajemen glossary dan pipeline translasi yang kontekstual
 
-## Status
-Accepted
+## status
+diterima
 
-## Date
-2026-05-17
+## konteks
+Pas novelnya makin panjang, kualitas translasi AI mulai berantakan karena:
+- Daftar istilah (glossary) makin numpuk, bikin token boros dan AI jadi bingung.
+- AI sering pakai arti kamus umum padahal ini dunia novel fantasi (world-building hancur).
+- Istilah baru yang dikasih AI di catatan sering kelupaan gak kesimpan ke database.
+- Ada error "No running event loop" pas translasi jalan di background.
 
-## Context
-As the project evolved, the AI translation quality needed stricter controls to maintain consistency across long novels. Key issues included:
-- Glossary size growing indefinitely, causing token bloat and LLM confusion.
-- Generic dictionary translations being prioritized over world-building context.
-- Missing capture of new terms from AI output into the persistent glossary.
-- Instability in background tasks causing "No running event loop" errors.
+## keputusan
+Kita bikin "Context Engine" khusus buat ngatur semua ini.
 
-## Decision
-Implemented a comprehensive "Context Engine" and refined the background translation pipeline.
+### detail teknis:
+1. **optimasi glossary pakai ranking**:
+   - Tiap istilah sekarang punya hitungan `usage_count` dan `last_used_at`.
+   - Kita cuma ambil **50 istilah teratas** yang paling nyambung sama bab itu biar prompt-nya gak kepanjangan.
+   - Ada sistem bersih-bersih otomatis: kalau satu judul novel punya lebih dari 100 istilah, kita hapus 20 yang paling jarang dipakai.
+2. **suntik etika translasi**:
+   - Kita paksa AI ikut 4 aturan wajib:
+     - *Context over Dictionary*: Lihat konteks, jangan cuma liat kamus.
+     - *Translate vs Transliterate*: Nama orang tetap, tapi jurus atau organisasi diterjemahin.
+     - *World-Building*: Jangan tiba-tiba muncul nama lokasi dunia nyata (kayak Kyoto) kalau settingnya fantasi.
+     - *Honorifics*: Jaga panggilan kayak "Kakak Senior" atau akhiran "-san".
+3. **auto-save yang lebih fleksibel**:
+   - Logika buat deteksi "Translator Notes" diperbaiki pakai regex yang lebih luwes biar gak gampang meleset.
+4. **auto-migration database**:
+   - Biar gak ribet tiap ada update, database sekarang otomatis nambahin kolom sendiri pas aplikasi dinyalain.
 
-### Key Technical Decisions:
-1.  **Usage-Based Glossary Optimization**:
-    - Added `usage_count` and `last_used_at` to `LorebookEntry`.
-    - Limited glossary injection to the **top 50** most relevant terms per chapter.
-    - Implemented automatic cleanup: When a thread exceeds 100 terms, the 20 least-used terms are deleted.
-2.  **Strict Translation Ethics Injection**:
-    - Integrated 4 mandatory rules into the system prompt:
-        - *Context over Dictionary*: Prioritize situational meaning.
-        - *Translate vs Transliterate*: Translate objects/techniques, transliterate names.
-        - *World-Building*: Avoid real-world location mapping (e.g., Kyoto vs The Capital).
-        - *Honorifics*: Preserve source language norms (Senior Brother, -san, etc.).
-3.  **Robust Auto-Save Logic**:
-    - Re-engineered `auto_save_glossary` to use flexible regex (matching `Translator's Note`, `Notes`, etc.).
-    - Implemented strict duplicate checking before insertion.
-    - Standardized parsing of the `- Original → Translated (Notes)` format.
-4.  **Database Auto-Migration**:
-    - Added startup logic to `init_db` to automatically handle `ALTER TABLE` for existing SQLite databases when new features are added.
-
-## Consequences
-- **Token Efficiency**: Dramatic reduction in prompt size for threads with large lorebooks.
-- **Improved Consistency**: AI now respects established terminology more strictly due to the "Absolute Law" prompt instruction.
-- **Maintenance-Free**: The glossary system is now self-maintaining through usage tracking and auto-cleanup.
-- **Reliability**: Migrating background jobs to FastAPI `BackgroundTasks` resolved runtime stability issues.
+## konsekuensi
+- **Hemat token**: Prompt jadi jauh lebih ringkas tapi tetap akurat.
+- **Konsistensi terjaga**: AI sekarang lebih patuh sama istilah yang sudah kita tentukan.
+- **Gak perlu maintenance manual**: Sistem sudah otomatis bersih-bersih istilah yang gak kepakai.
+- **Lebih stabil**: Error event loop sudah hilang karena kita pindah ke `BackgroundTasks` bawaan FastAPI.

@@ -1,104 +1,51 @@
-# Handoff Document — AI Translator Web
-
-> **Terakhir diperbarui:** 17 Mei 2026 (01:10)  
-> **Status:** Phase 8 (Context Engine & Pipeline Ethics Complete)  
-> **Next Milestone:** Error Recovery & EPUB Export (Phase 9)  
-> **Agent Mode:** ON
+# handoff — status proyek terakhir
+> **update:** 17 Mei 2026 | **status:** phase 8 (context engine beres)
 
 ---
 
-## Project Overview
-
-Self-hosted web app untuk membaca dan menerjemahkan web novel & EPUB. Klon fungsional dari app.readomni.com, menggunakan LM Studio lokal sebagai mesin AI-nya. Dilengkapi fitur "Lorebook" pintar yang membatasi context secara dinamis (Top 50 terms) dan sistem etika translasi yang ketat. UI/UX menggunakan Glassmorphism dan sepenuhnya mobile-friendly.
-
----
-
-## Repository Structure
-
-```
-d:\code_xI\Translator_Web\
-├── src/                      # Frontend React + TypeScript (Vite + Tailwind)
-│   ├── components/           # Sidebar, Layout
-│   ├── pages/                # TranslatePage, LibraryPage, ContextLibraryPage, SettingsPage, ReaderPage
-│   ├── App.tsx               # Router utama
-│   └── index.css             # Design System tokens (ReadOmni style glassmorphism)
-├── docs/
-│   ├── implementation_plan.md  # Tracker tugas
-│   ├── SDLC.md                 # Overview lifecycle
-│   ├── style.md                # Design tokens & component specs
-│   ├── Configuration_setting.md# Panduan integrasi LM Studio
-│   ├── decisions/              # ADRs (Architectural Decision Records)
-│   └── Handoff.md              # ← File ini
-├── backend/                  # Backend Python FastAPI
-│   ├── routers/              # scrape.py, epub.py, translate.py, threads.py, lorebook.py
-│   ├── services/             # background_translator.py, context_engine.py, ai_provider.py
-│   ├── database.py           # Setup SQLite & Auto-Migration logic
-│   └── main.py               # Entry point
-```
+## overview singkat
+Kita lagi bikin web app buat baca novel yang translasinya pakai AI lokal (LM Studio). Intinya, kita mau pengalaman baca kayak **ReadOmni** tapi data tetap di laptop sendiri. Sekarang sistem sudah punya "otak" buat jaga konsistensi istilah (lorebook) dan aturan etika translasi yang ketat. UI-nya pakai gaya glassmorphism dan sudah nyaman buat dibaca di HP.
 
 ---
 
-## Status Saat Ini
-
-Sistem translasi sekarang memiliki **kecerdasan kontekstual** dan **manajemen glossary otomatis**.
-
-| Komponen | Status | Catatan |
-|:---|:---|:---|
-| Frontend & UI Shell | ✅ Selesai | Komponen dipecah modular. Menggunakan UI Glassmorphism. |
-| Reader Page | ✅ Selesai | Reading interface bersih dengan Settings Overlay. |
-| Persistent Translation | ✅ Selesai | AI tetap bekerja di background menggunakan FastAPI BackgroundTasks. |
-| Context Engine | ✅ Selesai | Prompt dinamis dengan 4 aturan etika ketat (ADR-012). |
-| Glossary Optimizer | ✅ Selesai | Limit 50 term per prompt (berdasarkan usage count). Auto-cleanup aktif. |
-| Auto-Save Glossary | ✅ Selesai | Deteksi otomatis "Translator Notes" dari output AI dengan regex fleksibel. |
-| Bulk Title Translator | ✅ Selesai | Stabil dengan sistem Chunking (50 titles). |
-
-### Major Architectural Shifts:
-1. **Context Engine (ADR-012)**: Pemisahan logika pembuatan prompt ke dalam service khusus yang menyuntikkan etika translasi (Context over Dictionary, World-building, etc.).
-2. **Usage-Based Glossary**: Implementasi tracking `usage_count` dan `last_used_at` untuk memastikan hanya istilah paling relevan yang masuk ke context LLM.
-3. **FastAPI BackgroundTasks**: Migrasi dari `asyncio.create_task` untuk menjamin stabilitas event loop pada proses translasi background.
-4. **Auto-Migration Logic**: Penambahan mekanisme di `database.py` untuk secara otomatis melakukan `ALTER TABLE` saat ada kolom baru yang diperlukan.
+## struktur folder
+Kalau mau nyari file, ini peta singkatnya:
+- `backend/`: Jeroan Python FastAPI.
+  - `services/`: Tempat logika berat kayak `context_engine.py` (buat bikin prompt) dan `background_translator.py`.
+  - `routers/`: Endpoint API buat scraping, epub, dsb.
+- `src/`: Frontend React (Vite + Tailwind). 
+  - `pages/`: Halaman reader, library, dan setting.
+  - `index.css`: Semua variabel warna dan desain glassmorphism ada di sini.
+- `docs/`: Catatan rencana kerja (`implementation_plan.md`) dan catatan keputusan desain (`decisions/`).
 
 ---
 
-## Database Schema Update
-- **Chapter Table**: Kolom `translation_status` ('idle', 'processing', 'done', 'error'), `title_original`, dan `title_translated`.
-- **LorebookEntry Table**: Menambahkan kolom `usage_count` (integer) dan `last_used_at` (datetime) untuk manajemen glossary cerdas.
+## status terakhir (apa yang sudah jalan?)
+
+Sejauh ini, sistem translasinya sudah lumayan "pinter":
+- **Context engine**: AI gak asal nerjemahin. Dia sudah dikasih instruksi etika (kayak jangan nerjemahin nama orang, jaga honorifik, dsb).
+- **Glossary optimizer**: Biar AI gak pusing, kita cuma kirim 50 istilah paling relevan ke prompt. Kita pakai hitungan `usage_count` buat nentuin mana istilah yang paling sering muncul.
+- **Auto-save glossary**: Kalau AI ngasih catatan di akhir bab, sistem otomatis nangkap istilah itu dan simpan ke database. Gak perlu input manual lagi.
+- **Background task**: Translasi jalan di belakang layar pakai FastAPI BackgroundTasks. Jadi kamu bisa tutup tab atau pindah halaman tanpa ngerusak prosesnya.
+- **Bulk title translator**: Buat novel yang babnya ribuan, kita sudah bikin sistem chunking (50 bab sekali jalan) biar gak error pas nerjemahin judul.
+
+### perubahan arsitektur penting:
+1. **Pindah ke background task**: Dulu pakai `asyncio.create_task`, sekarang pakai cara FastAPI yang lebih stabil buat long-running process.
+2. **Auto-migration**: Database sekarang bisa update kolom sendiri kalau ada perubahan skema (gak perlu hapus DB manual lagi).
+3. **Usage tracking**: Sekarang tiap istilah di lorebook punya `usage_count` dan `last_used_at`.
 
 ---
 
-## Cara Menjalankan (Development)
+## apa yang harus dikerjakan selanjutnya?
 
-### Frontend
-```bash
-cd d:\code_xI\Translator_Web
-npm run dev
-# Buka http://localhost:5173
-```
-
-### Backend
-```bash
-cd d:\code_xI\Translator_Web\backend
-# Agar bisa diakses dari HP (iPhone) di jaringan yang sama:
-py -m uvicorn main:app --reload --port 8000 --host 0.0.0.0
-```
+1. **Error recovery UI**: Kasih tombol buat stop paksa proses background kalau misal macet (stuck).
+2. **Epub export**: Biar novel yang sudah diterjemahin bisa didownload lagi jadi file .epub bersih.
+3. **Character clustering**: Ide buat deteksi otomatis hubungan antar karakter dari teks biar lorebook-nya makin mantap.
 
 ---
 
-## Langkah Selanjutnya (Agent/Human)
+## tech stack & dependencies
 
-- **Error Recovery UI**: Tombol "Force Stop" di UI jika background task terdeteksi stuck.
-- **Enhanced EPUB Export**: Fitur untuk mendownload hasil terjemahan kembali menjadi format EPUB.
-- **Character Clustering**: Logika untuk mendeteksi hubungan antar karakter secara otomatis dari teks.
-
----
-
-## Dependencies Eksternal
-
-| Tool | Versi | Fungsi |
-|:---|:---|:---|
-| Node.js | 20+ | Frontend runtime |
-| Python | 3.11+ | Backend runtime |
-| LM Studio | Latest | Local AI engine |
-| Crawl4AI | Latest | Web scraping |
-| EbookLib | 0.18+ | EPUB parsing |
-| SQLAlchemy | 2.0+ | Database ORM |
+- **frontend**: React 19, Vite, Tailwind v4.
+- **backend**: Python 3.11, FastAPI, SQLAlchemy (SQLite).
+- **eksternal**: LM Studio (Local AI), Crawl4AI (Scraper), EbookLib (EPUB).
