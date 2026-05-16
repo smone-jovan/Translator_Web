@@ -1,10 +1,12 @@
 """
-Database setup — SQLite via SQLAlchemy.
-Tabel: threads, chapters, lorebook_entries
+Database setup — SQLite via SQLAlchemy 2.0.
+Tabel: threads, chapters, lorebook_entries, translation_segments, user_bookmarks, global_settings
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, func
-from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import create_engine, String, Text, DateTime, ForeignKey, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = "sqlite:///./app.db"
 
@@ -22,77 +24,91 @@ class GlobalSetting(Base):
     """Global context settings and permanent config."""
     __tablename__ = "global_settings"
 
-    id = Column(Integer, primary_key=True, index=True)
-    global_context = Column(Text, nullable=True)
-    lm_url = Column(String(500), default="http://localhost:1234")
-    lm_model = Column(String(500), nullable=True)
-    target_language = Column(String(50), default="Indonesian")
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    global_context: Mapped[Optional[str]] = mapped_column(Text)
+    lm_url: Mapped[str] = mapped_column(String(500), default="http://localhost:1234")
+    lm_model: Mapped[Optional[str]] = mapped_column(String(500))
+    target_language: Mapped[str] = mapped_column(String(50), default="Indonesian")
+    prefetch_enabled: Mapped[int] = mapped_column(default=0)  # 0 = disabled, 1 = enabled
 
 
 class Thread(Base):
     """Satu thread = satu buku/proyek terjemahan."""
     __tablename__ = "threads"
 
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(500), nullable=False)
-    source_type = Column(String(20), default="url")  # "url" | "epub"
-    source_url = Column(Text, nullable=True)
-    thread_context = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=func.now())
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), default="url")
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+    thread_context: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
-    chapters = relationship("Chapter", back_populates="thread", cascade="all, delete")
-    lorebook = relationship("LorebookEntry", back_populates="thread", cascade="all, delete")
-
+    chapters: Mapped[List["Chapter"]] = relationship(back_populates="thread", cascade="all, delete")
+    lorebook: Mapped[List["LorebookEntry"]] = relationship(back_populates="thread", cascade="all, delete")
+    bookmarks: Mapped[List["UserBookmark"]] = relationship(back_populates="thread", cascade="all, delete")
 
 
 class Chapter(Base):
-    """Satu chapter dari sebuah thread (bisa dari EPUB atau URL)."""
+    """Satu chapter dari sebuah thread."""
     __tablename__ = "chapters"
 
-    id = Column(Integer, primary_key=True, index=True)
-    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
-    order = Column(Integer, default=0)
-    title_original = Column(String(500), nullable=True)
-    title_translated = Column(String(500), nullable=True)
-    content_original = Column(Text, nullable=True)
-    content_translated = Column(Text, nullable=True)
-    translation_status = Column(String(20), default="idle") # "idle", "processing", "done", "error"
-    created_at = Column(DateTime, default=func.now())
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    order: Mapped[int] = mapped_column(default=0)
+    title_original: Mapped[Optional[str]] = mapped_column(String(500))
+    title_translated: Mapped[Optional[str]] = mapped_column(String(500))
+    content_original: Mapped[Optional[str]] = mapped_column(Text)
+    content_translated: Mapped[Optional[str]] = mapped_column(Text)
+    translation_status: Mapped[str] = mapped_column(String(20), default="idle")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
-    thread = relationship("Thread", back_populates="chapters")
-    segments = relationship("TranslationSegment", back_populates="chapter", cascade="all, delete")
+    thread: Mapped["Thread"] = relationship(back_populates="chapters")
+    segments: Mapped[List["TranslationSegment"]] = relationship(back_populates="chapter", cascade="all, delete")
 
 
 class TranslationSegment(Base):
-    """Satu paragraf/kalimat untuk keperluan toggle show original/translated."""
+    """Satu paragraf/kalimat terjemahan."""
     __tablename__ = "translation_segments"
 
-    id = Column(Integer, primary_key=True, index=True)
-    chapter_id = Column(Integer, ForeignKey("chapters.id"), nullable=False)
-    order = Column(Integer, default=0)
-    original_text = Column(Text, nullable=True)
-    translated_text = Column(Text, nullable=True)
-    display_mode = Column(String(20), default="translated") # "original", "translated", "both", "hidden"
-    
-    chapter = relationship("Chapter", back_populates="segments")
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False)
+    order: Mapped[int] = mapped_column(default=0)
+    original_text: Mapped[Optional[str]] = mapped_column(Text)
+    translated_text: Mapped[Optional[str]] = mapped_column(Text)
+    display_mode: Mapped[str] = mapped_column(String(20), default="translated")
+
+    chapter: Mapped["Chapter"] = relationship(back_populates="segments")
+
+
+class UserBookmark(Base):
+    """Menyimpan history baca terakhir."""
+    __tablename__ = "user_bookmarks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False)
+    last_read_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    thread: Mapped["Thread"] = relationship(back_populates="bookmarks")
 
 
 class LorebookEntry(Base):
-    """Term/nama yang harus dijaga konsistensinya dalam terjemahan."""
+    """Term/nama yang harus dijaga konsistensinya."""
     __tablename__ = "lorebook_entries"
 
-    id = Column(Integer, primary_key=True, index=True)
-    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
-    original_term = Column(String(200), nullable=False)
-    translated_term = Column(String(200), nullable=False)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=func.now())
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    original_term: Mapped[str] = mapped_column(String(200), nullable=False)
+    translated_term: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    usage_count: Mapped[int] = mapped_column(default=0)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
-    thread = relationship("Thread", back_populates="lorebook")
+    thread: Mapped["Thread"] = relationship(back_populates="lorebook")
 
 
 def get_db():
-    """Dependency untuk FastAPI."""
     db = SessionLocal()
     try:
         yield db
@@ -101,5 +117,5 @@ def get_db():
 
 
 def init_db():
-    """Buat semua tabel jika belum ada."""
     Base.metadata.create_all(bind=engine)
+    print("[OK] Database initialized - app.db ready.")

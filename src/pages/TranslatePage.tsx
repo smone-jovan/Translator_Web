@@ -116,7 +116,7 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
     setIsProcessing(true);
 
     try {
-      const endpoint = isUrl ? getApiUrl('/api/scrape') : getApiUrl('/api/translate');
+      const endpoint = isUrl ? getApiUrl('/api/threads/import-url') : getApiUrl('/api/translate');
       const body: Record<string, string | number> = isUrl ? { url: inputText.trim() } : { text: inputText.trim() };
       
       if (selectedThreadId !== 'new') {

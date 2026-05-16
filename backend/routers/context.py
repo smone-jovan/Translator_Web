@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 import json
 import re
 
+from sqlalchemy import select
 from database import get_db, GlobalSetting, Thread, Chapter
 from services.ai_provider import AIProvider
 
@@ -16,6 +17,7 @@ class GlobalSettingsUpdate(BaseModel):
     lm_url: str | None = None
     lm_model: str | None = None
     target_language: str | None = None
+    prefetch_enabled: int | None = None
 
 class ExtractRequest(BaseModel):
     lm_url: str | None = None
@@ -27,17 +29,20 @@ class ExtractedTerm(BaseModel):
 
 @router.get("/global-context")
 def get_global_context(db: Session = Depends(get_db)):
-    gs = db.query(GlobalSetting).first()
+    stmt = select(GlobalSetting)
+    gs = db.execute(stmt).scalar_one_or_none()
     return {
         "global_context": gs.global_context if gs else "",
         "lm_url": gs.lm_url if gs else "http://localhost:1234",
         "lm_model": gs.lm_model if gs else None,
-        "target_language": gs.target_language if gs else "Indonesian"
+        "target_language": gs.target_language if gs else "Indonesian",
+        "prefetch_enabled": gs.prefetch_enabled if gs else 0
     }
 
 @router.post("/global-context")
 def update_global_context(body: ContextUpdate, db: Session = Depends(get_db)):
-    gs = db.query(GlobalSetting).first()
+    stmt = select(GlobalSetting)
+    gs = db.execute(stmt).scalar_one_or_none()
     if not gs:
         gs = GlobalSetting(global_context=body.context)
         db.add(gs)
@@ -48,7 +53,8 @@ def update_global_context(body: ContextUpdate, db: Session = Depends(get_db)):
 
 @router.post("/settings")
 def update_settings(body: GlobalSettingsUpdate, db: Session = Depends(get_db)):
-    gs = db.query(GlobalSetting).first()
+    stmt = select(GlobalSetting)
+    gs = db.execute(stmt).scalar_one_or_none()
     if not gs:
         gs = GlobalSetting()
         db.add(gs)
@@ -56,24 +62,28 @@ def update_settings(body: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if body.lm_url is not None: gs.lm_url = body.lm_url
     if body.lm_model is not None: gs.lm_model = body.lm_model
     if body.target_language is not None: gs.target_language = body.target_language
+    if body.prefetch_enabled is not None: gs.prefetch_enabled = body.prefetch_enabled
     
     db.commit()
     return {
         "lm_url": gs.lm_url,
         "lm_model": gs.lm_model,
-        "target_language": gs.target_language
+        "target_language": gs.target_language,
+        "prefetch_enabled": gs.prefetch_enabled
     }
 
 @router.get("/threads/{thread_id}/context")
 def get_thread_context(thread_id: int, db: Session = Depends(get_db)):
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
     return {"thread_context": thread.thread_context or ""}
 
 @router.post("/threads/{thread_id}/context")
 def update_thread_context(thread_id: int, body: ContextUpdate, db: Session = Depends(get_db)):
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
     thread.thread_context = body.context
@@ -83,11 +93,13 @@ def update_thread_context(thread_id: int, body: ContextUpdate, db: Session = Dep
 @router.post("/threads/{thread_id}/extract-context")
 async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
     """Analyze chapter text to extract key terms (names, locations, etc)."""
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
         
-    chapter = db.query(Chapter).filter(Chapter.thread_id == thread_id).order_by(Chapter.order).first()
+    ch_stmt = select(Chapter).where(Chapter.thread_id == thread_id).order_by(Chapter.order)
+    chapter = db.execute(ch_stmt).scalars().first()
     if not chapter or not chapter.content_original:
         return {"terms": []}
 
@@ -106,7 +118,8 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
         "5. Do NOT include common words, only significant proper nouns."
     )
     
-    gs = db.query(GlobalSetting).first()
+    gs_stmt = select(GlobalSetting)
+    gs = db.execute(gs_stmt).scalar_one_or_none()
     ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
     ai = AIProvider(ai_url)
     

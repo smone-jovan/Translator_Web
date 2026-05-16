@@ -130,35 +130,88 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     t.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Find most recently read book for the banner
+  const lastReadThread = threads
+    .filter(t => t.progress > 0)
+    .sort((a, b) => (a.progress === 100 ? 1 : -1)) // Optional: prioritize non-finished
+    .slice(0, 1)[0];
+
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-10 py-4">
+    <div className="w-full max-w-6xl mx-auto space-y-12 py-8 px-4 sm:px-6 animate-in fade-in duration-700">
+      {/* Continue Reading Banner */}
+      {lastReadThread && (
+        <section className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-[var(--primary)]/20 to-[var(--accent)]/5 border border-[var(--primary)]/10 shadow-2xl">
+          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+            <BookOpen size={180} />
+          </div>
+          <div className="relative p-8 md:p-12 flex flex-col md:flex-row items-center gap-10">
+            <div className="w-40 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-2xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/20 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500">
+               <div className="w-full h-full flex items-center justify-center opacity-40">
+                  {lastReadThread.source_type === 'epub' ? <BookOpen size={48} /> : <Globe size={48} />}
+               </div>
+            </div>
+            <div className="flex-1 space-y-6 text-center md:text-left">
+              <div className="space-y-2">
+                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] text-[10px] font-bold uppercase tracking-widest">
+                  <Clock size={12} /> Continue Reading
+                </span>
+                <h2 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">{lastReadThread.title}</h2>
+                <p className="text-[var(--muted-foreground)] font-medium">Last read: <span className="text-[var(--foreground)]">{lastReadThread.last_read || 'Chapter 1'}</span></p>
+              </div>
+              
+              <div className="space-y-3 max-w-md mx-auto md:mx-0">
+                <div className="flex justify-between items-end">
+                   <span className="text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Your Progress</span>
+                   <span className="text-sm font-black text-[var(--primary)]">{lastReadThread.progress}%</span>
+                </div>
+                <div className="h-2 w-full bg-[var(--secondary)] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-[var(--primary)] to-[var(--accent)] shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)] transition-all duration-1000 ease-out" 
+                    style={{ width: `${lastReadThread.progress}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 justify-center md:justify-start pt-2">
+                <Button size="lg" className="rounded-2xl px-8 font-bold shadow-xl shadow-[var(--primary)]/25 gap-3" onClick={() => onOpenThread?.(lastReadThread.id)}>
+                  <Play size={18} className="fill-current" /> Resume Reading
+                </Button>
+                <Button variant="ghost" className="rounded-2xl text-[var(--muted-foreground)] hover:text-[var(--foreground)]" onClick={() => onOpenThread?.(lastReadThread.id)}>
+                  Details
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-        <div className="space-y-1">
-          <h1 className="text-4xl font-bold text-[var(--foreground)] tracking-tight">Your Library</h1>
-          <p className="text-[var(--muted-foreground)] text-lg">Manage your translated works and reading progress.</p>
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-8 pt-4">
+        <div className="space-y-2">
+          <h1 className="text-4xl md:text-5xl font-black text-[var(--foreground)] tracking-tighter">Your Library</h1>
+          <p className="text-[var(--muted-foreground)] font-medium text-lg">Manage your translated works and reading progress.</p>
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" size={18} />
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] group-focus-within:text-[var(--primary)] transition-colors" size={18} />
             <input 
               type="text" 
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search your library..."
-              className="pl-10 pr-4 py-2.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-sm focus:outline-none focus:border-[var(--primary)] transition-all min-w-[280px]"
+              placeholder="Search library..."
+              className="pl-12 pr-6 py-3.5 rounded-2xl bg-[var(--card)] border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20 focus:border-[var(--primary)] transition-all min-w-[320px] shadow-sm"
             />
           </div>
-          <Button variant="outline" size="icon" className="rounded-xl"><Filter size={18} /></Button>
+          <Button variant="outline" size="icon" className="rounded-2xl h-[50px] w-[50px] border-[var(--border)] shadow-sm"><Filter size={20} /></Button>
         </div>
       </header>
 
       {/* Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-8 gap-y-12">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="aspect-[3/4] rounded-2xl bg-[var(--secondary)] animate-pulse" />
+            <div key={i} className="aspect-[3/4] rounded-3xl bg-[var(--secondary)]/50 animate-pulse" />
           ))
         ) : filteredThreads.map(thread => (
           <LibraryBookCard 
@@ -170,13 +223,15 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
         ))}
 
         {!loading && filteredThreads.length === 0 && (
-          <div className="col-span-full py-32 text-center bg-[var(--card)] border-2 border-dashed border-[var(--border)] rounded-3xl">
-            <BookOpen className="mx-auto w-16 h-16 text-[var(--muted-foreground)] mb-4 opacity-20" />
-            <h2 className="text-2xl font-bold text-[var(--foreground)] mb-2">Library is Empty</h2>
-            <p className="text-[var(--muted-foreground)] max-w-sm mx-auto">
-              Start by translating a URL or uploading an EPUB to build your collection.
+          <div className="col-span-full py-40 text-center bg-[var(--card)]/50 border-2 border-dashed border-[var(--border)] rounded-[3rem] animate-in zoom-in-95 duration-500">
+            <div className="inline-flex p-6 rounded-full bg-[var(--secondary)]/50 mb-6">
+              <BookOpen className="w-12 h-12 text-[var(--muted-foreground)] opacity-30" />
+            </div>
+            <h2 className="text-3xl font-black text-[var(--foreground)] mb-3">Library is Empty</h2>
+            <p className="text-[var(--muted-foreground)] font-medium max-w-sm mx-auto mb-10 leading-relaxed">
+              Start by translating a URL or uploading an EPUB to build your personal collection.
             </p>
-            <Button className="mt-8 rounded-xl px-8" onClick={() => window.location.hash = '#translate'}>
+            <Button size="lg" className="rounded-2xl px-12 font-bold shadow-lg" onClick={() => window.location.hash = '#translate'}>
               Go to Translate
             </Button>
           </div>

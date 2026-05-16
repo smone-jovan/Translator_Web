@@ -1,15 +1,15 @@
 # Handoff Document — AI Translator Web
 
-> **Terakhir diperbarui:** 16 Mei 2026 (18:00)  
-> **Status:** Phase 7 — Multi-Device Sync Complete  
-> **Next Milestone:** Background Task Monitoring & Multi-User Scoping (Phase 8)  
+> **Terakhir diperbarui:** 17 Mei 2026 (01:10)  
+> **Status:** Phase 8 (Context Engine & Pipeline Ethics Complete)  
+> **Next Milestone:** Error Recovery & EPUB Export (Phase 9)  
 > **Agent Mode:** ON
 
 ---
 
 ## Project Overview
 
-Self-hosted web app untuk membaca dan menerjemahkan web novel & EPUB. Klon fungsional dari app.readomni.com, menggunakan LM Studio lokal sebagai mesin AI-nya. Dilengkapi fitur "Lorebook" untuk menjaga konsistensi nama karakter dan istilah per buku. UI/UX menggunakan Glassmorphism dan sepenuhnya mobile-friendly.
+Self-hosted web app untuk membaca dan menerjemahkan web novel & EPUB. Klon fungsional dari app.readomni.com, menggunakan LM Studio lokal sebagai mesin AI-nya. Dilengkapi fitur "Lorebook" pintar yang membatasi context secara dinamis (Top 50 terms) dan sistem etika translasi yang ketat. UI/UX menggunakan Glassmorphism dan sepenuhnya mobile-friendly.
 
 ---
 
@@ -31,7 +31,8 @@ d:\code_xI\Translator_Web\
 │   └── Handoff.md              # ← File ini
 ├── backend/                  # Backend Python FastAPI
 │   ├── routers/              # scrape.py, epub.py, translate.py, threads.py, lorebook.py
-│   ├── database.py           # Setup SQLite
+│   ├── services/             # background_translator.py, context_engine.py, ai_provider.py
+│   ├── database.py           # Setup SQLite & Auto-Migration logic
 │   └── main.py               # Entry point
 ```
 
@@ -39,33 +40,29 @@ d:\code_xI\Translator_Web\
 
 ## Status Saat Ini
 
-Semua fondasi utama dan fitur persistensi tingkat lanjut **sudah selesai diimplementasikan**.
+Sistem translasi sekarang memiliki **kecerdasan kontekstual** dan **manajemen glossary otomatis**.
 
 | Komponen | Status | Catatan |
 |:---|:---|:---|
-| Frontend & UI Shell | ✅ Selesai | Komponen dipecah modular. Menggunakan UI Glassmorphism. Mobile-friendly. |
-| Reader Page | ✅ Selesai | Reading interface yang bersih dengan **Settings Overlay** terintegrasi (Font size, Theme, Re-translate). |
-| Persistent Translation | ✅ Selesai | AI tetap bekerja di background meskipun browser ditutup. Auto-resume saat user kembali ke chapter. |
-| Backend persistence | ✅ Selesai | Menggunakan `FastAPI BackgroundTasks` + incremental saving ke SQLite (per 15-20 segmen). |
-| Web Scraping (Crawl4AI) | ✅ Selesai | Route `/api/scrape` aktif. |
-| EPUB Parser | ✅ Selesai | Route `/api/upload-epub` aktif. |
-| LM Studio Integration | ✅ Selesai | Pengaturan terintegrasi via `SettingsPage`. Streaming SSE aktif. |
-| Lorebook CRUD | ✅ Selesai | Halaman `ContextLibraryPage` aktif. |
-| Bulk Title Translator | ✅ Selesai | Translasi judul bab secara massal (Batch LLM) permanen di DB. |
-| Server-Side Sync | ✅ Selesai | Sinkronisasi LM Studio settings & Zero-config mobile access. |
+| Frontend & UI Shell | ✅ Selesai | Komponen dipecah modular. Menggunakan UI Glassmorphism. |
+| Reader Page | ✅ Selesai | Reading interface bersih dengan Settings Overlay. |
+| Persistent Translation | ✅ Selesai | AI tetap bekerja di background menggunakan FastAPI BackgroundTasks. |
+| Context Engine | ✅ Selesai | Prompt dinamis dengan 4 aturan etika ketat (ADR-012). |
+| Glossary Optimizer | ✅ Selesai | Limit 50 term per prompt (berdasarkan usage count). Auto-cleanup aktif. |
+| Auto-Save Glossary | ✅ Selesai | Deteksi otomatis "Translator Notes" dari output AI dengan regex fleksibel. |
+| Bulk Title Translator | ✅ Selesai | Stabil dengan sistem Chunking (50 titles). |
 
 ### Major Architectural Shifts:
-1. **Background Translation**: Mengalihkan proses LLM dari *request-scoped* menjadi *shielded background task*. Ini menjamin data tidak hilang jika koneksi internet/browser terputus.
-2. **Settings Overlay**: Menghapus tombol-tombol yang berserakan di navbar dan mengonsolidasikannya ke dalam satu menu overlay (cog icon) di pojok kanan atas reader.
-3. **SSE Synchronization**: Menggunakan antrean memori server-side untuk menyinkronkan output streaming AI ke multiple subscriber (jika tab dibuka di banyak tempat).
-4. **Dual-Title Schema**: Memisahkan judul asli dan judul terjemahan di database untuk navigasi novel yang lebih baik tanpa merusak metadata asli.
-5. **Server-Side Configuration**: Memindahkan setting LM Studio ke database dan menggunakan deteksi IP dinamis agar sinkron di HP (iPhone).
+1. **Context Engine (ADR-012)**: Pemisahan logika pembuatan prompt ke dalam service khusus yang menyuntikkan etika translasi (Context over Dictionary, World-building, etc.).
+2. **Usage-Based Glossary**: Implementasi tracking `usage_count` dan `last_used_at` untuk memastikan hanya istilah paling relevan yang masuk ke context LLM.
+3. **FastAPI BackgroundTasks**: Migrasi dari `asyncio.create_task` untuk menjamin stabilitas event loop pada proses translasi background.
+4. **Auto-Migration Logic**: Penambahan mekanisme di `database.py` untuk secara otomatis melakukan `ALTER TABLE` saat ada kolom baru yang diperlukan.
 
 ---
 
 ## Database Schema Update
-- **Chapter Table**: Menambahkan kolom `translation_status` ('idle', 'processing', 'done', 'error') serta `title_original` dan `title_translated`. Menghapus kolom `title` lama.
-- **Migration**: Script migrasi berada di `scratch/migrate_db.py`. Skema bersifat *non-destructive* (memindahkan data `title` lama ke `title_original`).
+- **Chapter Table**: Kolom `translation_status` ('idle', 'processing', 'done', 'error'), `title_original`, dan `title_translated`.
+- **LorebookEntry Table**: Menambahkan kolom `usage_count` (integer) dan `last_used_at` (datetime) untuk manajemen glossary cerdas.
 
 ---
 
@@ -89,9 +86,9 @@ py -m uvicorn main:app --reload --port 8000 --host 0.0.0.0
 
 ## Langkah Selanjutnya (Agent/Human)
 
-- **Performance Benchmarking**: Menguji konkurensi jika menerjemahkan 10+ chapter sekaligus (LM Studio throttling).
-- **Error Recovery**: Implementasi tombol "Force Stop" jika background task stuck.
-- **EPUB Export**: Fitur untuk mendownload hasil terjemahan kembali menjadi format EPUB yang rapi.
+- **Error Recovery UI**: Tombol "Force Stop" di UI jika background task terdeteksi stuck.
+- **Enhanced EPUB Export**: Fitur untuk mendownload hasil terjemahan kembali menjadi format EPUB.
+- **Character Clustering**: Logika untuk mendeteksi hubungan antar karakter secara otomatis dari teks.
 
 ---
 
@@ -104,3 +101,4 @@ py -m uvicorn main:app --reload --port 8000 --host 0.0.0.0
 | LM Studio | Latest | Local AI engine |
 | Crawl4AI | Latest | Web scraping |
 | EbookLib | 0.18+ | EPUB parsing |
+| SQLAlchemy | 2.0+ | Database ORM |

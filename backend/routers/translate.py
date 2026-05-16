@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 import json
 import asyncio
 
+from sqlalchemy import select, func
 from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting
 from services.context_engine import ContextEngine
 from services.ai_provider import AIProvider
@@ -30,123 +31,39 @@ class TranslateResponse(BaseModel):
     model_used: str
     lorebook_terms: int
 
-def get_lm_url(req_lm_url: str | None) -> str:
+from services.background_translator import BackgroundTranslator, translation_queues
+
+async def get_lm_url(req_lm_url: str | None, db: Session) -> str:
     if req_lm_url:
         return req_lm_url.rstrip("/")
-    return "http://localhost:1234"
-
-# In-memory progress tracker (optional but helps for realtime SSE)
-translation_queues = {}
-
-async def run_persistent_translation(req: TranslateRequest, payload: dict):
-    """Background task to run translation and save to DB incrementally."""
-    chapter_id = req.chapter_id
-    if not chapter_id: return
-
-    # Set status to processing
-    with SessionLocal() as db:
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
-        if chapter:
-            chapter.translation_status = "processing"
-            chapter.content_translated = "" # Start fresh or keep? For now start fresh
-            db.commit()
-
-    ai = AIProvider(get_lm_url(req.lm_url))
-    full_content = ""
-    chunk_count = 0
-    
-    try:
-        async for content in ai.stream_chat(payload):
-            full_content += content
-            chunk_count += 1
-            
-            # Put into queue for active SSE listeners
-            if chapter_id in translation_queues:
-                for q in translation_queues[chapter_id]:
-                    await q.put(content)
-            
-            # Periodically save to DB
-            if chunk_count % 15 == 0:
-                with SessionLocal() as db:
-                    chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
-                    if chapter:
-                        chapter.content_translated = full_content
-                        db.commit()
-
-        # Finalize
-        with SessionLocal() as db:
-            if req.thread_id:
-                ContextEngine.auto_save_glossary(db, req.thread_id, full_content)
-            
-            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
-            if chapter:
-                chapter.content_translated = full_content
-                chapter.translation_status = "done"
-                db.commit()
-                print(f"✅ Background translation DONE for chapter {chapter_id}")
-
-    except Exception as e:
-        print(f"❌ Background translation ERROR: {e}")
-        with SessionLocal() as db:
-            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
-            if chapter:
-                chapter.translation_status = "error"
-                db.commit()
-    finally:
-        # Clean up queue when done
-        if chapter_id in translation_queues:
-            for q in translation_queues[chapter_id]:
-                await q.put("[DONE]")
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    return (gs.lm_url if gs else "http://localhost:1234").rstrip("/")
 
 @router.post("/translate/stream")
-async def translate_stream(req: TranslateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db)):
     """SSE streaming that triggers background persistence."""
-    gs = db.query(GlobalSetting).first()
+    gs_stmt = select(GlobalSetting)
+    gs = db.execute(gs_stmt).scalar_one_or_none()
     
-    ai_url = get_lm_url(req.lm_url or (gs.lm_url if gs else None))
+    ai_url = await get_lm_url(req.lm_url, db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
     selected_model = req.model or (gs.lm_model if gs else None)
 
-    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang)
+    if not req.chapter_id:
+        raise HTTPException(400, "chapter_id is required for streaming")
 
-    payload = {
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": req.text},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 8192,
-        "stream": True,
-    }
-    if selected_model:
-        payload["model"] = selected_model
-    
-    # Update AI Provider with correct URL
-    # (Note: AI Provider is instantiated inside background task, passing it there)
-    req.lm_url = ai_url
-    req.model = selected_model
-    req.target_lang = target_lang
-
-    # Check if already processing
-    if req.chapter_id:
-        chapter = db.query(Chapter).filter(Chapter.id == req.chapter_id).first()
-        if chapter and chapter.translation_status == "processing":
-            # Just subscribe to the existing stream?
-            # For simplicity, we just start a new one if it's not truly managed, 
-            # but ideally we'd check translation_queues.
-            pass
-
-    # IMPORTANT: Do not use FastAPI's `BackgroundTasks` here!
-    # BackgroundTasks run *after* the response is fully sent. Because this is a 
-    # StreamingResponse that blocks waiting for the task's output, using BackgroundTasks 
-    # will cause a deadlock (the stream waits for the task, the task waits for the stream to close).
-    # See documentation-and-adrs: Document Known Gotchas.
-    # Start the persistent background job ONLY if not already running
-    if req.chapter_id not in translation_queues:
-        asyncio.create_task(run_persistent_translation(req, payload))
+    # Start the persistent background job if needed
+    asyncio.create_task(
+        BackgroundTranslator.run_chapter_translation(
+            chapter_id=req.chapter_id,
+            thread_id=req.thread_id,
+            target_lang=target_lang,
+            model=selected_model,
+            lm_url=ai_url
+        )
+    )
 
     async def sse_wrapper():
-        # This wrapper can also just wait for the queue
         q = asyncio.Queue()
         if req.chapter_id not in translation_queues:
             translation_queues[req.chapter_id] = []
@@ -170,9 +87,10 @@ async def translate_stream(req: TranslateRequest, background_tasks: BackgroundTa
 @router.post("/translate", response_model=TranslateResponse)
 async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     """Translate text via LM Studio (non-streaming)."""
-    gs = db.query(GlobalSetting).first()
+    gs_stmt = select(GlobalSetting)
+    gs = db.execute(gs_stmt).scalar_one_or_none()
     
-    ai_url = get_lm_url(req.lm_url or (gs.lm_url if gs else None))
+    ai_url = await get_lm_url(req.lm_url or (gs.lm_url if gs else None), db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
     selected_model = req.model or (gs.lm_model if gs else None)
 
@@ -181,7 +99,8 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
 
     lorebook_count = 0
     if req.thread_id:
-        lorebook_count = db.query(LorebookEntry).filter(LorebookEntry.thread_id == req.thread_id).count()
+        count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == req.thread_id)
+        lorebook_count = db.execute(count_stmt).scalar() or 0
 
     payload = {
         "messages": [

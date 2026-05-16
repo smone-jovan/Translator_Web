@@ -36,16 +36,32 @@ class EpubResponse(BaseModel):
 
 
 def extract_text_from_html(html_content: bytes | str) -> str:
-    """Strip HTML tags, return clean text."""
+    """Strip HTML tags, return clean text. Falls back to raw HTML if text is empty."""
     if isinstance(html_content, bytes):
-        html_content = html_content.decode("utf-8", errors="ignore")
-    soup = BeautifulSoup(html_content, "html.parser")
+        # Try to detect encoding or fallback to utf-8
+        try:
+            html_str = html_content.decode("utf-8")
+        except UnicodeDecodeError:
+            html_str = html_content.decode("latin-1", errors="ignore")
+    else:
+        html_str = html_content
+
+    soup = BeautifulSoup(html_str, "html.parser")
 
     # Remove script/style
-    for tag in soup.find_all(["script", "style"]):
+    for tag in soup.find_all(["script", "style", "nav", "footer"]):
         tag.decompose()
 
+    # Try structured extraction
     text = soup.get_text(separator="\n", strip=True)
+
+    # Fallback: if text is empty but HTML exists, return stripped HTML
+    if not text.strip() and html_str.strip():
+        print("⚠️ BeautifulSoup get_text failed, using fallback extraction")
+        # Just remove tags but keep content
+        import re
+        text = re.sub(r'<[^>]+>', '\n', html_str)
+        text = re.sub(r'\n{2,}', '\n\n', text)
 
     # Collapse blank lines
     import re
@@ -102,36 +118,52 @@ async def upload_epub(
     db.add(thread)
     db.flush()
 
-    # Extract chapters (document items only)
+    # Extract chapters following the Spine (proper reading order)
     chapters_info = []
     order = 0
-    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        raw_html = item.get_content()
-        text = extract_text_from_html(raw_html)
+    
+    # Get spine items
+    spine_items = []
+    for item_id, _ in book.spine:
+        item = book.get_item_with_id(item_id)
+        if item and item.get_type() == ebooklib.ITEM_DOCUMENT:
+            spine_items.append(item)
 
-        # Skip very short items (TOC, cover, etc.)
-        if len(text) < 50:
+    for item in spine_items:
+        try:
+            raw_html = item.get_content()
+            text = extract_text_from_html(raw_html)
+
+            # Skip very short items (TOC, cover, title page, etc.)
+            # But be more lenient: some short chapters might exist
+            if len(text) < 20:
+                print(f"ℹ️ Skipping short EPUB item '{item.get_name()}' (Length: {len(text)})")
+                continue
+
+            title = guess_chapter_title(item, order)
+            print(f"✅ Extracted Chapter {order+1}: {title} ({len(text)} chars)")
+            print(f"   Preview: {text[:50]}...")
+
+            chapter = Chapter(
+                thread_id=thread.id,
+                order=order,
+                title_original=title,
+                content_original=text,
+            )
+            db.add(chapter)
+            db.flush()
+
+            chapters_info.append(ChapterInfo(
+                id=chapter.id,
+                order=order,
+                title=title,
+                preview=text[:150] + "..." if len(text) > 150 else text,
+                word_count=len(text.split()),
+            ))
+            order += 1
+        except Exception as e:
+            print(f"⚠️ Failed to process EPUB item '{item.get_name()}': {e}")
             continue
-
-        title = guess_chapter_title(item, order)
-
-        chapter = Chapter(
-            thread_id=thread.id,
-            order=order,
-            title_original=title,
-            content_original=text,
-        )
-        db.add(chapter)
-        db.flush()
-
-        chapters_info.append(ChapterInfo(
-            id=chapter.id,
-            order=order,
-            title=title,
-            preview=text[:150] + "..." if len(text) > 150 else text,
-            word_count=len(text.split()),
-        ))
-        order += 1
 
     db.commit()
 

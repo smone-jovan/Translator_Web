@@ -25,7 +25,7 @@ class AIProvider:
         
         for url in self.urls_to_try:
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=300.0) as client:
                     async with client.stream("POST", f"{url}/chat/completions", json=payload) as response:
                         if response.status_code != 200:
                             error_text = await response.aread()
@@ -57,7 +57,7 @@ class AIProvider:
         last_error = ""
         for url in self.urls_to_try:
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=300.0) as client:
                     resp = await client.post(f"{url}/chat/completions", json=payload)
                     if resp.status_code == 200:
                         return resp.json()

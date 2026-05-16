@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ChevronLeft, ChevronRight, BookOpen, Languages, 
   Check, Loader2, Save, Settings, 
-  MoreHorizontal, ArrowLeft, Download, Layout, RefreshCw
+  RefreshCw, ArrowLeft, Download, Layout, Sparkles,
+  Info
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -54,47 +55,72 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [displayMode, setDisplayMode] = useState(localStorage.getItem('display_mode') || 'both');
   const [isTranslatingTitles, setIsTranslatingTitles] = useState(false);
+  const [lastReadId, setLastReadId] = useState<number | null>(null);
+  const [prefetchEnabled, setPrefetchEnabled] = useState(false);
+  const [globalSettings, setGlobalSettings] = useState<{lm_url?: string, lm_model?: string, target_language?: string}>({});
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastFetchedIdRef = useRef<number | null>(null);
 
-  // Fetch thread detail
-  useEffect(() => {
-    const fetchThread = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
-        const data = await res.json();
-        setThread(data);
-      } catch {
-        console.error('Failed to fetch thread');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchThread();
+  const fetchThread = useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
+      const data = await res.json();
+      setThread(data);
+    } catch {
+      console.error('Failed to fetch thread');
+    }
   }, [threadId]);
 
-  const handleTranslateChapter = useCallback(async (isResume = false, initialText = '') => {
-    if (isTranslating || !chapterContent?.content_original) return;
+  // Initial Load
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      await fetchThread();
+      
+      // Fetch global settings (ADR-008 Sync)
+      try {
+        const gsRes = await fetch(getApiUrl('/api/global-context'));
+        const gsData = await gsRes.json();
+        setPrefetchEnabled(gsData.prefetch_enabled === 1);
+        setGlobalSettings({
+          lm_url: gsData.lm_url,
+          lm_model: gsData.lm_model,
+          target_language: gsData.target_language
+        });
+      } catch (err) {
+        console.error("Failed to fetch global settings", err);
+      }
+      
+      setLoading(false);
+    };
+    init();
+  }, [fetchThread]);
+
+  const handleTranslateChapter = useCallback(async (isResume = false, initialText = '', overrideContent?: string, overrideId?: number) => {
+    const textToTranslate = overrideContent || chapterContent?.content_original;
+    const chId = overrideId || chapterContent?.id;
+    
+    if (isTranslating || !textToTranslate || !chId) return;
     setIsTranslating(true);
     if (!isResume) setTranslatedText('');
     else setTranslatedText(initialText);
 
     try {
-      const lmUrl = localStorage.getItem('lm_url') || undefined;
-      const lmModel = localStorage.getItem('lm_model') || undefined;
-      const targetLang = localStorage.getItem('target_language') || 'Indonesian';
+      const lmUrl = globalSettings.lm_url;
+      const lmModel = globalSettings.lm_model;
+      const targetLang = globalSettings.target_language || 'Indonesian';
 
       const res = await fetch(getApiUrl('/api/translate/stream'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: chapterContent.content_original,
+          text: textToTranslate,
           lm_url: lmUrl,
           model: lmModel,
           target_lang: targetLang,
           thread_id: threadId,
-          chapter_id: chapterContent.id,
+          chapter_id: chId,
         }),
       });
 
@@ -123,79 +149,95 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
         }
       }
       
-      if (thread && chapterContent) {
-        const updatedChapters = [...thread.chapters];
-        const chIdx = updatedChapters.findIndex(c => c.id === chapterContent.id);
-        if (chIdx !== -1) {
-          updatedChapters[chIdx].has_translation = true;
-          updatedChapters[chIdx].translation_status = 'done';
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setThread({ ...thread, chapters: updatedChapters });
-        }
-      }
+      // Update thread state to show it has translation
+      await fetchThread();
     } catch {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTranslatedText(prev => prev + '\n⚠️ Translation failed.');
     } finally {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsTranslating(false);
     }
-  }, [chapterContent, isTranslating, threadId, thread]);
+  }, [isTranslating, threadId, fetchThread, chapterContent?.content_original, chapterContent?.id]);
 
+  // Handle Chapter Selection
   useEffect(() => {
-    if (thread && selectedChapterIdx !== null) {
-      const ch = thread.chapters[selectedChapterIdx];
-      if (!ch) return;
-      const fetchContent = async () => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setLoadingContent(true);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setTranslatedText('');
-        try {
-          const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${ch.id}`));
-          const data: ChapterContent = await res.json();
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setChapterContent(data);
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setTranslatedText(data.content_translated || '');
-          if (scrollRef.current) scrollRef.current.scrollTop = 0;
-          
-          // Auto-resume if status is processing
-          if (data.translation_status === 'processing') {
-            handleTranslateChapter(true, data.content_translated || '');
-          }
-        } catch {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setChapterContent(null);
-        } finally {
-          // eslint-disable-next-line react-hooks/set-state-in-effect
-          setLoadingContent(false);
+    if (!thread || selectedChapterIdx === null) return;
+    const ch = thread.chapters[selectedChapterIdx];
+    if (!ch) return;
+
+    // Prevent re-fetching if we already have this chapter's content
+    if (lastFetchedIdRef.current === ch.id) return;
+    
+    const abortController = new AbortController();
+
+    const fetchContent = async () => {
+      setLoadingContent(true);
+      try {
+        const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${ch.id}`), {
+          signal: abortController.signal
+        });
+        const data: ChapterContent = await res.json();
+        
+        lastFetchedIdRef.current = ch.id;
+        setChapterContent(data);
+        setTranslatedText(data.content_translated || '');
+        setLastReadId(ch.id);
+        
+        if (data.translation_status === 'processing') {
+          handleTranslateChapter(true, data.content_translated || '', data.content_original || '', data.id);
         }
-      };
-      fetchContent();
-    }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          setChapterContent(null);
+          lastFetchedIdRef.current = null;
+        }
+      } finally {
+        setLoadingContent(false);
+      }
+    };
+    
+    fetchContent();
+    return () => abortController.abort();
   }, [selectedChapterIdx, threadId, thread, handleTranslateChapter]);
 
-  const handleReTranslate = () => {
-    if (window.confirm('Re-translate this chapter? Current translation will be overwritten.')) {
-      handleTranslateChapter(false);
-    }
-  };
-
-  const handleTranslateTitles = async () => {
-    if (!thread || isTranslatingTitles) return;
+  // Infinite Polish - Single Title
+  const handleSingleTitlePolish = async (chapterId: number, e: React.MouseEvent) => {
+    e.stopPropagation(); // VERY IMPORTANT: Don't open the chapter!
+    if (isTranslatingTitles) return;
+    
     setIsTranslatingTitles(true);
     try {
       const targetLang = localStorage.getItem('target_language') || 'Indonesian';
-      await fetch(getApiUrl(`/api/threads/${threadId}/translate-titles?target_lang=${targetLang}`), {
-        method: 'POST'
-      });
-      // Refresh thread to get new titles
-      const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
-      const data = await res.json();
-      setThread(data);
+      const url = getApiUrl(`/api/threads/${threadId}/translate-titles?repolish=true&chapter_id=${chapterId}&target_lang=${targetLang}`);
+      
+      const res = await fetch(url, { method: 'POST' });
+      if (res.ok) {
+        await fetchThread();
+      }
+    } catch (err) {
+      console.error('Polish failed:', err);
+    } finally {
+      setIsTranslatingTitles(false);
+    }
+  };
+
+  // Infinite Polish - All
+  const handleTranslateTitles = async (isRepolish = false) => {
+    if (!thread || isTranslatingTitles) return;
+    
+    if (isRepolish && !window.confirm('All existing polished titles will be overwritten by AI. Continue?')) {
+      return;
+    }
+
+    setIsTranslatingTitles(true);
+    try {
+      const targetLang = globalSettings.target_language || 'Indonesian';
+      const url = getApiUrl(`/api/threads/${threadId}/translate-titles?target_lang=${targetLang}${isRepolish ? '&repolish=true' : ''}`);
+      
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      await fetchThread();
     } catch {
-      alert('Failed to save content');
+      alert('Title translation failed.');
     } finally {
       setIsTranslatingTitles(false);
     }
@@ -209,14 +251,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ translated_text: translatedText })
       });
-      if (thread) {
-        const updatedChapters = [...thread.chapters];
-        const chIdx = updatedChapters.findIndex(c => c.id === chapterContent.id);
-        if (chIdx !== -1) {
-          updatedChapters[chIdx].has_translation = true;
-          setThread({ ...thread, chapters: updatedChapters });
-        }
-      }
+      await fetchThread();
     } catch {
       console.error('Failed to save.');
     }
@@ -234,7 +269,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-[var(--primary)]" />
-        <p className="text-[var(--muted-foreground)] font-medium animate-pulse">Opening grimoire...</p>
+        <p className="text-[var(--muted-foreground)] font-medium animate-pulse">Consulting the archives...</p>
       </div>
     );
   }
@@ -248,292 +283,327 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
         <div className="absolute top-20 right-4 z-50 w-72 animate-in fade-in slide-in-from-top-4 duration-300">
           <Card className="shadow-2xl border-[var(--border)] bg-[var(--card)] backdrop-blur-xl">
             <CardContent className="p-6 space-y-6">
-              <div className="flex items-center justify-between border-b border-[var(--border)] pb-2 mb-4">
-                <h3 className="font-bold text-sm uppercase tracking-widest text-[var(--muted-foreground)]">Reader Settings</h3>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowSettings(false)}>
-                  <MoreHorizontal size={14} />
-                </Button>
-              </div>
-
-              {/* Typography */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-bold uppercase tracking-tighter text-[var(--muted-foreground)]">Typography</label>
-                <div className="flex items-center justify-between bg-[var(--secondary)] rounded-xl p-2">
-                  <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => setFontSize(f => Math.max(12, f - 2))}>
-                    <span className="font-bold">A-</span>
-                  </Button>
-                  <span className="font-bold text-sm">{fontSize}px</span>
-                  <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => setFontSize(f => Math.min(32, f + 2))}>
-                    <span className="font-bold">A+</span>
-                  </Button>
+              <div>
+                <label className="text-xs font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">Font Size</label>
+                <div className="flex items-center gap-4 mt-3">
+                  <Button variant="outline" size="sm" onClick={() => setFontSize(f => Math.max(12, f - 1))} className="flex-1 border-[var(--border)]">-</Button>
+                  <span className="text-sm font-mono w-8 text-center">{fontSize}</span>
+                  <Button variant="outline" size="sm" onClick={() => setFontSize(f => Math.min(32, f + 1))} className="flex-1 border-[var(--border)]">+</Button>
                 </div>
               </div>
-
-              {/* Display Mode */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-bold uppercase tracking-tighter text-[var(--muted-foreground)]">Display Mode</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['original', 'translated', 'both'].map((m) => (
+              
+              <div>
+                <label className="text-xs font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">Layout Mode</label>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  {['original', 'translated', 'both'].map((mode) => (
                     <Button 
-                      key={m}
-                      variant={displayMode === m ? 'accent' : 'outline'}
-                      className="h-12 rounded-xl text-[10px] capitalize font-bold"
-                      onClick={() => {
-                        setDisplayMode(m);
-                        localStorage.setItem('display_mode', m);
-                      }}
+                      key={mode}
+                      variant={displayMode === mode ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => { setDisplayMode(mode); localStorage.setItem('display_mode', mode); }}
+                      className="text-[10px] capitalize h-8"
                     >
-                      {m}
+                      {mode}
                     </Button>
                   ))}
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="pt-4 space-y-2 border-t border-[var(--border)]">
+              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
+                <div className="space-y-0.5">
+                  <label className="text-xs font-semibold text-[var(--foreground)]">Auto-Prefetch</label>
+                  <p className="text-[10px] text-[var(--muted-foreground)]">Translate next chapter in background</p>
+                </div>
                 <Button 
-                  variant="outline" 
-                  className="w-full h-12 rounded-xl gap-2 text-orange-500 border-orange-500/20 hover:bg-orange-500/10"
-                  onClick={() => {
-                    handleReTranslate();
-                    setShowSettings(false);
+                  variant={prefetchEnabled ? "default" : "outline"} 
+                  size="sm" 
+                  className={`h-7 px-3 rounded-full text-[10px] ${prefetchEnabled ? 'bg-green-600 hover:bg-green-700' : ''}`}
+                  onClick={async () => {
+                    const newVal = !prefetchEnabled;
+                    setPrefetchEnabled(newVal);
+                    try {
+                      await fetch(getApiUrl('/api/settings'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prefetch_enabled: newVal ? 1 : 0 })
+                      });
+                    } catch (err) {
+                      console.error("Failed to save prefetch setting", err);
+                    }
                   }}
-                  disabled={!chapterContent?.content_original || isTranslating || showChapterList}
                 >
-                  <RefreshCw size={18} /> Re-translate
-                </Button>
-                <Button 
-                  variant="accent" 
-                  className="w-full h-12 rounded-xl gap-2"
-                  onClick={handleSaveTranslation}
-                  disabled={!translatedText || isTranslating}
-                >
-                  <Save size={18} /> Save Progress
+                  {prefetchEnabled ? 'ON' : 'OFF'}
                 </Button>
               </div>
+
+              <Button variant="ghost" size="sm" className="w-full text-xs h-8 mt-2" onClick={() => setShowSettings(false)}>Close</Button>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Reader Navbar */}
-      <nav className="shrink-0 z-30 bg-[var(--background)] border-b border-[var(--border)] px-4 h-16 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-4 min-w-0">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="rounded-full"
-            onClick={() => {
-              if (!showChapterList) setShowChapterList(true);
-              else onBack();
-            }}
-          >
-            <ArrowLeft size={20} />
-          </Button>
-          <div className="min-w-0">
-            <h1 className="font-bold text-sm truncate leading-tight">{thread.title}</h1>
-            <p className="text-[10px] text-[var(--muted-foreground)] uppercase font-bold tracking-widest mt-0.5">
-              {(!showChapterList && selectedChapterIdx !== null && thread.chapters[selectedChapterIdx]) 
-                ? `Chapter ${thread.chapters[selectedChapterIdx].order + 1}` 
-                : 'Table of Contents'}
-            </p>
-          </div>
+      {/* Header Bar */}
+      <div className="flex items-center gap-4 px-6 py-4 border-b border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md z-30">
+        <button onClick={onBack} className="p-2 hover:bg-[var(--secondary)] rounded-full transition-all active:scale-95">
+          <ArrowLeft className="w-5 h-5 text-[var(--foreground)]" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold truncate tracking-tight">{thread.title}</h1>
+          <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-widest flex items-center gap-2">
+            {thread.chapter_count} chapters • {thread.source_type}
+            {isTranslatingTitles && (
+              <span className="flex items-center gap-1 text-[var(--accent)] animate-pulse">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                Polishing...
+              </span>
+            )}
+          </p>
         </div>
-
         <div className="flex items-center gap-2">
           {!showChapterList && (
-            <div className="flex items-center gap-2">
-              {isTranslating && (
-                <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/10 text-blue-500 rounded-full text-[10px] font-bold animate-pulse">
-                  <Loader2 size={12} className="animate-spin" /> Translating...
-                </div>
-              )}
-              <Button 
-                variant={showSettings ? "accent" : "ghost"} 
-                size="icon" 
-                className="rounded-full h-10 w-10"
-                onClick={() => setShowSettings(!showSettings)}
-              >
-                <Settings size={20} />
-              </Button>
-            </div>
+            <Button variant="outline" size="sm" onClick={handleSaveTranslation} className="rounded-xl border-[var(--border)] hidden sm:flex">
+              <Save className="w-4 h-4 mr-2" /> Save
+            </Button>
           )}
+          <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)} className="rounded-xl border-[var(--border)]">
+            <Settings className="w-4 h-4" />
+          </Button>
         </div>
-      </nav>
+      </div>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-auto bg-[var(--background)] custom-scrollbar" ref={scrollRef}>
         {showChapterList ? (
-          <div className="h-full overflow-y-auto p-6 md:p-12">
-            <div className="max-w-2xl mx-auto space-y-8">
-              <div className="flex items-end justify-between">
-                <div>
-                  <h2 className="text-3xl font-bold tracking-tight">Index</h2>
-                  <p className="text-[var(--muted-foreground)] mt-1">{thread.chapter_count} items available</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="rounded-xl gap-2" 
-                    onClick={handleTranslateTitles}
-                    disabled={isTranslatingTitles}
-                  >
-                    {isTranslatingTitles ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}
-                    {isTranslatingTitles ? 'Polishing...' : 'Polish All Titles'}
-                  </Button>
-                  <Button variant="outline" size="sm" className="rounded-xl gap-2">
-                    <Download size={14} /> Bulk Download
-                  </Button>
-                </div>
+          <div className="max-w-5xl mx-auto p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
+              <div>
+                <h2 className="text-2xl font-black flex items-center gap-3">
+                  Chapter List
+                  <span className="text-xs font-normal text-[var(--muted-foreground)] bg-[var(--secondary)] px-2 py-0.5 rounded-full">
+                    {thread.chapters.length} Total
+                  </span>
+                </h2>
+                <p className="text-[var(--muted-foreground)] text-sm mt-1">Select a chapter to begin translation or reading.</p>
               </div>
-              
-              <div className="grid grid-cols-1 gap-2">
-                {thread.chapters.map((ch, idx) => (
-                  <button
-                    key={ch.id}
-                    onClick={() => goToChapter(idx)}
-                    className="group flex items-center gap-6 p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] hover:border-[var(--primary)] hover:shadow-md transition-all text-left"
-                  >
-                    <span className="text-sm font-bold text-[var(--muted-foreground)] w-8 opacity-40 group-hover:opacity-100 transition-opacity">
-                      {(ch.order + 1).toString().padStart(2, '0')}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-[var(--foreground)] truncate group-hover:text-[var(--primary)] transition-colors">
-                        {ch.title_translated || ch.title_original || `Chapter ${ch.order + 1}`}
-                      </h4>
-                      <p className="text-[10px] text-[var(--muted-foreground)] uppercase font-bold tracking-tighter mt-0.5">
-                        {ch.word_count} Words
-                      </p>
-                    </div>
-                    {ch.has_translation ? (
-                      <div className="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center text-green-500">
-                        <Check size={16} />
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-[var(--secondary)] flex items-center justify-center text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition-opacity">
-                        <ChevronRight size={16} />
-                      </div>
-                    )}
-                  </button>
-                ))}
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="rounded-xl gap-2 border-[var(--border)] hover:bg-[var(--secondary)]"
+                  onClick={() => handleTranslateTitles(false)}
+                  disabled={isTranslatingTitles}
+                >
+                  <Languages className="w-4 h-4" />
+                  Polish All
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--accent)]"
+                  onClick={() => handleTranslateTitles(true)}
+                  disabled={isTranslatingTitles}
+                  title="Repolish all titles"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                </Button>
               </div>
+            </div>
+
+            <div className="glass rounded-3xl overflow-hidden border border-[var(--border)] shadow-xl">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-[var(--secondary)]/50 border-b border-[var(--border)]">
+                  <tr>
+                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-16">#</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Original Title</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Polished Title</th>
+                    <th className="px-6 py-4 text-right text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-24">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {thread.chapters.map((ch, idx) => (
+                    <tr 
+                      key={ch.id}
+                      onClick={() => goToChapter(idx)}
+                      className={`group hover:bg-[var(--accent)]/5 transition-all cursor-pointer relative ${lastReadId === ch.id ? 'bg-[var(--accent)]/5' : ''}`}
+                    >
+                      {/* Read Progress Indicator */}
+                      {lastReadId === ch.id && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
+                      )}
+                      
+                      <td className="px-6 py-4 font-mono text-[10px] text-[var(--muted-foreground)]">
+                        {String(ch.order + 1).padStart(3, '0')}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-medium text-[var(--muted-foreground)] truncate max-w-[200px]">
+                            {ch.title_original || `Chapter ${ch.order + 1}`}
+                          </span>
+                          <span className="text-[10px] text-[var(--muted-foreground)]/50 mt-0.5">{ch.word_count} words</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          {ch.title_translated ? (
+                            <span className="text-sm font-semibold text-[var(--foreground)]">
+                              {ch.title_translated}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-[var(--muted-foreground)] italic opacity-50">Not polished yet</span>
+                          )}
+                          {ch.has_translation && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-500" title="Translated" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button 
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                            disabled={isTranslatingTitles}
+                            className="rounded-xl h-9 w-9 text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all opacity-40 group-hover:opacity-100 disabled:opacity-20"
+                            title="Repolish this title"
+                          >
+                            <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         ) : (
-          <div className="h-full flex flex-col">
-            {/* Scrollable text area */}
-            <div className="flex-1 overflow-y-auto" ref={scrollRef}>
-              <div className={cn(
-                "max-w-6xl mx-auto p-6 md:p-12 grid gap-12",
-                displayMode === 'both' ? 'md:grid-cols-2' : 'grid-cols-1'
-              )}>
-                {showOriginal && (
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3 text-[var(--muted-foreground)] border-b border-[var(--border)] pb-4">
-                      <BookOpen size={18} />
-                      <span className="text-xs font-bold uppercase tracking-[0.2em]">Source Text</span>
-                    </div>
-                    <div 
-                      className="reader-text leading-relaxed text-[var(--foreground)] opacity-80 whitespace-pre-wrap"
-                      style={{ fontSize: `${fontSize}px`, fontFamily: 'var(--font-hyperlegible)' }}
-                    >
-                      {loadingContent ? (
-                        <div className="space-y-4">
-                          {Array.from({ length: 12 }).map((_, i) => (
-                            <div 
-                              key={i} 
-                              className="h-4 bg-[var(--secondary)] rounded animate-pulse" 
-                              style={{ width: `${60 + (i * 7) % 35}%` }} 
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        chapterContent?.content_original || 'No content found.'
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {showTranslated && (
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
-                      <div className="flex items-center gap-3 text-[var(--primary)]">
-                        <Languages size={18} />
-                        <span className="text-xs font-bold uppercase tracking-[0.2em]">Translated</span>
-                      </div>
-                      {!translatedText && !isTranslating && !loadingContent && (
-                        <Button 
-                          size="sm" 
-                          variant="accent" 
-                          className="h-8 rounded-lg gap-2 text-[10px]"
-                          onClick={() => handleTranslateChapter()}
-                        >
-                          <Languages size={12} /> Translate Chapter
-                        </Button>
-                      )}
-                    </div>
-                    <div 
-                      className={cn(
-                        "reader-text leading-relaxed text-[var(--foreground)] whitespace-pre-wrap",
-                        isTranslating && "opacity-50"
-                      )}
-                      style={{ fontSize: `${fontSize}px`, fontFamily: 'var(--font-hyperlegible)' }}
-                    >
-                      {isTranslating ? (
-                        <div className="whitespace-pre-wrap">{translatedText}<span className="inline-block w-2 h-4 ml-1 bg-[var(--primary)] animate-pulse" /></div>
-                      ) : (
-                        translatedText || (
-                          <div className="flex flex-col items-center justify-center py-20 text-[var(--muted-foreground)] text-center">
-                            <Languages size={48} className="opacity-10 mb-4" />
-                            <p className="text-sm font-medium">No translation yet.</p>
-                            <Button variant="link" className="mt-2" onClick={() => handleTranslateChapter()}>Begin translation</Button>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  </div>
-                )}
+          <div className="max-w-screen-2xl mx-auto h-full flex flex-col">
+            {/* Top Navigation */}
+            <div className="px-6 py-3 flex items-center justify-between border-b border-[var(--border)] bg-[var(--background)]/50">
+              <div className="flex items-center gap-4">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowChapterList(true)}
+                  className="rounded-xl gap-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  List
+                </Button>
+                <div className="h-4 w-px bg-[var(--border)]" />
+                <span className="text-xs font-bold tracking-tight">
+                  CHAPTER {selectedChapterIdx! + 1}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="rounded-xl border-[var(--border)] h-8 w-8"
+                  onClick={() => setSelectedChapterIdx(prev => prev! > 0 ? prev! - 1 : prev)}
+                  disabled={selectedChapterIdx === 0}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="rounded-xl border-[var(--border)] h-8 w-8"
+                  onClick={() => setSelectedChapterIdx(prev => prev! < thread.chapters.length - 1 ? prev! + 1 : prev)}
+                  disabled={selectedChapterIdx === thread.chapters.length - 1}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
               </div>
             </div>
 
-            {/* Bottom Nav */}
-            <div className="shrink-0 p-4 bg-[var(--background)] border-t border-[var(--border)] flex items-center justify-between">
-              <Button 
-                variant="outline" 
-                className="rounded-xl h-12 px-6 gap-2"
-                disabled={selectedChapterIdx === null || selectedChapterIdx === 0}
-                onClick={() => setSelectedChapterIdx(idx => idx !== null ? idx - 1 : 0)}
-              >
-                <ChevronLeft size={20} /> <span className="hidden sm:inline">Previous</span>
-              </Button>
-              
-              <div className="flex items-center gap-1 sm:gap-2">
-                <Button variant="ghost" size="icon" className="rounded-full hidden sm:flex" onClick={() => setShowChapterList(true)}>
-                  <Layout size={18} />
-                </Button>
-                <div className="w-1 h-8 bg-[var(--border)] mx-1 hidden sm:block" />
-                <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setShowSettings(!showSettings)}>
-                  <Settings size={18} />
-                </Button>
-                <div className="w-1 h-8 bg-[var(--border)] mx-1" />
-                <Button variant="ghost" size="icon" className="rounded-full">
-                  <MoreHorizontal size={18} />
-                </Button>
-              </div>
+            {/* Reader Grid */}
+            <div className="flex-1 grid md:grid-cols-2 gap-0 divide-x divide-[var(--border)] overflow-hidden">
+              {/* Original Content */}
+              {showOriginal && (
+                <div className="flex flex-col h-full overflow-hidden bg-[var(--secondary)]/10">
+                  <div className="px-6 py-3 border-b border-[var(--border)] bg-[var(--background)]/50 flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted-foreground)]">Source Content</span>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-lg text-[var(--muted-foreground)]">
+                      <Info className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  <div className="flex-1 overflow-auto p-10 leading-relaxed font-serif" style={{ fontSize: `${fontSize}px` }}>
+                    {loadingContent ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <span className="text-xs uppercase tracking-widest font-bold">Summoning text...</span>
+                      </div>
+                    ) : (
+                      chapterContent?.content_original || 'No original content found.'
+                    )}
+                  </div>
+                </div>
+              )}
 
-              <Button 
-                variant="outline" 
-                className="rounded-xl h-12 px-6 gap-2"
-                disabled={selectedChapterIdx === null || selectedChapterIdx === thread.chapters.length - 1}
-                onClick={() => setSelectedChapterIdx(idx => idx !== null ? idx + 1 : 0)}
-              >
-                <span className="hidden sm:inline">Next</span> <ChevronRight size={20} />
-              </Button>
+              {/* Translated Content */}
+              {showTranslated && (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="px-6 py-3 border-b border-[var(--border)] bg-[var(--background)]/50 flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--accent)]">AI Translation</span>
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        variant="default" 
+                        size="sm" 
+                        className="h-7 px-3 text-[10px] rounded-lg gap-1.5 shadow-lg shadow-[var(--accent)]/20"
+                        onClick={() => handleTranslateChapter()}
+                        disabled={isTranslating}
+                      >
+                        {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        {isTranslating ? 'TRANSLATING' : 'GENERATE'}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto p-10 leading-relaxed font-serif bg-[var(--background)]" style={{ fontSize: `${fontSize}px` }}>
+                    {loadingContent ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <span className="text-xs uppercase tracking-widest font-bold">Fetching translation...</span>
+                      </div>
+                    ) : translatedText ? (
+                      <div className="whitespace-pre-wrap">{translatedText}</div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full gap-4 text-center opacity-40">
+                        <Languages className="w-12 h-12" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-bold uppercase tracking-tight">No Translation Yet</p>
+                          <p className="text-[10px] max-w-[200px]">Click the generate button above to start AI translation for this chapter.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
-      </main>
+      </div>
+
+      {/* Floating Toolbar (Mobile optimized) */}
+      {!showChapterList && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 p-1.5 glass rounded-2xl border border-[var(--border)] shadow-2xl z-50 animate-in slide-in-from-bottom-8 duration-500">
+           <Button variant="ghost" size="icon" className="rounded-xl h-10 w-10 text-[var(--muted-foreground)]" onClick={() => setShowChapterList(true)}>
+             <Layout className="w-5 h-5" />
+           </Button>
+           <div className="w-px h-6 bg-[var(--border)] mx-1" />
+           <Button variant="ghost" size="icon" className="rounded-xl h-10 w-10 text-[var(--muted-foreground)]" onClick={() => setShowSettings(!showSettings)}>
+             <Settings className="w-5 h-5" />
+           </Button>
+           <Button 
+             variant="default" 
+             size="sm" 
+             className="rounded-xl h-10 px-4 ml-2 gap-2 shadow-xl shadow-[var(--accent)]/30"
+             onClick={handleSaveTranslation}
+           >
+             <Save className="w-4 h-4" />
+             <span className="text-xs font-bold uppercase">Save</span>
+           </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import LorebookEntry, Thread, GlobalSetting
 
@@ -8,7 +9,7 @@ class ContextEngine:
     """
 
     @staticmethod
-    def build_translation_prompt(db: Session, thread_id: int | None, target_lang: str) -> str:
+    def build_translation_prompt(db: Session, thread_id: int | None, target_lang: str, original_text: str | None = None) -> str:
         # User provided guidelines (The "Etik")
         # We adapt the language mention based on target_lang
         
@@ -16,6 +17,7 @@ class ContextEngine:
         lang_name = "Indonesian" if is_indo else "English"
         
         # Base guidelines based on user's request (The "Etik")
+        # Added the 4 specific Rules requested by USER
         guidelines = f"""Role:
 You are an expert translator of Chinese web novels (urban / system / transmigration).
 You must translate only the chapter body and title provided by the user.
@@ -27,6 +29,12 @@ Translate the text from Chinese to natural, engaging, immersive {lang_name} — 
 Keep the original point of view, tense, and voice.
 Translate Chinese slang naturally, not literally.
 Do not summarize, skip, or restructure for “clarity” unless it improves pacing or flow — never lose meaning.
+
+[CORE ETHICS & RULES]:
+1. Context over Dictionary: Always deduce the entity type and domain from the provided context (e.g., surrounding text, sibling terms in a cluster). Prioritize structural alignment with existing translations over generic dictionary lookups.
+2. Translate vs Transliterate: Fully translate objects, artifacts, techniques, and fictional organizations into English. Keep character names and established real-world proper nouns romanized.
+3. World-Building Context: Do not blindly map terms to real-world locations if the text is a fantasy or historical setting (e.g., translate 京都 as 'The Capital' or 'Imperial Capital' rather than 'Kyoto' unless the context explicitly refers to the real-world city).
+4. Honorifics & Address: Follow source language norms. Translate Chinese honorifics to English (e.g., Senior Brother, Elder, Young Master). Retain common Japanese (e.g., -san, -senpai) and Korean (e.g., -ssi, sunbae) honorifics as romanized suffixes/words.
 
 Style Reference:
 - Translate Chinese slang to natural, immersive {lang_name} equivalents (e.g., system terms, cultivation ranks, or urban slang).
@@ -55,6 +63,7 @@ No extra commentary, no summary, no conversational filler.
 Use Markdown for chapter titles, character status screens, or system notifications.
 Ensure double newlines between paragraphs for clear readability.
 After the chapter, if needed, add a “Translator Notes:” section with brief bullet points for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
+**FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
 Do NOT include terms from the Style Reference examples unless they are in the chapter.
 If no new terms, skip.
 """
@@ -62,16 +71,52 @@ If no new terms, skip.
         # Fetch Contexts from DB
         full_prompt = guidelines + "\n\n### ADDITIONAL CONTEXT & KNOWLEDGE\n"
         
-        gs = db.query(GlobalSetting).first()
+        gs_stmt = select(GlobalSetting)
+        gs = db.execute(gs_stmt).scalar_one_or_none()
         if gs and gs.global_context:
             full_prompt += f"\n[Global Literary Style]:\n{gs.global_context}\n"
 
         if thread_id:
-            thread = db.query(Thread).filter(Thread.id == thread_id).first()
+            thread_stmt = select(Thread).where(Thread.id == thread_id)
+            thread = db.execute(thread_stmt).scalar_one_or_none()
             if thread and thread.thread_context:
                 full_prompt += f"\n[Thread-Specific Context]:\n{thread.thread_context}\n"
 
-            entries = db.query(LorebookEntry).filter(LorebookEntry.thread_id == thread_id).all()
+            # Fetch top 50 entries based on usage and recency
+            from sqlalchemy import desc
+            entries_stmt = (
+                select(LorebookEntry)
+                .where(LorebookEntry.thread_id == thread_id)
+                .order_by(desc(LorebookEntry.usage_count), desc(LorebookEntry.last_used_at))
+                .limit(50)
+            )
+            entries = db.execute(entries_stmt).scalars().all()
+            
+            # --- Auto-Increment Usage based on current text ---
+            if original_text and entries:
+                updated = False
+                for e in entries:
+                    if e.original_term in original_text:
+                        e.usage_count += 1
+                        updated = True
+                if updated:
+                    db.commit()
+
+            # --- Auto-Cleanup rare terms if too many ---
+            total_count = db.query(LorebookEntry).filter(LorebookEntry.thread_id == thread_id).count()
+            if total_count > 100:
+                # Remove 20 oldest/least used terms
+                cleanup_stmt = (
+                    select(LorebookEntry)
+                    .where(LorebookEntry.thread_id == thread_id)
+                    .order_by(LorebookEntry.usage_count.asc(), LorebookEntry.last_used_at.asc())
+                    .limit(20)
+                )
+                to_delete = db.execute(cleanup_stmt).scalars().all()
+                for item in to_delete:
+                    db.delete(item)
+                db.commit()
+
             if entries:
                 terms = "\n".join(
                     f"- {e.original_term} → {e.translated_term}" + (f" ({e.notes})" if e.notes else "")
@@ -89,8 +134,8 @@ If no new terms, skip.
         """
         import re
         
-        # Look for headers like "Translator Notes:", "### Translator Notes", etc.
-        header_pattern = re.compile(r"(Translator Notes[:\s]*|### Translator Notes[:\s]*)", re.IGNORECASE)
+        # Look for headers like "Translator Notes:", "Translator's Note:", "Notes:", etc.
+        header_pattern = re.compile(r"(Translator['s]*\s*Notes?[:\s]*|### Translator['s]*\s*Notes?[:\s]*|Notes?[:\s]*)", re.IGNORECASE)
         match = header_pattern.search(full_text)
         
         if not match:
@@ -120,7 +165,7 @@ If no new terms, skip.
                 desc = parts[1].strip()
                 
                 # Filter out "Not present", "Not found", etc.
-                skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a"]
+                skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a", "unknown"]
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
@@ -130,21 +175,31 @@ If no new terms, skip.
                     term = term.strip('"\'')
                     
                     # Check if already exists in this thread
-                    exists = db.query(LorebookEntry).filter(
+                    exists_stmt = select(LorebookEntry).where(
                         LorebookEntry.thread_id == thread_id,
                         LorebookEntry.original_term == term
-                    ).first()
+                    )
+                    exists = db.execute(exists_stmt).scalar_one_or_none()
                     
                     if not exists:
+                        # Refinement: Split desc by '(' to separate translated_term and notes
+                        final_translated = desc
+                        final_notes = f"Auto-extracted"
+                        
+                        if "(" in desc and desc.endswith(")"):
+                            p_start = desc.rfind("(") # Use rfind for the last parenthesis
+                            final_translated = desc[:p_start].strip()
+                            final_notes = desc[p_start+1:-1].strip()
+
                         new_entry = LorebookEntry(
                             thread_id=thread_id,
                             original_term=term,
-                            translated_term=desc, # FIX: use description as the translation
-                            notes=f"Auto-extracted from {separator}"
+                            translated_term=final_translated,
+                            notes=final_notes
                         )
                         db.add(new_entry)
-                        new_entries.append(f"{term} -> {desc}")
+                        new_entries.append(f"{term} -> {final_translated}")
         
         if new_entries:
             db.commit()
-            print(f"Auto-saved {len(new_entries)} new terms to thread {thread_id}: {new_entries}")
+            print(f"✅ [LOREBOOK] Auto-saved {len(new_entries)} new terms to thread {thread_id}: {new_entries}")

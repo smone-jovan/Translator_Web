@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
 > **Terakhir diperbarui:** 16 Mei 2026  
-> **Status Aktif:** Phase 6 — Bulk Translation & Navigation Polish  
+> **Status Aktif:** Phase 7+ — Stability & Quality Guardrails  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -52,17 +52,17 @@
 | **Phase 4** | Automation: Auto-save, Glossary Extraction Loop | ✅ Selesai |
 | **Phase 5** | UI/UX Overhaul: Omni-Sepia & Background Persistence | ✅ Selesai |
 | **Phase 6** | Navigation: Bulk Title Translation & Navigation Polish | ✅ Selesai |
-| **Phase 7** | Polish: Multi-Format (PDF), Performance, Deploy | ✅ Selesai |
-| **Phase 8** | Advanced Monitoring & Performance | 🟡 Sedang berjalan |
+| **Phase 7** | **Stability & Quality**: Chunking, Husky Removal, AbortController | ✅ Selesai |
+| **Phase 8** | Advanced Monitoring & EPUB Export | 🟡 Sedang berjalan |
 
-## Phase 7: Server-Side Configuration (COMPLETE)
-- **Goal**: Cross-device sync for LM Studio settings.
-- **Tech**: `global_settings` table, Dynamic API Discovery (src/lib/api.ts).
-- **Status**: Finished. Mobile devices now follow server defaults.
+## Phase 7: Stability & Reliability Guardrails (COMPLETE)
+- **Goal**: Mencegah kegagalan batch dan *race conditions*.
+- **Implementation**: ADR-011 (Chunking 50, Timeout 300s, Husky removal).
+- **Status**: Finished. Sistem sangat tangguh untuk beban kerja berat.
 
-## Phase 8: Advanced Monitoring & Performance (PLANNING)
-- **Goal**: Better visibility into background tasks and LLM performance.
-- **Tech**: Websockets for real-time progress, Prometheus/Grafana (maybe), UI Dashboard.
+## Phase 8: Advanced Monitoring & Performance (IN PROGRESS)
+- **Goal**: Visibilitas status *background task* dan export fungsional.
+- **Tasks**: Implementasi rute `/api/export-epub` dan UI progress bar global.
 
 Detail task ada di [`docs/implementation_plan.md`](./implementation_plan.md).
 
@@ -73,7 +73,7 @@ Detail task ada di [`docs/implementation_plan.md`](./implementation_plan.md).
 - **Unit test:** Parsing logic (EPUB chapter splitting, Markdown cleaning).
 - **API test:** Semua endpoint via FastAPI Swagger UI (`/docs`).
 - **UI test:** Chrome DevTools — viewport 375px (mobile), 1280px (desktop).
-- **E2E test:** URL extract → Translate → Lorebook inject → Result.
+- **Flicker test**: Rapid navigation check via ReaderPage.
 
 ---
 
@@ -81,12 +81,12 @@ Detail task ada di [`docs/implementation_plan.md`](./implementation_plan.md).
 
 - Self-hosted di mesin lokal (atau Docker).
 - LM Studio harus berjalan di port `1234` sebelum backend distart.
-- Docker Compose planned untuk orkestrasi `frontend + backend + nginx`.
+- Akses mobile via LAN IP (contoh: `192.168.1.x:5173`).
 
 ---
 
 ## Catatan Developer
 
 - Frontend ada di `/src`, jalankan dengan `npm run dev`.
-- Backend (planned) ada di `/backend`, jalankan dengan `uvicorn main:app --reload`.
-- Semua konfigurasi LM Studio disimpan di `localStorage` frontend (Settings page).
+- Backend ada di `/backend`, jalankan dengan `py -m uvicorn main:app --reload --host 0.0.0.0`.
+- **Penting**: Konfigurasi LM Studio kini disimpan di **Server-Side Database** (table `global_settings`), bukan lagi localStorage.

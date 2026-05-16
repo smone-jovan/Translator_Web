@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from sqlalchemy import select
 from database import get_db, LorebookEntry, Thread
 
 router = APIRouter(prefix="/api", tags=["Lorebook"])
@@ -33,13 +34,13 @@ class LorebookOut(BaseModel):
 @router.get("/threads/{thread_id}/lorebook", response_model=list[LorebookOut])
 def list_lorebook(thread_id: int, db: Session = Depends(get_db)):
     """List all lorebook entries for thread."""
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    thread_stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(thread_stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
 
-    return db.query(LorebookEntry).filter(
-        LorebookEntry.thread_id == thread_id
-    ).order_by(LorebookEntry.id).all()
+    entries_stmt = select(LorebookEntry).where(LorebookEntry.thread_id == thread_id).order_by(LorebookEntry.id)
+    return db.execute(entries_stmt).scalars().all()
 
 
 @router.post("/threads/{thread_id}/lorebook", response_model=LorebookOut)
@@ -49,7 +50,8 @@ def create_lorebook_entry(
     db: Session = Depends(get_db),
 ):
     """Add term to lorebook."""
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    thread_stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(thread_stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
 
@@ -68,7 +70,8 @@ def create_lorebook_entry(
 @router.delete("/lorebook/{entry_id}")
 def delete_lorebook_entry(entry_id: int, db: Session = Depends(get_db)):
     """Delete lorebook entry."""
-    entry = db.query(LorebookEntry).filter(LorebookEntry.id == entry_id).first()
+    stmt = select(LorebookEntry).where(LorebookEntry.id == entry_id)
+    entry = db.execute(stmt).scalar_one_or_none()
     if not entry:
         raise HTTPException(404, "Entry not found")
 
