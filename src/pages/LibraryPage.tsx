@@ -18,7 +18,9 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchThreads();
+    (async () => {
+      await fetchThreads();
+    })();
   }, []);
 
   const fetchThreads = async () => {
