@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* ============================================
+   ReadOmni Design System — CSS Variables
+   Source: docs/style.md
+   ============================================ */
+@layer base {
+  :root {
+    --background: #151619;
+    --foreground: #f2f2f3;
+    --card: #1f2023;
+    --card-foreground: #f2f2f3;
+    --popover: #151619;
+    --popover-foreground: #f2f2f3;
+    --primary: #e2e6e9;
+    --primary-foreground: #1c1e21;
+    --secondary: #242529;
+    --secondary-foreground: #f2f2f3;
+    --muted: #34373c;
+    --muted-foreground: #a0a4ac;
+    --accent: #2c2d30;
+    --accent-foreground: #f2f2f3;
+    --destructive: #db5154;
+    --destructive-foreground: #f2f2f3;
+    --border: #282a2e;
+    --input: #242529;
+    --ring: #3d3f43;
+    --radius: 0.5rem;
+
+    /* Alias untuk kemudahan Tailwind */
+    --color-background: var(--background);
+    --color-surface: var(--card);
+    --color-primary: var(--primary);
+    --color-muted: var(--muted);
+    --color-border: var(--border);
+  }
+}
+
+/* ============================================
+   Glassmorphism Component
+   ============================================ */
+.glass {
+  background-color: rgba(31, 32, 35, 0.75); /* --card dengan opacity */
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(40, 42, 46, 0.8); /* --border */
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.glass-subtle {
+  background-color: rgba(36, 37, 41, 0.5); /* --secondary */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(40, 42, 46, 0.5);
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* ============================================
+   Scrollbar Styling (untuk dark mode)
+   ============================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* ============================================
+   Focus Ring
+   ============================================ */
+*:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* ============================================
+   Typography Utilities
+   ============================================ */
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+/* ============================================
+   Animation Utilities
+   ============================================ */
+.fade-in {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
