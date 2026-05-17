@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   X, Plus, BookOpen, Globe, FileText, Sparkles, 
-  Loader2, Check, Search, Filter, Trash2, Lock,
-  Settings2, Zap
+  Loader2, Search, Filter, Trash2, Lock,
+  Settings2, Zap, Edit2
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -144,6 +144,8 @@ export default function ContextLibraryPage() {
         setEntries(prev => prev.map(e => e.id === editingEntryId ? data : e));
       } else {
         setEntries(prev => [...prev, data]);
+        // Remove from suggestions list if matching
+        setSuggestions(prev => prev.filter(sug => sug.original_term.trim().toLowerCase() !== newEntry.original.trim().toLowerCase()));
       }
       
       setNewEntry({ original: '', translated: '', notes: '' });
@@ -152,6 +154,31 @@ export default function ContextLibraryPage() {
     } catch (e) {
       console.error('Failed to add/update entry', e);
     }
+  };
+
+  const quickAddEntry = async (sug: ExtractedTerm) => {
+    if (!sug.original_term.trim() || !selectedThreadId) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          original_term: sug.original_term,
+          translated_term: sug.translated_term || '',
+          notes: sug.notes || undefined
+        })
+      });
+      const data = await res.json();
+      setEntries(prev => [...prev, data]);
+      // Remove from suggestions array immediately
+      setSuggestions(prev => prev.filter(s => s.original_term.toLowerCase() !== sug.original_term.toLowerCase()));
+    } catch (e) {
+      console.error('Failed to quick add entry', e);
+    }
+  };
+
+  const handleDismissSuggestion = (originalTerm: string) => {
+    setSuggestions(prev => prev.filter(s => s.original_term.toLowerCase() !== originalTerm.toLowerCase()));
   };
 
   const startEditing = (entry: LorebookEntry) => {
@@ -528,7 +555,7 @@ export default function ContextLibraryPage() {
                       </h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {suggestions.map((sug, i) => (
-                          <Card key={i} className="border-yellow-200 bg-yellow-50/30 dark:border-yellow-900/30 dark:bg-yellow-900/10">
+                          <Card key={i} className="border-amber-200/50 bg-amber-50/20 dark:border-amber-950/30 dark:bg-amber-950/10">
                             <CardContent className="p-4 flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="font-bold text-sm truncate">{sug.original_term}</div>
@@ -537,19 +564,37 @@ export default function ContextLibraryPage() {
                                 )}
                                 <div className="text-[10px] text-[var(--muted-foreground)] mt-1 line-clamp-2">{sug.notes}</div>
                               </div>
-                              <button 
-                                onClick={() => {
-                                  setNewEntry({ 
-                                    original: sug.original_term, 
-                                    translated: sug.translated_term || '', 
-                                    notes: sug.notes || '' 
-                                  });
-                                  setShowAddForm(true);
-                                }}
-                                className="p-1.5 bg-yellow-100 dark:bg-yellow-900/50 rounded-lg text-yellow-700 dark:text-yellow-400 hover:scale-110 transition-transform"
-                              >
-                                <Check size={14} />
-                              </button>
+                              <div className="flex flex-col gap-1.5 shrink-0">
+                                <button 
+                                  onClick={() => quickAddEntry(sug)}
+                                  title="Quick Add"
+                                  className="p-1.5 bg-emerald-100 dark:bg-emerald-950/40 rounded-lg text-emerald-700 dark:text-emerald-400 hover:scale-110 active:scale-95 transition-all"
+                                >
+                                  <Plus size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setNewEntry({ 
+                                      original: sug.original_term, 
+                                      translated: sug.translated_term || '', 
+                                      notes: sug.notes || '' 
+                                    });
+                                    setShowAddForm(true);
+                                    setEditingEntryId(null);
+                                  }}
+                                  title="Edit & Add"
+                                  className="p-1.5 bg-amber-100 dark:bg-amber-950/40 rounded-lg text-amber-700 dark:text-amber-400 hover:scale-110 active:scale-95 transition-all"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDismissSuggestion(sug.original_term)}
+                                  title="Dismiss"
+                                  className="p-1.5 bg-rose-100 dark:bg-rose-950/40 rounded-lg text-rose-700 dark:text-rose-400 hover:scale-110 active:scale-95 transition-all"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
                             </CardContent>
                           </Card>
                         ))}
