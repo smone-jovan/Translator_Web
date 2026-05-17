@@ -1,7 +1,7 @@
 # Implementation Plan: AI Translator Web (ReadOmni Clone)
 
 > **Dibuat:** 16 Mei 2026  
-> **Status:** 🟡 Phase 1 — Foundation  
+> **Status:** ✅ Phase 10 — Batch Translation Studio & Smart Extraction (Complete)  
 > **Dikerjakan oleh:** Agent-Driven Development
 
 ---
@@ -256,13 +256,13 @@ SQLite Schema
 
 ### Task 11: Settings Page (Konfigurasi LM Studio)
 
-**Deskripsi:** Halaman Settings untuk mengkonfigurasi URL LM Studio dan memilih model. Settings disimpan di `localStorage` frontend.
+**Deskripsi:** Halaman Settings untuk mengkonfigurasi URL LM Studio dan memilih model. Settings disimpan di `localStorage` frontend (sebelum migrasi server-side).
 
 **Acceptance Criteria:**
-- [ ] Input field untuk LM Studio base URL
-- [ ] Dropdown untuk memilih model (ambil dari `/v1/models`)
-- [ ] Test connection button
-- [ ] Tersimpan otomatis ke localStorage
+- [x] Input field untuk LM Studio base URL
+- [x] Dropdown untuk memilih model (ambil dari `/v1/models`)
+- [x] Test connection button
+- [x] Tersimpan otomatis ke localStorage
 
 **Files:** `src/pages/SettingsPage.tsx`  
 **Scope:** Small
@@ -275,6 +275,179 @@ SQLite Schema
 
 **Files:** `README.md`, `docs/SDLC.md`, `docs/Handoff.md`  
 **Scope:** XS
+
+---
+
+## Phase 5: UI/UX Overhaul & Background Persistence
+
+### Task 13: Multi-Theme Implementation (Omni/Sepia/OLED)
+
+**Deskripsi:** Menerapkan desain visual yang sepenuhnya responsif dan mendukung multi-tema (Omni, Sepia, OLED) secara elegan menggunakan CSS variables di `index.css` tanpa hardcoding warna.
+
+**Acceptance Criteria:**
+- [x] Variabel CSS untuk `--background`, `--foreground`, dan aksen untuk masing-masing tema
+- [x] Reader view merespons pergantian tema secara dinamis
+- [x] Overlay settings di ReaderPage terintegrasi dengan pemilih tema visual
+
+**Files:** `src/index.css`, `src/pages/ReaderPage.tsx`, `docs/style.md`  
+**Scope:** Medium (ADR-006)
+
+---
+
+### Task 14: Server-Side Configuration Persistence
+
+**Deskripsi:** Memindahkan konfigurasi LM Studio dan preferensi prefetching dari localStorage ke database SQLite backend untuk memastikan sinkronisasi multi-perangkat yang mulus (Desktop ke HP).
+
+**Acceptance Criteria:**
+- [x] Model database `GlobalSetting` dibuat di SQLite
+- [x] Endpoint API GET/PUT untuk konfigurasi global
+- [x] Sinkronisasi otomatis URL LM Studio, Active Model, dan rentang prefetch
+
+**Files:** `backend/models.py`, `backend/routers/settings.py`, `src/pages/SettingsPage.tsx`  
+**Scope:** Medium (ADR-008)
+
+---
+
+## Phase 6: Bulk Title Translation & Navigation Polish
+
+### Task 15: Bulk Title Translation Engine
+
+**Deskripsi:** Membangun sistem translasi judul novel/bab secara massal menggunakan asinkronitas latar belakang untuk mendukung novel dengan ratusan bab tanpa kegagalan koneksi.
+
+**Acceptance Criteria:**
+- [x] Skema basis data dual-title (judul asli + judul terjemahan)
+- [x] Endpoint `POST /api/threads/{id}/translate-titles` dengan asinkronitas latar belakang
+- [x] Kemampuan memoles judul bab secara bertahap tanpa memblokir pembacaan
+
+**Files:** `backend/routers/translate.py`, `backend/services/background_translator.py`  
+**Scope:** Medium (ADR-007)
+
+---
+
+### Task 16: Navigation UX Polish
+
+**Deskripsi:** Memperbaiki perpindahan bab agar berjalan instan tanpa adanya flickering visual yang mengganggu mata pembaca saat berganti bab novel.
+
+**Acceptance Criteria:**
+- [x] Transisi bab yang mulus di ReaderPage
+- [x] Render halaman terjemahan dan asli secara konsisten
+
+**Files:** `src/pages/ReaderPage.tsx`  
+**Scope:** Small (ADR-011)
+
+---
+
+## Phase 7: Stability & Reliability Guardrails
+
+### Task 17: Stability Optimization (Chunking & Timeouts)
+
+**Deskripsi:** Menerapkan pembatasan chunk (ukuran 50 judul) dan jeda tidur pada GPU lokal untuk menghindari LM Studio throttling. Meningkatkan timeout HTTP backend menjadi 300s. Menghapus Husky git hooks untuk menstabilkan proses commit.
+
+**Acceptance Criteria:**
+- [x] Judul diproses per 50 item dengan jeda `asyncio.sleep(1.0)`
+- [x] Koneksi HTTP ke LM Studio diset dengan timeout 300s
+- [x] Husky dihapus sepenuhnya dari `package.json` dan repo git
+
+**Files:** `backend/services/background_translator.py`, `package.json`  
+**Scope:** Small (ADR-011)
+
+---
+
+### Task 18: Race Condition Control (AbortController)
+
+**Deskripsi:** Mengintegrasikan `AbortController` pada pemanggilan API React frontend untuk membatalkan request penerjemahan sebelumnya secara otomatis apabila pembaca berpindah bab secara cepat.
+
+**Acceptance Criteria:**
+- [x] Sinyal abort dikirim ke fetch request saat komponen unmount atau chapter berubah
+- [x] Tidak ada tabrakan teks bab lama dan baru di panel pembaca
+
+**Files:** `src/pages/ReaderPage.tsx`  
+**Scope:** Small (ADR-011)
+
+---
+
+## Phase 8: Advanced Monitoring & Performance
+
+### Task 19: Background Prefetch System
+
+**Deskripsi:** Mengembangkan fitur prefetching latar belakang sekuensial yang dapat dikonfigurasi (1-5 bab) untuk memastikan bab novel berikutnya telah diterjemahkan sebelum pembaca membukanya.
+
+**Acceptance Criteria:**
+- [x] Slider pemilih rentang prefetch (1-5 bab) di halaman Settings dan ReaderPage overlay
+- [x] Logika antrean latar belakang sekuensial yang ramah memori lokal GPU
+
+**Files:** `backend/services/background_translator.py`, `src/pages/ReaderPage.tsx`  
+**Scope:** Medium (ADR-013)
+
+---
+
+### Task 20: Real-time Polling & UI Progress Indicators
+
+**Deskripsi:** Membuat indikator progres visual di daftar bab dan polling dinamis (5 detik) untuk memberikan feedback kepada pengguna saat bab latar belakang sedang diterjemahkan.
+
+**Acceptance Criteria:**
+- [x] Tampilan badge "Translating..." dan "Prefetched" di sidebar daftar bab
+- [x] Polling berkala yang mendeteksi selesainya background tasks secara otomatis
+
+**Files:** `src/pages/ReaderPage.tsx`, `src/components/ChapterList.tsx`  
+**Scope:** Small (ADR-013)
+
+---
+
+## Phase 9: Premium Book Export
+
+### Task 21: Book Builder Router & Service
+
+**Deskripsi:** Membangun layanan ekspor buku di backend Python untuk menyusun bab-bab terjemahan menjadi file EPUB rapi (atau TXT) lengkap dengan custom cover dan metadata.
+
+**Acceptance Criteria:**
+- [x] Pembuatan EPUB menggunakan EbookLib dengan gaya dan struktur bab profesional
+- [x] Endpoint `POST /api/threads/{id}/export` menerima cover image Base64 dan detail penulis
+
+**Files:** `backend/routers/export.py`, `backend/services/epub_exporter.py`  
+**Scope:** Large (ADR-014)
+
+---
+
+### Task 22: Selective Export UI Modal
+
+**Deskripsi:** Membuat modal antarmuka premium di frontend dengan visual glassmorphism untuk mengonfigurasi opsi ekspor novel, mengunggah cover kustom, dan memilih bab tertentu yang ingin diekspor.
+
+**Acceptance Criteria:**
+- [x] Dialog modal Glassmorphic interaktif dengan opsi upload sampul
+- [x] Opsi filter bab: "Select All" atau "Select Translated Only"
+
+**Files:** `src/components/ExportModal.tsx`, `src/pages/LibraryPage.tsx`  
+**Scope:** Medium (ADR-014)
+
+---
+
+## Phase 10: Batch Translation Studio
+
+### Task 23: Batch Studio Workspace
+
+**Deskripsi:** Menyediakan dasbor Studio Penerjemahan Massal khusus yang mendukung mode Mudah (preset Quick/Normal/Deep scan) dan Lanjutan untuk pemrosesan paralel yang aman.
+
+**Acceptance Criteria:**
+- [x] Halaman antarmuka khusus Studio Penerjemahan Massal
+- [x] Pilihan bab manual/checklist interaktif dan visualisasi Status Center real-time
+- [x] Aturan "Mandatory Overwrite" untuk menjamin konsistensi setelah glosarium diubah
+
+**Files:** `src/pages/BatchStudioPage.tsx`, `backend/routers/batch.py`  
+**Scope:** Large (ADR-015)
+
+---
+
+### Task 24: Smart Context & AI Extract Recommendation
+
+**Deskripsi:** Mengintegrasikan logika AI Extract First yang dinamis. Jika Lorebook suatu thread memiliki < 40 entri, AI ekstraksi glosarium akan diprioritaskan sebelum penerjemahan massal dimulai. Ekstraksi dimulai dari posisi chapter terakhir dibaca secara asinkron sekuensial.
+
+**Acceptance Criteria:**
+- [x] Pengecekan jumlah Lorebook (>40 vs <40 entries) untuk merekomendasikan ekstraksi AI
+- [x] Pemindaian cerdas bertahap berbasis posisi `last_read` chapter bookmark
+
+**Files:** `backend/services/context_engine.py`, `backend/routers/batch.py`  
+**Scope:** Medium (ADR-015)
 
 ---
 
@@ -305,3 +478,15 @@ SQLite Schema
 | Task 10: Library Page | ✅ Selesai | Fetch threads dan Lorebook data secara dinamis |
 | Task 11: Settings Page | ✅ Selesai | LM Studio URL, model selector, test connection |
 | Task 12: Docs Update | ✅ Selesai | README, SDLC, Handoff, style.md semua diperbarui |
+| Task 13: Multi-Theme Implementation | ✅ Selesai | Tema Omni/Sepia/OLED dengan CSS variables (ADR-006) |
+| Task 14: Server Settings Sync | ✅ Selesai | Migrasi data setting ke database SQLite server-side (ADR-008) |
+| Task 15: Bulk Title Translation | ✅ Selesai | Database dual-title & endpoint asinkron (ADR-007) |
+| Task 16: Navigation UX Polish | ✅ Selesai | Menghilangkan kedipan saat pergantian bab pembaca |
+| Task 17: Stability Optimization | ✅ Selesai | Chunking 50 judul, sleep 1.0s, timeout 300s, hapus Husky (ADR-011) |
+| Task 18: Race Condition Controller | ✅ Selesai | Integrasi AbortController pada React fetch (ADR-011) |
+| Task 19: Background Prefetch Range | ✅ Selesai | Slider prefetch 1-5 bab di settings & reader overlay (ADR-013) |
+| Task 20: Polling & progress badges | ✅ Selesai | Indikator visual di daftar bab & polling dinamis 5s (ADR-013) |
+| Task 21: Book Exporter Service | ✅ Selesai | Python EPUB exporter with custom metadata & cover support (ADR-014) |
+| Task 22: Selective Export UI Modal | ✅ Selesai | Dialog Glassmorphic dengan seleksi bab kustom (ADR-014) |
+| Task 23: Batch Studio Workspace | ✅ Selesai | Antarmuka khusus batch translation massal (ADR-015) |
+| Task 24: Smart Context Engine | ✅ Selesai | Logika rekomendasi AI Extract First berdasarkan lorebook (ADR-015) |

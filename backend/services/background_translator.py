@@ -20,13 +20,25 @@ translation_queues = {}
 
 class BackgroundTranslator:
     @staticmethod
-    async def run_chapter_translation(chapter_id: int, thread_id: int, target_lang: str, model: str | None = None, lm_url: str | None = None):
+    async def run_chapter_translation(
+        chapter_id: int, 
+        thread_id: int, 
+        target_lang: str, 
+        model: str | None = None, 
+        lm_url: str | None = None,
+        force_extract: bool = False,
+        force_overwrite: bool = False
+    ):
         """Mulai proses translasi bab di background."""
         if chapter_id in active_tasks:
             print(f"⚠️ Bab {chapter_id} lagi diterjemahin, gak usah dobel.")
             return
 
-        task = asyncio.create_task(BackgroundTranslator._do_translate(chapter_id, thread_id, target_lang, model, lm_url))
+        task = asyncio.create_task(
+            BackgroundTranslator._do_translate(
+                chapter_id, thread_id, target_lang, model, lm_url, force_extract, force_overwrite
+            )
+        )
         active_tasks[chapter_id] = task
         try:
             await task
@@ -35,7 +47,15 @@ class BackgroundTranslator:
                 del active_tasks[chapter_id]
 
     @staticmethod
-    async def _do_translate(chapter_id: int, thread_id: int, target_lang: str, model: str | None = None, lm_url: str | None = None):
+    async def _do_translate(
+        chapter_id: int, 
+        thread_id: int, 
+        target_lang: str, 
+        model: str | None = None, 
+        lm_url: str | None = None,
+        force_extract: bool = False,
+        force_overwrite: bool = False
+    ):
         # 1. Siapkan data bab-nya
         content_original = None
         system_prompt = ""
@@ -53,6 +73,15 @@ class BackgroundTranslator:
                 chapter.translation_status = "error"
                 db.commit()
                 return
+
+            if chapter.content_translated and not force_overwrite:
+                print(f"⏩ Bab {chapter_id} sudah ada terjemahannya, skip.")
+                return
+
+            # AI Extract First Logic
+            if force_extract:
+                print(f"🔍 [AI Extract] Running pre-translation extraction for chapter {chapter_id}")
+                await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model)
 
             # Ambil konten aslinya dan set status ke processing
             content_original = chapter.content_original
@@ -136,20 +165,40 @@ class BackgroundTranslator:
                 curr_ch = db.get(Chapter, current_chapter_id)
                 if not curr_ch: return
 
-                # Cari bab selanjutnya berdasarkan urutan (order)
-                next_ch = db.execute(
+                # Cari bab-bab selanjutnya berdasarkan urutan (order)
+                prefetch_count = getattr(gs, "prefetch_count", 1)
+                prefetch_mode = getattr(gs, "prefetch_mode", "soft")
+                
+                next_chapters_stmt = (
                     select(Chapter)
                     .where(Chapter.thread_id == thread_id)
-                    .where(Chapter.order == curr_ch.order + 1)
-                ).scalar_one_or_none()
+                    .where(Chapter.order > curr_ch.order)
+                    .where(Chapter.order <= curr_ch.order + prefetch_count)
+                    .order_by(Chapter.order)
+                )
+                next_chapters = db.execute(next_chapters_stmt).scalars().all()
 
-                if next_ch and next_ch.translation_status == "idle" and not next_ch.content_translated:
-                    print(f"⏩ Prefetch bab selanjutnya: {next_ch.id}")
-                    # Jalankan translasi bab berikutnya tanpa nunggu (non-blocking)
-                    asyncio.create_task(
-                        BackgroundTranslator.run_chapter_translation(
-                            next_ch.id, thread_id, target_lang, model, lm_url
-                        )
-                    )
+                if prefetch_mode == "soft":
+                    # Soft Load: Only prefetch the VERY NEXT chapter if it's idle
+                    # This creates a sequential chain of translations
+                    if next_chapters:
+                        target_ch = next_chapters[0]
+                        if target_ch.translation_status == "idle" and not target_ch.content_translated:
+                            print(f"⏩ [Soft Load] Prefetching next chapter: {target_ch.id}")
+                            asyncio.create_task(
+                                BackgroundTranslator.run_chapter_translation(
+                                    target_ch.id, thread_id, target_lang, model, lm_url
+                                )
+                            )
+                else:
+                    # Hard Load: Prefetch ALL chapters in the range immediately in parallel
+                    for next_ch in next_chapters:
+                        if next_ch.translation_status == "idle" and not next_ch.content_translated:
+                            print(f"🚀 [Hard Load] Prefetching chapter: {next_ch.id} (Order: {next_ch.order})")
+                            asyncio.create_task(
+                                BackgroundTranslator.run_chapter_translation(
+                                    next_ch.id, thread_id, target_lang, model, lm_url
+                                )
+                            )
         except Exception as e:
             print(f"⚠️ Gagal prefetch: {e}")

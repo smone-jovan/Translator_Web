@@ -1,10 +1,10 @@
 # handoff — status proyek terakhir
-> **update:** 17 Mei 2026 | **status:** phase 8 (context engine beres)
+> **update:** 17 Mei 2026 | **status:** Phase 10 — Batch Translation Studio & Smart Extraction (Complete)
 
 ---
 
 ## overview singkat
-Kita lagi bikin web app buat baca novel yang translasinya pakai AI lokal (LM Studio). Intinya, kita mau pengalaman baca kayak **ReadOmni** tapi data tetap di laptop sendiri. Sekarang sistem sudah punya "otak" buat jaga konsistensi istilah (lorebook) dan aturan etika translasi yang ketat. UI-nya pakai gaya glassmorphism dan sudah nyaman buat dibaca di HP.
+Kita telah berhasil membangun web app untuk membaca novel dengan translasi AI lokal (LM Studio). Pengalaman membaca terinspirasi oleh **ReadOmni** dengan fokus pada keamanan privasi lokal. Proyek saat ini telah menyelesaikan Phase 10 dengan sistem Batch Translation Studio, Lorebook Engine, prefetching cerdas, dan Premium Book Builder (Export System) yang berjalan stabil baik di perangkat Desktop maupun Mobile (iOS/Android).
 
 ---
 
@@ -24,23 +24,49 @@ Kalau mau nyari file, ini peta singkatnya:
 
 Sejauh ini, sistem translasinya sudah lumayan "pinter":
 - **Context engine**: AI gak asal nerjemahin. Dia sudah dikasih instruksi etika (kayak jangan nerjemahin nama orang, jaga honorifik, dsb).
-- **Glossary optimizer**: Biar AI gak pusing, kita cuma kirim 50 istilah paling relevan ke prompt. Kita pakai hitungan `usage_count` buat nentuin mana istilah yang paling sering muncul.
+- **AI Glossary Extraction**: Added Dual-Mode (Easy/Advanced) configuration.
+  - **Easy Mode**: Presets for Quick (5 ch), Normal (15 ch), and Deep (25 ch) scans.
+  - **Advanced Mode**: Granular control over chapter count and character sample size.
+  - **Token Estimation**: Real-time input token estimation (chars/4) to manage context limits.
+  - **Smart Scoping**: Extraction starts from the `last_read` chapter position automatically.
+- **Glossary CRUD**: Full Update (PUT) support implemented for terminology management.
 - **Auto-save glossary**: Kalau AI ngasih catatan di akhir bab, sistem otomatis nangkap istilah itu dan simpan ke database. Gak perlu input manual lagi.
 - **Background task**: Translasi jalan di belakang layar pakai FastAPI BackgroundTasks. Jadi kamu bisa tutup tab atau pindah halaman tanpa ngerusak prosesnya.
+- **Advanced Prefetch System**:
+  - **Configurable Range**: User can set background translation range (1-5 chapters ahead).
+  - **Persistence**: Settings are stored server-side in `GlobalSetting` table for multi-device sync.
+  - **Dynamic UI**: Slider controls available in both main Settings and Reader settings overlay.
+  - **Smart Sequential Execution**: Background translator processes the next N chapters sequentially to avoid overloading the local LLM.
 - **Bulk title translator**: Buat novel yang babnya ribuan, kita sudah bikin sistem chunking (50 bab sekali jalan) biar gak error pas nerjemahin judul.
+- **Premium Book Builder (Export System)**:
+  - **Multi-format**: Mendukung ekspor ke **EPUB** (reflowable) dan **TXT**.
+  - **Custom Metadata**: User bisa atur Judul dan Nama Author secara manual sebelum ekspor.
+  - **Custom Cover**: Mendukung upload gambar cover dari PC untuk disisipkan ke file EPUB.
+  - **Selective Export**: Bisa pilih bab mana saja yang mau diekspor lewat checklist UI (Select All / Select Translated Only).
+- **Batch Translation Studio**: 
+  - **Sequential Processing**: Logic to handle bulk translations without overloading VRAM.
+  - **Soft Load**: Sequential 1-by-1 processing for maximum stability and focus.
+  - **Hard Load**: Adjustable bulk processing (3-20+ chapters) for rapid updates.
+  - **Mandatory Overwrite**: Ensures terminology consistency across all processed chapters.
+  - **Context-Aware Extraction**: Integrated AI extraction toggle (Recommended for batches).
+  - **Status Center**: Real-time progress visualization for bulk tasks.
 
 ### perubahan arsitektur penting:
-1. **Pindah ke background task**: Dulu pakai `asyncio.create_task`, sekarang pakai cara FastAPI yang lebih stabil buat long-running process.
+1. **Pindah ke background task**: 
+- 🧠 **Smart Context**: AI scans up to 50 chapters ahead from your last read position to build a consistent glossary.
+- ⚙️ **Configurable Extraction**: Dual-mode (Easy/Advanced) settings for extraction depth and token management.
+- 📚 **Thread Isolation**: Separate lorebooks and AI suggestions for every novel thread.
 2. **Auto-migration**: Database sekarang bisa update kolom sendiri kalau ada perubahan skema (gak perlu hapus DB manual lagi).
 3. **Usage tracking**: Sekarang tiap istilah di lorebook punya `usage_count` dan `last_used_at`.
+4. **Mobile Bottom Nav**: Navigasi utama sekarang pakai *bottom bar* yang ergonomis di HP (Slice 2 beres).
 
 ---
 
-## apa yang harus dikerjakan selanjutnya?
+## apa yang harus dikerjakan selanjutnya? (Ide Pengembangan Masa Depan)
 
-1. **Error recovery UI**: Kasih tombol buat stop paksa proses background kalau misal macet (stuck).
-2. **Epub export**: Biar novel yang sudah diterjemahin bisa didownload lagi jadi file .epub bersih.
-3. **Character clustering**: Ide buat deteksi otomatis hubungan antar karakter dari teks biar lorebook-nya makin mantap.
+1. **AI Character Relationship Clustering & Visualizer**: Mendeteksi hubungan antar tokoh utama secara otomatis dari hasil pemindaian teks bab novel, kemudian memvisualisasikannya ke dalam grafik hubungan interaktif (dynamic network graph) di panel Lorebook.
+2. **Offline Translation Model Cache & Optimizations**: Mendukung pengunduhan dan caching template gaya penerjemahan novel berbasis GGUF model lokal untuk memaksimalkan efisiensi memori GPU dan VRAM.
+3. **Dynamic CSS Typography Drawer**: Menyediakan antarmuka kustomisasi jenis huruf (font family upload), spasi antar baris (line height), dan layout bacaan yang sepenuhnya dipersonalisasi di dalam panel samping reader drawer.
 
 ---
 

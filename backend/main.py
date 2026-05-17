@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import scrape, epub, translate, threads, lorebook, context
+from routers import scrape, epub, translate, threads, lorebook, context, export
 
 app = FastAPI(
     title="AI Translator Web — Backend",
@@ -43,3 +43,4 @@ app.include_router(translate.router)
 app.include_router(threads.router)
 app.include_router(lorebook.router)
 app.include_router(context.router)
+app.include_router(export.router)

@@ -6,29 +6,29 @@
    ============================================ */
 @layer base {
   :root {
-    /* Default: Sepia / Cream Theme */
-    --background: #f5f1e8;
-    --foreground: #4a3f35;
-    --card: #fdfcf9;
-    --card-foreground: #4a3f35;
-    --popover: #f5f1e8;
-    --popover-foreground: #4a3f35;
-    --primary: #4a3f35;
-    --primary-foreground: #f5f1e8;
-    --secondary: #ebe6da;
-    --secondary-foreground: #4a3f35;
-    --muted: #f0ede4;
-    --muted-foreground: #70655b;
-    --accent: #e5e0d5;
-    --accent-foreground: #4a3f35;
-    --destructive: #d94a38;
-    --destructive-foreground: #f5f1e8;
-    --border: #e5e0d5;
-    --input: #ebe6da;
-    --ring: #8b7e74;
+    /* New Default: Obsidian Night (Deep Dark) */
+    --background: #0a0a0c;
+    --foreground: #f2f2f7;
+    --card: #121214;
+    --card-foreground: #f2f2f7;
+    --popover: #0a0a0c;
+    --popover-foreground: #f2f2f7;
+    --primary: #00f2fe;
+    --primary-foreground: #0a0a0c;
+    --secondary: #1c1c1e;
+    --secondary-foreground: #f2f2f7;
+    --muted: #1c1c1e;
+    --muted-foreground: #a1a1aa;
+    --accent: #4facfe;
+    --accent-foreground: #ffffff;
+    --destructive: #ff453a;
+    --destructive-foreground: #ffffff;
+    --border: rgba(255, 255, 255, 0.08);
+    --input: #1c1c1e;
+    --ring: #00f2fe;
     --radius: 0.75rem;
 
-    /* Tailwind Color Aliases (for shadcn components) */
+    /* Tailwind Color Aliases */
     --color-background: var(--background);
     --color-foreground: var(--foreground);
     --color-card: var(--card);
@@ -114,6 +114,28 @@
     --border: #e2e8f0;
     --input: #f1f5f9;
     --ring: #cbd5e1;
+  }
+
+  [data-theme="sepia"] {
+    --background: #f5f1e8;
+    --foreground: #4a3f35;
+    --card: #fdfcf9;
+    --card-foreground: #4a3f35;
+    --popover: #f5f1e8;
+    --popover-foreground: #4a3f35;
+    --primary: #4a3f35;
+    --primary-foreground: #f5f1e8;
+    --secondary: #ebe6da;
+    --secondary-foreground: #4a3f35;
+    --muted: #f0ede4;
+    --muted-foreground: #70655b;
+    --accent: #e5e0d5;
+    --accent-foreground: #4a3f35;
+    --destructive: #d94a38;
+    --destructive-foreground: #f5f1e8;
+    --border: #e5e0d5;
+    --input: #ebe6da;
+    --ring: #8b7e74;
   }
 
   [data-theme="omni"] {
@@ -221,6 +243,7 @@ body {
     opacity: 0;
     transform: translateY(4px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);

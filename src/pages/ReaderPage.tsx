@@ -8,6 +8,9 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import ExportModal from '@/components/ExportModal';
+import BulkTranslateModal from '@/components/BulkTranslateModal';
 
 interface Chapter {
   id: number;
@@ -25,6 +28,7 @@ interface ThreadDetail {
   source_type: string;
   chapter_count: number;
   chapters: Chapter[];
+  last_read_id?: number | null;
 }
 
 interface ChapterContent {
@@ -57,7 +61,11 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
   const [isTranslatingTitles, setIsTranslatingTitles] = useState(false);
   const [lastReadId, setLastReadId] = useState<number | null>(null);
   const [prefetchEnabled, setPrefetchEnabled] = useState(false);
+  const [prefetchCount, setPrefetchCount] = useState(2);
+  const [prefetchMode, setPrefetchMode] = useState('soft');
   const [globalSettings, setGlobalSettings] = useState<{lm_url?: string, lm_model?: string, target_language?: string}>({});
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastFetchedIdRef = useRef<number | null>(null);
@@ -67,10 +75,61 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
       const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
       const data = await res.json();
       setThread(data);
+      if (data.last_read_id) {
+        setLastReadId(data.last_read_id);
+      }
     } catch {
       console.error('Failed to fetch thread');
     }
   }, [threadId]);
+
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard') => {
+    if (!thread) return;
+    
+    window.dispatchEvent(new CustomEvent('batch-start', { 
+        detail: { total: chapterIds.length } 
+    }));
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}/batch-translate`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            chapter_ids: chapterIds, 
+            ai_extract: aiExtract,
+            overwrite: loadMode === 'hard'
+        })
+      });
+      
+      if (!res.ok) throw new Error('Failed to start batch');
+      
+      let completed = 0;
+      const total = chapterIds.length;
+      
+      const simulateProgress = () => {
+          if (completed < total) {
+              completed++;
+              window.dispatchEvent(new CustomEvent('batch-update', { 
+                  detail: { 
+                      completed, 
+                      currentTitle: `Processing Chapter ${chapterIds[completed-1]}` 
+                  } 
+              }));
+              if (completed === total) {
+                window.dispatchEvent(new CustomEvent('batch-end'));
+                fetchThread(); 
+              } else {
+                setTimeout(simulateProgress, 3000); 
+              }
+          }
+      };
+      
+      simulateProgress();
+    } catch (e) {
+      console.error(e);
+      window.dispatchEvent(new CustomEvent('batch-end'));
+    }
+  };
 
   // Initial Load
   useEffect(() => {
@@ -83,6 +142,8 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
         const gsRes = await fetch(getApiUrl('/api/global-context'));
         const gsData = await gsRes.json();
         setPrefetchEnabled(gsData.prefetch_enabled === 1);
+        setPrefetchCount(gsData.prefetch_count || 2);
+        setPrefetchMode(gsData.prefetch_mode || 'soft');
         setGlobalSettings({
           lm_url: gsData.lm_url,
           lm_model: gsData.lm_model,
@@ -96,6 +157,22 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
     };
     init();
   }, [fetchThread]);
+
+  // Polling for background updates (ADR-013)
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    // Only poll if prefetch is enabled OR if there are processing chapters
+    const hasProcessing = thread?.chapters.some(c => c.translation_status === 'processing');
+    
+    if (prefetchEnabled || hasProcessing) {
+      interval = setInterval(() => {
+        fetchThread();
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [prefetchEnabled, fetchThread, thread?.chapters]);
 
   const handleTranslateChapter = useCallback(async (isResume = false, initialText = '', overrideContent?: string, overrideId?: number) => {
     const textToTranslate = overrideContent || chapterContent?.content_original;
@@ -285,10 +362,20 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
             <CardContent className="p-6 space-y-6">
               <div>
                 <label className="text-xs font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">Font Size</label>
-                <div className="flex items-center gap-4 mt-3">
-                  <Button variant="outline" size="sm" onClick={() => setFontSize(f => Math.max(12, f - 1))} className="flex-1 border-[var(--border)]">-</Button>
-                  <span className="text-sm font-mono w-8 text-center">{fontSize}</span>
-                  <Button variant="outline" size="sm" onClick={() => setFontSize(f => Math.min(32, f + 1))} className="flex-1 border-[var(--border)]">+</Button>
+                <div className="flex flex-col gap-2 mt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-[var(--muted-foreground)]">12px</span>
+                    <span className="text-sm font-bold text-[var(--accent)]">{fontSize}px</span>
+                    <span className="text-[10px] font-mono text-[var(--muted-foreground)]">32px</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="12" 
+                    max="32" 
+                    value={fontSize} 
+                    onChange={(e) => setFontSize(parseInt(e.target.value))}
+                    className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--accent)]"
+                  />
                 </div>
               </div>
               
@@ -336,6 +423,72 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                 </Button>
               </div>
 
+              {prefetchEnabled && (
+                <div className="pt-2 border-t border-[var(--border)] animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider">Prefetch Range</label>
+                    <span className="text-[10px] font-bold text-[var(--primary)] bg-[var(--primary)]/10 px-2 py-0.5 rounded-md">{prefetchCount} Ch</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    value={prefetchCount} 
+                    onChange={async (e) => {
+                      const val = parseInt(e.target.value);
+                      setPrefetchCount(val);
+                      try {
+                        await fetch(getApiUrl('/api/settings'), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ prefetch_count: val })
+                        });
+                      } catch (err) {
+                        console.error("Failed to save prefetch count", err);
+                      }
+                    }}
+                    className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                  />
+                  <div className="flex justify-between text-[9px] text-[var(--muted-foreground)] mt-1 px-1">
+                    <span>1</span>
+                    <span>2</span>
+                    <span>3</span>
+                    <span>4</span>
+                    <span>5</span>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-[var(--border)]">
+                    <label className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider block mb-2">Prefetch Mode</label>
+                    <div className="flex bg-[var(--secondary)] rounded-xl p-1">
+                      <button
+                        onClick={async () => {
+                          setPrefetchMode('soft');
+                          try { await fetch(getApiUrl('/api/settings'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefetch_mode: 'soft' }) }); } catch {}
+                        }}
+                        className={cn(
+                          "flex-1 py-1.5 text-[9px] font-bold rounded-lg transition-all",
+                          prefetchMode === 'soft' ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" : "text-[var(--muted-foreground)]"
+                        )}
+                      >
+                        SOFT
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setPrefetchMode('hard');
+                          try { await fetch(getApiUrl('/api/settings'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefetch_mode: 'hard' }) }); } catch {}
+                        }}
+                        className={cn(
+                          "flex-1 py-1.5 text-[9px] font-bold rounded-lg transition-all",
+                          prefetchMode === 'hard' ? "bg-[var(--card)] text-orange-500 shadow-sm" : "text-[var(--muted-foreground)]"
+                        )}
+                      >
+                        HARD
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Button variant="ghost" size="sm" className="w-full text-xs h-8 mt-2" onClick={() => setShowSettings(false)}>Close</Button>
             </CardContent>
           </Card>
@@ -348,7 +501,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
           <ArrowLeft className="w-5 h-5 text-[var(--foreground)]" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold truncate tracking-tight">{thread.title}</h1>
+          <h1 className="text-sm md:text-lg font-bold truncate tracking-tight">{thread.title}</h1>
           <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-widest flex items-center gap-2">
             {thread.chapter_count} chapters • {thread.source_type}
             {isTranslatingTitles && (
@@ -365,6 +518,18 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
               <Save className="w-4 h-4 mr-2" /> Save
             </Button>
           )}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setIsBulkModalOpen(true)} 
+            className="rounded-xl border-[var(--border)] text-[var(--accent)] hover:bg-[var(--accent)]/10"
+            title="Batch Translate"
+          >
+            <Sparkles className="w-4 h-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setIsExportModalOpen(true)} className="rounded-xl border-[var(--border)]">
+            <Download className="w-4 h-4" />
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)} className="rounded-xl border-[var(--border)]">
             <Settings className="w-4 h-4" />
           </Button>
@@ -385,6 +550,15 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                 <p className="text-[var(--muted-foreground)] text-sm mt-1">Select a chapter to begin translation or reading.</p>
               </div>
               <div className="flex gap-2">
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  className="rounded-xl gap-2 bg-gradient-to-r from-[var(--accent)] to-[#4facfe] text-black font-bold shadow-lg shadow-[var(--accent)]/20"
+                  onClick={() => setIsBulkModalOpen(true)}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Batch Translate
+                </Button>
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -408,71 +582,107 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
               </div>
             </div>
 
-            <div className="glass rounded-3xl overflow-hidden border border-[var(--border)] shadow-xl">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-[var(--secondary)]/50 border-b border-[var(--border)]">
-                  <tr>
-                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-16">#</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Original Title</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Polished Title</th>
-                    <th className="px-6 py-4 text-right text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-24">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {thread.chapters.map((ch, idx) => (
-                    <tr 
-                      key={ch.id}
-                      onClick={() => goToChapter(idx)}
-                      className={`group hover:bg-[var(--accent)]/5 transition-all cursor-pointer relative ${lastReadId === ch.id ? 'bg-[var(--accent)]/5' : ''}`}
-                    >
-                      {/* Read Progress Indicator */}
-                      {lastReadId === ch.id && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
-                      )}
-                      
-                      <td className="px-6 py-4 font-mono text-[10px] text-[var(--muted-foreground)]">
-                        {String(ch.order + 1).padStart(3, '0')}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-xs font-medium text-[var(--muted-foreground)] truncate max-w-[200px]">
-                            {ch.title_original || `Chapter ${ch.order + 1}`}
-                          </span>
-                          <span className="text-[10px] text-[var(--muted-foreground)]/50 mt-0.5">{ch.word_count} words</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          {ch.title_translated ? (
-                            <span className="text-sm font-semibold text-[var(--foreground)]">
-                              {ch.title_translated}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-[var(--muted-foreground)] italic opacity-50">Not polished yet</span>
-                          )}
-                          {ch.has_translation && (
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-500" title="Translated" />
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-2">
+            <div className="space-y-4">
+              {/* Desktop View (Table) */}
+              <div className="hidden md:block glass rounded-3xl overflow-hidden border border-[var(--border)] shadow-xl">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-[var(--secondary)]/50 border-b border-[var(--border)]">
+                    <tr>
+                      <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-16">#</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Chapter Title</th>
+                      <th className="px-6 py-4 text-right text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest w-24">Actions</th>
+                    </tr>
+                  </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {thread.chapters.map((ch, idx) => (
+                        <tr 
+                          key={ch.id}
+                          onClick={() => goToChapter(idx)}
+                          className={`group hover:bg-[var(--accent)]/5 transition-all cursor-pointer ${lastReadId === ch.id ? 'bg-[var(--accent)]/5' : ''}`}
+                        >
+                          <td className="px-6 py-4 font-mono text-[10px] text-[var(--muted-foreground)] relative">
+                            {lastReadId === ch.id && (
+                              <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
+                            )}
+                            {String(ch.order + 1).padStart(3, '0')}
+                          </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-semibold truncate max-w-[400px] ${ch.title_translated ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)] italic opacity-70'}`}>
+                                {ch.title_translated || ch.title_original || `Chapter ${ch.order + 1}`}
+                              </span>
+                              {ch.has_translation && (
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" title="Translated" />
+                              )}
+                              {ch.translation_status === 'processing' && (
+                                <div className="flex items-center gap-1.5">
+                                  <Loader2 className="w-3 h-3 animate-spin text-[var(--accent)]" />
+                                  <span className="text-[10px] font-bold text-[var(--accent)] uppercase animate-pulse">
+                                    {prefetchMode === 'hard' ? 'Aggressive Prefetch...' : 'Translating...'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-[var(--muted-foreground)]/50 mt-0.5">{ch.word_count} words</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
                           <Button 
                             variant="ghost"
                             size="icon"
                             onClick={(e) => handleSingleTitlePolish(ch.id, e)}
                             disabled={isTranslatingTitles}
-                            className="rounded-xl h-9 w-9 text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all opacity-40 group-hover:opacity-100 disabled:opacity-20"
-                            title="Repolish this title"
+                            className="rounded-xl h-9 w-9 text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all opacity-40 group-hover:opacity-100"
                           >
                             <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
                           </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile View (List) */}
+              <div className="md:hidden flex flex-col gap-3">
+                {thread.chapters.map((ch, idx) => (
+                  <div 
+                    key={ch.id}
+                    onClick={() => goToChapter(idx)}
+                    className={`glass p-4 rounded-2xl border border-[var(--border)] active:scale-[0.98] transition-all relative overflow-hidden ${lastReadId === ch.id ? 'bg-[var(--accent)]/5 border-[var(--accent)]/30' : ''}`}
+                  >
+                    {lastReadId === ch.id && (
+                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500" />
+                    )}
+                    <div className="flex items-center gap-4">
+                      <span className="font-mono text-[10px] text-[var(--muted-foreground)] w-8">
+                        {String(ch.order + 1).padStart(3, '0')}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-bold truncate ${ch.title_translated ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)] italic font-medium'}`}>
+                            {ch.title_translated || ch.title_original || `Chapter ${ch.order + 1}`}
+                          </span>
+                          {ch.has_translation && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">{ch.word_count} words</p>
+                      </div>
+                      <Button 
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                        disabled={isTranslatingTitles}
+                        className="h-10 w-10 rounded-xl text-[var(--muted-foreground)] active:bg-[var(--accent)]/10"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -490,10 +700,39 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                   List
                 </Button>
                 <div className="h-4 w-px bg-[var(--border)]" />
-                <span className="text-xs font-bold tracking-tight">
+                <span className="text-[10px] md:text-xs font-bold tracking-tight">
                   CHAPTER {selectedChapterIdx! + 1}
                 </span>
               </div>
+              
+              {/* Reader Controls (Display Mode) */}
+              <div className="flex items-center gap-1 bg-[var(--secondary)]/50 p-1 rounded-2xl border border-[var(--border)] scale-90 md:scale-100">
+                <Button 
+                  variant={displayMode === 'original' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setDisplayMode('original')}
+                  className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'original' ? 'shadow-sm bg-[var(--background)]' : ''}`}
+                >
+                  ORI
+                </Button>
+                <Button 
+                  variant={displayMode === 'translated' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setDisplayMode('translated')}
+                  className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'translated' ? 'shadow-sm bg-[var(--background)]' : ''}`}
+                >
+                  TRS
+                </Button>
+                <Button 
+                  variant={displayMode === 'both' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setDisplayMode('both')}
+                  className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'both' ? 'shadow-sm bg-[var(--background)]' : ''}`}
+                >
+                  BOTH
+                </Button>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Button 
                   variant="outline" 
@@ -593,6 +832,9 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
            <Button variant="ghost" size="icon" className="rounded-xl h-10 w-10 text-[var(--muted-foreground)]" onClick={() => setShowSettings(!showSettings)}>
              <Settings className="w-5 h-5" />
            </Button>
+           <Button variant="ghost" size="icon" className="rounded-xl h-10 w-10 text-[var(--muted-foreground)]" onClick={() => setIsExportModalOpen(true)}>
+             <Download className="w-5 h-5" />
+           </Button>
            <Button 
              variant="default" 
              size="sm" 
@@ -603,6 +845,26 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
              <span className="text-xs font-bold uppercase">Save</span>
            </Button>
         </div>
+      )}
+
+      {/* Export Modal */}
+      <ExportModal 
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        threadId={threadId}
+        threadTitle={thread.title}
+        chapters={thread.chapters}
+      />
+
+      {thread && (
+        <BulkTranslateModal
+          isOpen={isBulkModalOpen}
+          onClose={() => setIsBulkModalOpen(false)}
+          threadId={threadId}
+          threadTitle={thread.title}
+          chapters={thread.chapters}
+          onStartBatch={handleStartBatch}
+        />
       )}
     </div>
   );

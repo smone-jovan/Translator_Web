@@ -17,6 +17,9 @@ Pengaturan berikut sekarang tersinkronisasi secara otomatis di seluruh perangkat
 - **LM Studio URL**: Default `http://localhost:1234` (atau IP laptop jika diakses dari HP).
 - **Active Model**: Model yang dipilih di Laptop akan otomatis terpilih di HP.
 - **Target Language**: Bahasa tujuan (Indonesian/English).
+- **Advanced Prefetch**: 
+  - **Toggle**: Mengaktifkan/menonaktifkan translasi otomatis bab selanjutnya.
+  - **Range (1-5 Ch)**: Mengatur seberapa banyak bab yang akan diterjemahkan di latar belakang secara otomatis.
 
 ## 4. Troubleshooting
 Jika HP tidak bisa konek:

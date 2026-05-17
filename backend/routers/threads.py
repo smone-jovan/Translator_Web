@@ -23,6 +23,13 @@ class ImportURLRequest(BaseModel):
     url: str
 
 
+class BatchTranslateRequest(BaseModel):
+    chapter_ids: List[int]
+    ai_extract: bool = True
+    target_lang: Optional[str] = "Indonesian"
+    overwrite: bool = True
+
+
 class ChapterOut(BaseModel):
     id: int
     order: int
@@ -44,6 +51,7 @@ class ThreadItemOut(BaseModel):
     chapter_count: int
     created_at: Optional[str]
     last_read: Optional[str] = None
+    last_read_id: Optional[int] = None
     progress: int = 0
 
 
@@ -109,6 +117,7 @@ def list_threads(db: Session = Depends(get_db)):
             chapter_count=ch_count,
             created_at=str(t.created_at) if t.created_at else None,
             last_read=last_read_title,
+            last_read_id=bookmark.chapter_id if bookmark else None,
             progress=progress
         ))
     return result
@@ -139,6 +148,10 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
         for c in chapters
     ]
 
+    # Get bookmark for this thread
+    bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
+    bookmark = db.execute(bookmark_stmt).scalar_one_or_none()
+
     return ThreadDetail(
         id=thread.id,
         title=thread.title,
@@ -147,6 +160,7 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
         chapter_count=len(ch_out),
         created_at=str(thread.created_at) if thread.created_at else None,
         chapters=ch_out,
+        last_read_id=bookmark.chapter_id if bookmark else None
     )
 
 
@@ -175,27 +189,29 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
     target_lang = gs.target_language if gs else "Indonesian"
     model = gs.lm_model if gs else None
     ai_url = gs.lm_url if gs else "http://localhost:1234"
+    prefetch_on = gs.prefetch_enabled == 1 if gs else False
 
-    # 1. Trigger background translation for CURRENT chapter if untranslated
-    if chapter.translation_status == "idle" and not chapter.content_translated:
+    if prefetch_on:
+        # 1. Trigger background translation for CURRENT chapter if untranslated
+        if chapter.translation_status == "idle" and not chapter.content_translated:
+            background_tasks.add_task(
+                BackgroundTranslator.run_chapter_translation,
+                chapter_id=chapter_id,
+                thread_id=thread_id,
+                target_lang=target_lang,
+                model=model,
+                lm_url=ai_url
+            )
+
+        # 2. Trigger prefetch check for NEXT chapter
         background_tasks.add_task(
-            BackgroundTranslator.run_chapter_translation,
-            chapter_id=chapter_id,
+            BackgroundTranslator.check_and_prefetch,
+            current_chapter_id=chapter_id,
             thread_id=thread_id,
             target_lang=target_lang,
             model=model,
             lm_url=ai_url
         )
-
-    # 2. Trigger prefetch check for NEXT chapter
-    background_tasks.add_task(
-        BackgroundTranslator.check_and_prefetch,
-        current_chapter_id=chapter_id,
-        thread_id=thread_id,
-        target_lang=target_lang,
-        model=model,
-        lm_url=ai_url
-    )
 
     return ChapterContent(
         id=chapter.id,
@@ -405,3 +421,51 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return {"thread_id": thread.id, "chapter_id": chapter.id}
+@router.post("/threads/{thread_id}/batch-translate")
+async def batch_translate(
+    thread_id: int, 
+    req: BatchTranslateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Trigger batch translation for multiple chapters."""
+    from database import LorebookEntry
+    from services.background_translator import BackgroundTranslator
+    
+    # 1. Check thread existence
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    # 2. Check Lorebook count (Smart Logic)
+    lore_count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == thread_id)
+    lore_count = db.execute(lore_count_stmt).scalar() or 0
+    
+    # Get global settings
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    lm_url = gs.lm_url if gs else "http://localhost:1234"
+    model = gs.lm_model if gs else None
+
+    # 3. Process each chapter in background
+    for ch_id in req.chapter_ids:
+        # If ai_extract is requested, we run it BEFORE translation
+        # In a real batch, we might want to extract for ALL first, then translate ALL
+        # But for now, we'll queue them sequentially in the background_translator logic
+        background_tasks.add_task(
+            BackgroundTranslator.run_chapter_translation,
+            chapter_id=ch_id,
+            thread_id=thread_id,
+            target_lang=req.target_lang,
+            model=model,
+            lm_url=lm_url,
+            force_extract=req.ai_extract,
+            force_overwrite=req.overwrite
+        )
+
+    return {
+        "status": "queued",
+        "batch_size": len(req.chapter_ids),
+        "lore_count": lore_count,
+        "recommend_extract": lore_count < 40
+    }

@@ -30,6 +30,8 @@ class GlobalSetting(Base):
     lm_model: Mapped[Optional[str]] = mapped_column(String(500))
     target_language: Mapped[str] = mapped_column(String(50), default="Indonesian")
     prefetch_enabled: Mapped[int] = mapped_column(default=0)  # 0 = disabled, 1 = enabled
+    prefetch_count: Mapped[int] = mapped_column(default=2)    # 1-5 chapters
+    prefetch_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
 
 
 class Thread(Base):
@@ -118,4 +120,21 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-migration: check for missing columns in global_settings
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    columns = [c['name'] for c in inspector.get_columns('global_settings')]
+    
+    with engine.connect() as conn:
+        if 'prefetch_count' not in columns:
+            print("⚠️ Migrating: Adding 'prefetch_count' to global_settings")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_count INTEGER DEFAULT 2"))
+            conn.commit()
+            
+        if 'prefetch_mode' not in columns:
+            print("⚠️ Migrating: Adding 'prefetch_mode' to global_settings")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_mode VARCHAR(20) DEFAULT 'soft'"))
+            conn.commit()
+            
     print("[OK] Database initialized - app.db ready.")

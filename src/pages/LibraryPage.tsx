@@ -1,8 +1,14 @@
 import { BookOpen, Globe, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
+import BulkTranslateModal from '@/components/BulkTranslateModal';
+import BulkStatusCenter from '@/components/BulkStatusCenter';
+import AutoAwesome from '@mui/icons-material/AutoAwesome';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import IconButton from '@mui/material/IconButton';
 
 interface ThreadItem {
   id: number;
@@ -19,7 +25,26 @@ interface LibraryPageProps {
   onOpenThread?: (threadId: number) => void;
 }
 
-const LibraryBookCard = ({ thread, onOpen, onDelete }: { thread: ThreadItem, onOpen: () => void, onDelete: () => void }) => {
+const LibraryBookCard = ({ 
+  thread, 
+  onOpen, 
+  onDelete, 
+  onBatchTranslate 
+}: { 
+  thread: ThreadItem, 
+  onOpen: () => void, 
+  onDelete: () => void,
+  onBatchTranslate: () => void
+}) => {
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
   return (
     <Card className="overflow-hidden group hover:shadow-xl hover:border-[var(--primary)]/30 transition-all duration-300 bg-[var(--card)] border-[var(--border)]">
       <CardContent className="p-0 flex flex-col h-full">
@@ -40,7 +65,7 @@ const LibraryBookCard = ({ thread, onOpen, onDelete }: { thread: ThreadItem, onO
 
           {/* Hover Actions */}
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-            <Button size="icon" className="rounded-full bg-white text-black hover:bg-white/90" onClick={onOpen}>
+            <Button size="icon" className="rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90" onClick={onOpen}>
               <Play size={20} className="fill-current" />
             </Button>
             <Button variant="destructive" size="icon" className="rounded-full" onClick={onDelete}>
@@ -55,9 +80,43 @@ const LibraryBookCard = ({ thread, onOpen, onDelete }: { thread: ThreadItem, onO
             <h3 className="font-bold text-sm text-[var(--foreground)] line-clamp-1 leading-tight group-hover:text-[var(--primary)] transition-colors">
               {thread.title}
             </h3>
-            <button className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+            <IconButton 
+              size="small" 
+              onClick={handleClick}
+              sx={{ color: 'var(--muted-foreground)', '&:hover': { color: 'var(--foreground)' } }}
+            >
               <MoreVertical size={16} />
-            </button>
+            </IconButton>
+            <Menu
+              anchorEl={anchorEl}
+              open={open}
+              onClose={handleClose}
+              PaperProps={{
+                sx: {
+                  background: 'var(--card)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--foreground)',
+                  borderRadius: '12px',
+                  mt: 0.5,
+                  '& .MuiMenuItem-root': {
+                    fontSize: '0.75rem',
+                    gap: 1.5,
+                    px: 2,
+                    py: 1,
+                    '&:hover': { background: 'rgba(255,255,255,0.05)' }
+                  }
+                }
+              }}
+            >
+              <MenuItem onClick={() => { onBatchTranslate(); handleClose(); }}>
+                <AutoAwesome sx={{ fontSize: 16, color: 'var(--primary)' }} />
+                Translate All (Batch)
+              </MenuItem>
+              <MenuItem onClick={() => { onDelete(); handleClose(); }} sx={{ color: '#ef4444' }}>
+                <Trash2 size={16} />
+                Delete Book
+              </MenuItem>
+            </Menu>
           </div>
           <p className="text-[10px] text-[var(--muted-foreground)] mb-4">{thread.author || 'Unknown Author'}</p>
           
@@ -98,6 +157,8 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBatchThread, setSelectedBatchThread] = useState<any>(null);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -126,63 +187,145 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
+  const handleOpenBatchModal = async (thread: ThreadItem) => {
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}`));
+      const data = await res.json();
+      setSelectedBatchThread(data);
+      setIsBatchModalOpen(true);
+    } catch {
+      console.error('Failed to fetch thread details for batch');
+    }
+  };
+
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard') => {
+    if (!selectedBatchThread) return;
+    
+    // Dispatch start event
+    window.dispatchEvent(new CustomEvent('batch-start', { 
+        detail: { total: chapterIds.length } 
+    }));
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedBatchThread.id}/batch-translate`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            chapter_ids: chapterIds, 
+            ai_extract: aiExtract,
+            overwrite: loadMode === 'hard'
+        })
+      });
+      
+      if (!res.ok) throw new Error('Failed to start batch');
+      
+      // We simulate updates for now or the status center polls
+      let completed = 0;
+      const total = chapterIds.length;
+      
+      const simulateProgress = () => {
+          if (completed < total) {
+              completed++;
+              window.dispatchEvent(new CustomEvent('batch-update', { 
+                  detail: { 
+                      completed, 
+                      currentTitle: `Processing Chapter ${chapterIds[completed-1]}` 
+                  } 
+              }));
+              if (completed === total) {
+                window.dispatchEvent(new CustomEvent('batch-end'));
+                fetchThreads(); // Refresh progress
+              } else {
+                setTimeout(simulateProgress, 3000); 
+              }
+          }
+      };
+      
+      simulateProgress();
+
+    } catch (e) {
+      console.error(e);
+      window.dispatchEvent(new CustomEvent('batch-end'));
+    }
+  };
+
   const filteredThreads = threads.filter(t => 
     t.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Find most recently read book for the banner
-  const lastReadThread = threads
-    .filter(t => t.progress > 0)
-    .sort((a, b) => (a.progress === 100 ? 1 : -1)) // Optional: prioritize non-finished
-    .slice(0, 1)[0];
+  // Find all books with reading progress
+  const activeReads = threads
+    .filter(t => t.progress > 0 && t.progress < 100)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-12 py-8 px-4 sm:px-6 animate-in fade-in duration-700">
-      {/* Continue Reading Banner */}
-      {lastReadThread && (
-        <section className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-[var(--primary)]/20 to-[var(--accent)]/5 border border-[var(--primary)]/10 shadow-2xl">
-          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-            <BookOpen size={180} />
-          </div>
-          <div className="relative p-8 md:p-12 flex flex-col md:flex-row items-center gap-10">
-            <div className="w-40 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-2xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/20 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500">
-               <div className="w-full h-full flex items-center justify-center opacity-40">
-                  {lastReadThread.source_type === 'epub' ? <BookOpen size={48} /> : <Globe size={48} />}
-               </div>
+      {/* Continue Reading Carousel */}
+      {activeReads.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--muted-foreground)] flex items-center gap-2">
+              <Clock size={14} /> Continue Reading
+            </h2>
+            <div className="flex gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)]" />
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)]/30" />
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)]/10" />
             </div>
-            <div className="flex-1 space-y-6 text-center md:text-left">
-              <div className="space-y-2">
-                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] text-[10px] font-bold uppercase tracking-widest">
-                  <Clock size={12} /> Continue Reading
-                </span>
-                <h2 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">{lastReadThread.title}</h2>
-                <p className="text-[var(--muted-foreground)] font-medium">Last read: <span className="text-[var(--foreground)]">{lastReadThread.last_read || 'Chapter 1'}</span></p>
-              </div>
-              
-              <div className="space-y-3 max-w-md mx-auto md:mx-0">
-                <div className="flex justify-between items-end">
-                   <span className="text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Your Progress</span>
-                   <span className="text-sm font-black text-[var(--primary)]">{lastReadThread.progress}%</span>
+          </div>
+          
+          <div className="flex gap-6 overflow-x-auto pb-6 pt-2 px-2 no-scrollbar snap-x snap-mandatory">
+            {activeReads.map(book => (
+              <section 
+                key={book.id}
+                className="relative flex-shrink-0 w-[90%] md:w-[600px] snap-center overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-[var(--primary)]/10 to-[var(--accent)]/5 border border-[var(--border)] shadow-xl hover:shadow-2xl hover:border-[var(--primary)]/30 transition-all duration-500 group"
+              >
+                <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none group-hover:scale-110 transition-transform duration-700">
+                  <BookOpen size={140} />
                 </div>
-                <div className="h-2 w-full bg-[var(--secondary)] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-[var(--primary)] to-[var(--accent)] shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)] transition-all duration-1000 ease-out" 
-                    style={{ width: `${lastReadThread.progress}%` }}
-                  />
-                </div>
-              </div>
+                
+                <div className="relative p-6 md:p-10 flex flex-row items-center gap-6 md:gap-10">
+                  {/* Compact Cover */}
+                  <div className="w-24 md:w-32 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/10 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500">
+                    <div className="w-full h-full flex items-center justify-center opacity-40">
+                      {book.source_type === 'epub' ? <BookOpen size={32} /> : <Globe size={32} />}
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-4 justify-center md:justify-start pt-2">
-                <Button size="lg" className="rounded-2xl px-8 font-bold shadow-xl shadow-[var(--primary)]/25 gap-3" onClick={() => onOpenThread?.(lastReadThread.id)}>
-                  <Play size={18} className="fill-current" /> Resume Reading
-                </Button>
-                <Button variant="ghost" className="rounded-2xl text-[var(--muted-foreground)] hover:text-[var(--foreground)]" onClick={() => onOpenThread?.(lastReadThread.id)}>
-                  Details
-                </Button>
-              </div>
-            </div>
+                  <div className="flex-1 space-y-4 min-w-0">
+                    <div className="space-y-1">
+                      <h2 className="text-xl md:text-2xl font-black tracking-tight leading-tight truncate">{book.title}</h2>
+                      <p className="text-[10px] md:text-xs text-[var(--muted-foreground)] font-medium truncate">
+                        Last: <span className="text-[var(--foreground)]">{book.last_read || 'Chapter 1'}</span>
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2 max-w-xs">
+                      <div className="flex justify-between items-end">
+                        <span className="text-[9px] font-bold text-[var(--muted-foreground)] uppercase tracking-wider">{book.progress}% Done</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-[var(--secondary)] rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-[var(--primary)] to-[var(--accent)] transition-all duration-1000 ease-out" 
+                          style={{ width: `${book.progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-1">
+                      <Button size="sm" className="rounded-xl px-5 font-bold shadow-lg shadow-[var(--primary)]/20 text-[10px] h-9" onClick={() => onOpenThread?.(book.id)}>
+                        <Play size={14} className="fill-current mr-2" /> RESUME
+                      </Button>
+                      <Button variant="ghost" size="sm" className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground)] text-[10px] h-9" onClick={() => onOpenThread?.(book.id)}>
+                        DETAILS
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ))}
           </div>
-        </section>
+        </div>
       )}
 
       {/* Header */}
@@ -219,6 +362,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             thread={thread} 
             onOpen={() => onOpenThread?.(thread.id)}
             onDelete={() => handleDelete(thread.id)}
+            onBatchTranslate={() => handleOpenBatchModal(thread)}
           />
         ))}
 
@@ -237,6 +381,18 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
           </div>
         )}
       </div>
+      {selectedBatchThread && (
+        <BulkTranslateModal 
+          isOpen={isBatchModalOpen}
+          onClose={() => setIsBatchModalOpen(false)}
+          threadId={selectedBatchThread.id}
+          threadTitle={selectedBatchThread.title}
+          chapters={selectedBatchThread.chapters || []}
+          onStartBatch={handleStartBatch}
+        />
+      )}
+
+      <BulkStatusCenter />
     </div>
   );
 }

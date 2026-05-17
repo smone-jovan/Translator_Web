@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   X, Plus, BookOpen, Globe, Save, FileText, Sparkles, 
-  Loader2, Check, Search, Filter, MoreVertical, Trash2 
+  Loader2, Check, Search, Filter, MoreVertical, Trash2, Lock,
+  Settings2, ChevronDown, Zap
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ interface ThreadItem {
 
 interface ExtractedTerm {
   original_term: string;
+  translated_term?: string;
   notes?: string;
 }
 
@@ -42,10 +44,25 @@ export default function ContextLibraryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [newEntry, setNewEntry] = useState({ original: '', translated: '', notes: '' });
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
 
   // AI Extract
   const [isExtracting, setIsExtracting] = useState(false);
   const [suggestions, setSuggestions] = useState<ExtractedTerm[]>([]);
+  const [extractMode, setExtractMode] = useState<'easy' | 'advanced'>('easy');
+  const [extractSettings, setExtractSettings] = useState({ chapterCount: 25, sampleSize: 1000 });
+  const [showExtractSettings, setShowExtractSettings] = useState(false);
+  const [lastExtractionMetadata, setLastExtractionMetadata] = useState<any>(null);
+
+  // Refs
+  const formRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to form
+  useEffect(() => {
+    if (showAddForm && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [showAddForm]);
 
   // Initial load
   useEffect(() => {
@@ -68,8 +85,14 @@ export default function ContextLibraryPage() {
     if (!selectedThreadId) {
       setEntries([]);
       setThreadContext('');
+      setSuggestions([]);
+      setEditingEntryId(null);
+      setShowAddForm(false);
       return;
     }
+    setSuggestions([]);
+    setEditingEntryId(null);
+    setShowAddForm(false);
     fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`)
       .then(res => res.json())
       .then(data => setEntries(data))
@@ -102,8 +125,13 @@ export default function ContextLibraryPage() {
   const addEntry = async () => {
     if (!newEntry.original.trim() || !newEntry.translated.trim() || !selectedThreadId) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`, {
-        method: 'POST',
+      const isEdit = editingEntryId !== null;
+      const url = isEdit 
+        ? `http://localhost:8000/api/lorebook/${editingEntryId}`
+        : `http://localhost:8000/api/threads/${selectedThreadId}/lorebook`;
+      
+      const res = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           original_term: newEntry.original,
@@ -112,12 +140,29 @@ export default function ContextLibraryPage() {
         })
       });
       const data = await res.json();
-      setEntries(prev => [...prev, data]);
+      
+      if (isEdit) {
+        setEntries(prev => prev.map(e => e.id === editingEntryId ? data : e));
+      } else {
+        setEntries(prev => [...prev, data]);
+      }
+      
       setNewEntry({ original: '', translated: '', notes: '' });
+      setEditingEntryId(null);
       setShowAddForm(false);
     } catch (e) {
-      console.error('Failed to add entry', e);
+      console.error('Failed to add/update entry', e);
     }
+  };
+
+  const startEditing = (entry: LorebookEntry) => {
+    setNewEntry({
+      original: entry.original_term,
+      translated: entry.translated_term,
+      notes: entry.notes || ''
+    });
+    setEditingEntryId(entry.id);
+    setShowAddForm(true);
   };
 
   const removeEntry = async (id: number) => {
@@ -140,16 +185,31 @@ export default function ContextLibraryPage() {
       const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/extract-context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lm_url: lmUrl, model: lmModel || undefined })
+        body: JSON.stringify({ 
+          lm_url: lmUrl, 
+          model: lmModel || undefined,
+          chapter_count: extractSettings.chapterCount,
+          sample_size: extractSettings.sampleSize
+        })
       });
       const data = await res.json();
       setSuggestions(data.terms || []);
+      setLastExtractionMetadata(data.metadata || null);
     } catch (e) {
       alert('Extraction failed.');
     } finally {
       setIsExtracting(false);
     }
   };
+
+  const setPreset = (type: 'quick' | 'normal' | 'deep') => {
+    if (type === 'quick') setExtractSettings({ chapterCount: 5, sampleSize: 1000 });
+    else if (type === 'normal') setExtractSettings({ chapterCount: 15, sampleSize: 1000 });
+    else if (type === 'deep') setExtractSettings({ chapterCount: 25, sampleSize: 1000 });
+    setExtractMode('easy');
+  };
+
+  const estTokens = Math.ceil((extractSettings.chapterCount * extractSettings.sampleSize) / 4);
 
   const selectedThread = threads.find(t => t.id === selectedThreadId);
 
@@ -198,33 +258,139 @@ export default function ContextLibraryPage() {
         {selectedThread ? (
           <>
             {/* Thread Header */}
-            <header className="px-8 py-6 border-b border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm">
+            <header className="px-8 py-6 border-b border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm relative z-[60]">
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
                     {selectedThread.title}
                   </h1>
                   <p className="text-sm text-[var(--muted-foreground)] mt-1">
-                    Consistent translation memory for this series.
+                    Manage terminology and translation behavior.
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 relative">
+                  <div className="flex items-center bg-[var(--card)] border border-[var(--border)] rounded-xl p-1 shadow-sm">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={cn(
+                        "rounded-lg gap-2 h-8 px-3 transition-all",
+                        isExtracting ? "opacity-50" : "hover:bg-[var(--accent)] hover:text-[var(--primary)]"
+                      )}
+                      onClick={handleExtractContext}
+                      disabled={isExtracting}
+                    >
+                      {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="text-yellow-500" />}
+                      <span className="hidden sm:inline">AI Extract</span>
+                    </Button>
+                    <div className="w-[1px] h-4 bg-[var(--border)] mx-1" />
+                    <button 
+                      onClick={() => setShowExtractSettings(!showExtractSettings)}
+                      className={cn(
+                        "p-1.5 rounded-lg transition-colors hover:bg-[var(--secondary)]",
+                        showExtractSettings ? "text-[var(--primary)] bg-[var(--accent)]" : "text-[var(--muted-foreground)]"
+                      )}
+                    >
+                      <Settings2 size={14} />
+                    </button>
+                  </div>
+
+                  {/* Extract Settings Popover */}
+                  {showExtractSettings && (
+                    <div className="absolute top-full right-0 mt-4 w-72 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] z-[100] p-5 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-bold flex items-center gap-2">
+                          <Zap size={14} className="text-yellow-500" /> Extraction Scope
+                        </h4>
+                        <div className="flex bg-[var(--secondary)] rounded-lg p-0.5">
+                          <button 
+                            onClick={() => setExtractMode('easy')}
+                            className={cn("px-2 py-1 text-[10px] font-bold rounded-md transition-all", extractMode === 'easy' ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]")}
+                          >
+                            EASY
+                          </button>
+                          <button 
+                            onClick={() => setExtractMode('advanced')}
+                            className={cn("px-2 py-1 text-[10px] font-bold rounded-md transition-all", extractMode === 'advanced' ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]")}
+                          >
+                            ADV
+                          </button>
+                        </div>
+                      </div>
+
+                      {extractMode === 'easy' ? (
+                        <div className="grid grid-cols-3 gap-2 mb-4">
+                          {[
+                            { id: 'quick', label: 'Quick', ch: 5 },
+                            { id: 'normal', label: 'Normal', ch: 15 },
+                            { id: 'deep', label: 'Deep', ch: 25 }
+                          ].map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => setPreset(p.id as any)}
+                              className={cn(
+                                "flex flex-col items-center py-2 rounded-xl border-2 transition-all",
+                                extractSettings.chapterCount === p.ch && extractSettings.sampleSize === 1000
+                                  ? "border-[var(--primary)] bg-[var(--accent)]/10"
+                                  : "border-[var(--border)] hover:border-[var(--muted-foreground)]"
+                              )}
+                            >
+                              <span className="text-[10px] font-bold uppercase">{p.label}</span>
+                              <span className="text-[9px] opacity-60">{p.ch} Ch</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="space-y-3 mb-4">
+                          <div>
+                            <div className="flex justify-between mb-1">
+                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Chapters Ahead</label>
+                              <span className="text-[10px] font-mono text-[var(--primary)]">{extractSettings.chapterCount}</span>
+                            </div>
+                            <input 
+                              type="range" min="1" max="50" step="1"
+                              value={extractSettings.chapterCount}
+                              onChange={e => setExtractSettings({...extractSettings, chapterCount: parseInt(e.target.value)})}
+                              className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between mb-1">
+                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Sample Size (Chars)</label>
+                              <span className="text-[10px] font-mono text-[var(--primary)]">{extractSettings.sampleSize}</span>
+                            </div>
+                            <input 
+                              type="range" min="200" max="4000" step="100"
+                              value={extractSettings.sampleSize}
+                              onChange={e => setExtractSettings({...extractSettings, sampleSize: parseInt(e.target.value)})}
+                              className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)]">Est. Input</span>
+                          <span className="text-xs font-mono font-bold text-[var(--foreground)]">~{estTokens.toLocaleString()} tokens</span>
+                        </div>
+                        <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded-lg" onClick={() => setShowExtractSettings(false)}>
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   <Button 
-                    variant="outline" 
                     size="sm" 
-                    className="rounded-lg gap-2"
-                    onClick={handleExtractContext}
-                    disabled={isExtracting}
+                    className="rounded-xl gap-2 shadow-lg shadow-[var(--primary)]/20"
+                    onClick={() => {
+                      setEditingEntryId(null);
+                      setNewEntry({ original: '', translated: '', notes: '' });
+                      setShowAddForm(true);
+                    }}
                   >
-                    {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="text-yellow-500" />}
-                    AI Extract
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    className="rounded-lg gap-2"
-                    onClick={() => setShowAddForm(true)}
-                  >
-                    <Plus size={14} /> Add Term
+                    <Plus size={14} /> <span className="hidden sm:inline">Add Term</span>
                   </Button>
                 </div>
               </div>
@@ -234,30 +400,31 @@ export default function ContextLibraryPage() {
                 <button 
                   onClick={() => setActiveSubTab('glossary')}
                   className={cn(
-                    "pb-4 text-sm font-semibold transition-all relative",
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
                     activeSubTab === 'glossary' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  Glossary ({entries.length})
+                  <BookOpen size={16} /> Glossary ({entries.length})
                   {activeSubTab === 'glossary' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--primary)]" />}
                 </button>
                 <button 
                   onClick={() => setActiveSubTab('context')}
                   className={cn(
-                    "pb-4 text-sm font-semibold transition-all relative",
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
                     activeSubTab === 'context' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  Context & Style
+                  <Filter size={16} className="rotate-90" /> Rules
                   {activeSubTab === 'context' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--primary)]" />}
                 </button>
               </div>
             </header>
 
-            {/* Content Tab: Glossary */}
+            {/* Content Tab: Glossary or Rules */}
             <div className="flex-1 overflow-auto p-8">
               {activeSubTab === 'glossary' && (
                 <div className="space-y-8">
+                  {/* ... (Glossary content same as before) ... */}
                   {/* Search & Filter Bar */}
                   <div className="flex gap-4">
                     <div className="flex-1 relative">
@@ -273,49 +440,86 @@ export default function ContextLibraryPage() {
                     <Button variant="outline" size="icon" className="rounded-xl"><Filter size={18} /></Button>
                   </div>
 
-                  {/* Add Entry Form (Modal Style Overlay or inline) */}
+                  {/* Add Entry Form */}
                   {showAddForm && (
-                    <Card className="border-[var(--primary)]/30 bg-[var(--accent)]/10 shadow-lg fade-in">
-                      <CardContent className="p-6 space-y-4">
-                        <div className="flex justify-between items-center mb-2">
-                          <h3 className="font-bold text-sm">Add New Term</h3>
-                          <button onClick={() => setShowAddForm(false)}><X size={16} /></button>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Original Term</label>
+                    <div ref={formRef} className="scroll-mt-20">
+                      <Card className="border-[var(--primary)] bg-[var(--accent)]/5 shadow-xl transition-all">
+                        <CardContent className="p-6 space-y-6">
+                          <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-[var(--primary)] text-white flex items-center justify-center">
+                                {editingEntryId ? <FileText size={16} /> : <Plus size={16} />}
+                              </div>
+                              <h3 className="font-bold text-base">{editingEntryId ? 'Edit Term' : 'Add New Term'}</h3>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              {editingEntryId && (
+                                <button 
+                                  onClick={() => {
+                                    setEditingEntryId(null);
+                                    setNewEntry({ original: '', translated: '', notes: '' });
+                                    setShowAddForm(false);
+                                  }}
+                                  className="text-xs font-semibold text-red-500 hover:underline"
+                                >
+                                  Cancel Edit
+                                </button>
+                              )}
+                              <button 
+                                onClick={() => {
+                                  setShowAddForm(false);
+                                  setEditingEntryId(null);
+                                  setNewEntry({ original: '', translated: '', notes: '' });
+                                }}
+                                className="p-2 hover:bg-[var(--secondary)] rounded-full transition-colors"
+                              >
+                                <X size={18} />
+                              </button>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Original Term</label>
+                              <input 
+                                value={newEntry.original}
+                                onChange={e => setNewEntry({...newEntry, original: e.target.value})}
+                                placeholder="e.g. 仙侠" 
+                                className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Translated Term</label>
+                              <input 
+                                value={newEntry.translated}
+                                onChange={e => setNewEntry({...newEntry, translated: e.target.value})}
+                                placeholder="e.g. Xianxia" 
+                                className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none"
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Notes / Context</label>
                             <input 
-                              value={newEntry.original}
-                              onChange={e => setNewEntry({...newEntry, original: e.target.value})}
-                              placeholder="e.g. 仙侠" 
-                              className="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm"
+                              value={newEntry.notes}
+                              onChange={e => setNewEntry({...newEntry, notes: e.target.value})}
+                              placeholder="e.g. Name of the protagonist's sword style." 
+                              className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none"
                             />
                           </div>
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Translated Term</label>
-                            <input 
-                              value={newEntry.translated}
-                              onChange={e => setNewEntry({...newEntry, translated: e.target.value})}
-                              placeholder="e.g. Xianxia" 
-                              className="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm"
-                            />
+                          <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border)]">
+                            <Button variant="ghost" className="rounded-xl px-6" onClick={() => {
+                              setShowAddForm(false);
+                              setEditingEntryId(null);
+                              setNewEntry({ original: '', translated: '', notes: '' });
+                            }}>Cancel</Button>
+                            <Button className="rounded-xl px-8 shadow-lg shadow-[var(--primary)]/20" onClick={addEntry}>
+                              {editingEntryId ? 'Update Term' : 'Save Term'}
+                            </Button>
                           </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Notes / Context</label>
-                          <input 
-                            value={newEntry.notes}
-                            onChange={e => setNewEntry({...newEntry, notes: e.target.value})}
-                            placeholder="e.g. Name of the protagonist's sword style." 
-                            className="w-full bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm"
-                          />
-                        </div>
-                        <div className="flex justify-end gap-3 pt-2">
-                          <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
-                          <Button size="sm" onClick={addEntry}>Save Term</Button>
-                        </div>
-                      </CardContent>
-                    </Card>
+                        </CardContent>
+                      </Card>
+                    </div>
                   )}
 
                   {/* AI Suggestions Section */}
@@ -330,11 +534,18 @@ export default function ContextLibraryPage() {
                             <CardContent className="p-4 flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="font-bold text-sm truncate">{sug.original_term}</div>
+                                {sug.translated_term && (
+                                  <div className="text-xs font-semibold text-[var(--primary)] mb-1">{sug.translated_term}</div>
+                                )}
                                 <div className="text-[10px] text-[var(--muted-foreground)] mt-1 line-clamp-2">{sug.notes}</div>
                               </div>
                               <button 
                                 onClick={() => {
-                                  setNewEntry({ original: sug.original_term, translated: '', notes: sug.notes || '' });
+                                  setNewEntry({ 
+                                    original: sug.original_term, 
+                                    translated: sug.translated_term || '', 
+                                    notes: sug.notes || '' 
+                                  });
                                   setShowAddForm(true);
                                 }}
                                 className="p-1.5 bg-yellow-100 dark:bg-yellow-900/50 rounded-lg text-yellow-700 dark:text-yellow-400 hover:scale-110 transition-transform"
@@ -361,8 +572,12 @@ export default function ContextLibraryPage() {
                               <button onClick={() => removeEntry(entry.id)} className="p-1.5 text-[var(--muted-foreground)] hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">
                                 <Trash2 size={14} />
                               </button>
-                              <button className="p-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg hover:bg-[var(--secondary)]">
-                                <MoreVertical size={14} />
+                              <button 
+                                onClick={() => startEditing(entry)}
+                                className="p-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg hover:bg-[var(--secondary)]"
+                                title="Edit term"
+                              >
+                                <FileText size={14} />
                               </button>
                             </div>
                           </div>
@@ -399,72 +614,98 @@ export default function ContextLibraryPage() {
                 </div>
               )}
 
-              {/* Content Tab: Context & Style */}
+              {/* Content Tab: Rules */}
               {activeSubTab === 'context' && (
-                <div className="space-y-8 max-w-4xl">
-                  {/* Thread Context */}
-                  <Card className="border-l-4 border-l-[var(--primary)] bg-[var(--card)]/50">
-                    <CardContent className="p-8 space-y-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
-                            <FileText size={20} />
-                          </div>
-                          <h3 className="text-lg font-bold">Thread Context</h3>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          variant={isSaving ? "outline" : "default"} 
-                          onClick={() => saveContext('thread')}
-                          disabled={isSaving}
-                        >
-                          {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                          Save Changes
-                        </Button>
-                      </div>
-                      <p className="text-sm text-[var(--muted-foreground)]">
-                        Instructions specific to <span className="font-bold text-[var(--foreground)]">"{selectedThread.title}"</span>. 
-                        Define character personalities, relationship dynamics, or specific narrative rules.
-                      </p>
-                      <Textarea 
-                        value={threadContext}
-                        onChange={e => setThreadContext(e.target.value)}
-                        placeholder="e.g. The protagonist is cynical and uses informal language. Their rival is extremely polite but cold."
-                        className="min-h-[200px] text-base bg-[var(--background)]/50"
-                      />
-                    </CardContent>
-                  </Card>
-
-                  {/* Global Context */}
-                  <Card className="border-l-4 border-l-[var(--muted-foreground)] bg-[var(--card)]/30 opacity-80 hover:opacity-100 transition-opacity">
-                    <CardContent className="p-8 space-y-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-[var(--secondary)] flex items-center justify-center text-[var(--muted-foreground)]">
-                            <Globe size={20} />
-                          </div>
-                          <h3 className="text-lg font-bold">Global System Instructions</h3>
-                        </div>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
-                          onClick={() => saveContext('global')}
-                          disabled={isSaving}
-                        >
-                          <Save size={16} /> Save Global
-                        </Button>
-                      </div>
-                      <p className="text-sm text-[var(--muted-foreground)]">
-                        Universal literary style rules applied to ALL translations.
-                      </p>
+                <div className="space-y-10 max-w-5xl mx-auto pb-12">
+                  {/* Section 1: Translation Instructions */}
+                  <section className="space-y-4">
+                    <div className="flex flex-col">
+                      <h3 className="text-lg font-bold text-[var(--foreground)]">Translation Instructions</h3>
+                      <p className="text-sm text-[var(--muted-foreground)]">Custom instructions for translation style — tone, point of view, fluency, and more.</p>
+                    </div>
+                    
+                    <div className="space-y-3">
                       <Textarea 
                         value={globalContext}
                         onChange={e => setGlobalContext(e.target.value)}
-                        placeholder="e.g. Translate in a professional literary style. Keep all honorifics in original pinyin."
-                        className="min-h-[150px] text-base bg-[var(--background)]/50"
+                        placeholder="e.g. Translate strictly line-by-line, ensuring each source line corresponds to one output line. Preserve original sentence structure and word order as much as possible while keeping the translation natural and idiomatic."
+                        className="min-h-[160px] text-sm bg-[var(--card)]/50 border-[var(--border)] focus:border-[var(--primary)] rounded-xl"
                       />
-                    </CardContent>
-                  </Card>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-[var(--muted-foreground)] uppercase tracking-widest">
+                          {globalContext.length}/1000
+                        </span>
+                        <Button 
+                          size="sm" 
+                          className="rounded-lg gap-2 bg-[#A89F8D] hover:bg-[#968D7B] text-white border-none shadow-none"
+                          onClick={() => saveContext('global')}
+                          disabled={isSaving}
+                        >
+                          {isSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                          Save Instructions
+                        </Button>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Section 2: Term Conventions */}
+                  <section className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-bold text-[var(--foreground)]">Term Conventions</h3>
+                      <span className="px-2 py-0.5 rounded-full bg-[var(--secondary)] text-[var(--muted-foreground)] text-[10px] font-medium border border-[var(--border)]">
+                        Advanced term extraction only
+                      </span>
+                    </div>
+                    <p className="text-sm text-[var(--muted-foreground)] -mt-2">Structured rules that control how terms are translated.</p>
+
+                    <div className="space-y-3">
+                      {/* Built-in Status Box */}
+                      <div className="flex items-center justify-between p-4 bg-[var(--card)]/30 border border-[var(--border)] rounded-2xl">
+                        <div className="flex items-center gap-3 text-sm text-[var(--muted-foreground)]">
+                          <Globe size={16} />
+                          <span>Using built-in defaults <span className="opacity-60">— built-in rules provided by SMONE</span></span>
+                        </div>
+                        <Button variant="outline" size="sm" className="rounded-lg gap-2 text-xs h-8 px-3">
+                          <Plus size={14} /> Customize
+                        </Button>
+                      </div>
+
+                      {/* Locked Rule Cards */}
+                      {[
+                        { 
+                          title: "Context over Dictionary", 
+                          desc: "Always deduce the entity type and domain from the provided context (e.g., surrounding text, sibling terms in a cluster). Prioritize structural consistency." 
+                        },
+                        { 
+                          title: "Translate vs Transliterate", 
+                          desc: "Fully translate objects, artifacts, techniques, and fictional organizations into English. Keep character names and established real-world terms in their standard Pinyin or localized forms." 
+                        },
+                        { 
+                          title: "World-Building Context", 
+                          desc: "Do not blindly map terms to real-world locations if the text is a fantasy or historical setting (e.g., translate 京都 as 'The Capital' or 'Imperial City' instead of 'Kyoto')." 
+                        },
+                        { 
+                          title: "Honorifics & Address", 
+                          desc: "Follow source language norms. Translate Chinese honorifics to English (e.g., Senior Brother, Elder, Young Master). Retain common Japanese/Korean suffixes if applicable." 
+                        }
+                      ].map((rule, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-4 bg-[var(--card)]/20 border border-[var(--border)] rounded-xl group hover:border-[var(--primary)]/30 transition-all">
+                          <div className="flex-1 min-w-0 pr-4">
+                            <span className="text-sm font-medium text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors">
+                              {rule.title}: <span className="font-normal opacity-70">{rule.desc}</span>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded bg-[var(--secondary)] text-[var(--muted-foreground)]">All terms</span>
+                            <Trash2 size={16} className="text-[var(--muted-foreground)] opacity-40" />
+                            <div className="p-1 bg-[var(--secondary)] rounded text-[var(--muted-foreground)]">
+                              <Lock size={12} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 </div>
               )}
             </div>

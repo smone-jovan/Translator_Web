@@ -78,3 +78,24 @@ def delete_lorebook_entry(entry_id: int, db: Session = Depends(get_db)):
     db.delete(entry)
     db.commit()
     return {"deleted": True, "id": entry_id}
+
+
+@router.put("/lorebook/{entry_id}", response_model=LorebookOut)
+def update_lorebook_entry(
+    entry_id: int,
+    body: LorebookCreate,
+    db: Session = Depends(get_db),
+):
+    """Update an existing lorebook entry."""
+    stmt = select(LorebookEntry).where(LorebookEntry.id == entry_id)
+    entry = db.execute(stmt).scalar_one_or_none()
+    if not entry:
+        raise HTTPException(404, "Entry not found")
+
+    entry.original_term = body.original_term
+    entry.translated_term = body.translated_term
+    entry.notes = body.notes
+
+    db.commit()
+    db.refresh(entry)
+    return entry

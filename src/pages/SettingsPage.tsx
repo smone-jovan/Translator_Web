@@ -60,6 +60,9 @@ export default function SettingsPage() {
   const [targetLang, setTargetLang] = useState(() => localStorage.getItem('target_language') || 'Indonesian');
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'sepia');
   const [displayMode, setDisplayMode] = useState(() => localStorage.getItem('display_mode') || 'both');
+  const [prefetchEnabled, setPrefetchEnabled] = useState(() => localStorage.getItem('prefetch_enabled') === '1');
+  const [prefetchCount, setPrefetchCount] = useState(() => parseInt(localStorage.getItem('prefetch_count') || '2'));
+  const [prefetchMode, setPrefetchMode] = useState(() => localStorage.getItem('prefetch_mode') || 'soft');
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchGlobalSettings = useCallback(async () => {
@@ -77,6 +80,18 @@ export default function SettingsPage() {
       if (data.target_language) {
         setTargetLang(data.target_language);
         localStorage.setItem('target_language', data.target_language);
+      }
+      if (data.prefetch_enabled !== undefined) {
+        setPrefetchEnabled(data.prefetch_enabled === 1);
+        localStorage.setItem('prefetch_enabled', data.prefetch_enabled.toString());
+      }
+      if (data.prefetch_count !== undefined) {
+        setPrefetchCount(data.prefetch_count);
+        localStorage.setItem('prefetch_count', data.prefetch_count.toString());
+      }
+      if (data.prefetch_mode !== undefined) {
+        setPrefetchMode(data.prefetch_mode);
+        localStorage.setItem('prefetch_mode', data.prefetch_mode);
       }
     } catch {
       console.error('Failed to fetch server settings');
@@ -153,6 +168,24 @@ export default function SettingsPage() {
     setSelectedModel(val);
     localStorage.setItem('lm_model', val);
     saveSettingsToServer({ lm_model: val });
+  };
+
+  const handlePrefetchToggle = (enabled: boolean) => {
+    setPrefetchEnabled(enabled);
+    localStorage.setItem('prefetch_enabled', enabled ? '1' : '0');
+    saveSettingsToServer({ prefetch_enabled: enabled ? '1' : '0' });
+  };
+
+  const handlePrefetchCountChange = (count: number) => {
+    setPrefetchCount(count);
+    localStorage.setItem('prefetch_count', count.toString());
+    saveSettingsToServer({ prefetch_count: count.toString() });
+  };
+
+  const handlePrefetchModeChange = (mode: string) => {
+    setPrefetchMode(mode);
+    localStorage.setItem('prefetch_mode', mode);
+    saveSettingsToServer({ prefetch_mode: mode });
   };
 
   return (
@@ -302,6 +335,106 @@ export default function SettingsPage() {
                     <option value="translated">Translated Only</option>
                     <option value="original">Original Only</option>
                   </select>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Section: Advanced Prefetch */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <RefreshCw size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Advanced Prefetch</h2>
+        </div>
+
+        <Card>
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold">Enable Prefetching</h3>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Automatically translate next chapters in background.</p>
+                  </div>
+                  <button
+                    onClick={() => handlePrefetchToggle(!prefetchEnabled)}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                      prefetchEnabled ? "bg-[var(--primary)]" : "bg-[var(--secondary)]"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                        prefetchEnabled ? "translate-x-6" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+                <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
+                  Note: Prefetching helps reduce waiting time between chapters but consumes more tokens/server resources.
+                </p>
+                
+                <div className="pt-4 border-t border-[var(--border)]">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold">Prefetch Mode</h3>
+                  </div>
+                  <div className="flex bg-[var(--secondary)] rounded-xl p-1">
+                    <button
+                      onClick={() => handlePrefetchModeChange('soft')}
+                      className={cn(
+                        "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
+                        prefetchMode === 'soft' 
+                          ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" 
+                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      )}
+                    >
+                      SOFT LOAD
+                    </button>
+                    <button
+                      onClick={() => handlePrefetchModeChange('hard')}
+                      className={cn(
+                        "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
+                        prefetchMode === 'hard' 
+                          ? "bg-[var(--card)] text-orange-500 shadow-sm" 
+                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      )}
+                    >
+                      HARD LOAD
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-[var(--muted-foreground)] mt-2 px-1">
+                    {prefetchMode === 'soft' 
+                      ? "Sequential: Translates next chapter one-by-one (Safe & Efficient)." 
+                      : "Aggressive: Translates entire range in parallel (Fast & Resource Intensive)."}
+                  </p>
+                </div>
+              </div>
+
+              <div className={cn("space-y-4 transition-opacity", !prefetchEnabled && "opacity-50 pointer-events-none")}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold">Prefetch Range</h3>
+                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">{prefetchCount} Chapters</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={prefetchCount}
+                  onChange={(e) => handlePrefetchCountChange(parseInt(e.target.value))}
+                  className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                />
+                <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] font-medium px-1">
+                  <span>1 Ch</span>
+                  <span>2 Ch</span>
+                  <span>3 Ch</span>
+                  <span>4 Ch</span>
+                  <span>5 Ch</span>
                 </div>
               </div>
             </div>

@@ -196,3 +196,36 @@ If no new terms, skip.
         if new_entries:
             db.commit()
             print(f"✅ [LOREBOOK] Simpan {len(new_entries)} istilah baru di thread {thread_id}: {new_entries}")
+
+    @staticmethod
+    async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None):
+        """Dedicated pass to extract names/terms BEFORE translation."""
+        from services.ai_provider import AIProvider
+        
+        sys_prompt = (
+            "You are a literary analyst and terminology expert. \n"
+            "Task: Extract key names, locations, cultivation techniques, and unique terms from the provided Chinese text.\n"
+            "Format your output ONLY as a list of 'Translator Notes' like this:\n"
+            "- 原本术语 → Translated Term (Brief context)\n"
+            "Example: - 宁凡 → Ning Fan (Main Character)\n"
+            "If no important terms, output: 'No new terms found.'"
+        )
+        
+        try:
+            ai = AIProvider(lm_url)
+            payload = {
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:4000]}"}, # Limit to first 4k chars for extraction
+                ],
+                "temperature": 0.2,
+                "max_tokens": 1000
+            }
+            if model: payload["model"] = model
+            
+            response = await ai.chat(payload)
+            # Use existing logic to save
+            ContextEngine.auto_save_glossary(db, thread_id, response)
+            print(f"✨ [AI Extract] Pass completed for thread {thread_id}")
+        except Exception as e:
+            print(f"⚠️ [AI Extract] Failed: {e}")

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Menu } from 'lucide-react';
 import Sidebar, { type TabId } from './Sidebar';
+import BottomNav from './BottomNav';
 
 interface LayoutProps {
   children: (activeTab: TabId) => ReactNode;
@@ -25,23 +26,29 @@ export default function Layout({ children, onTabChange }: LayoutProps) {
         onClose={() => setSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Mobile Menu Button (Only visible on mobile) */}
-        <div className="md:hidden absolute top-4 left-4 z-50">
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--background)]">
+        {/* Mobile Menu Button - Optional, keeping hidden if BottomNav is enough, or move to top-right if needed */}
+        {/* <div className="md:hidden absolute top-4 right-4 z-50">
           <button
-            className="p-2 rounded-lg bg-[var(--card)] border border-[var(--border)] shadow-md text-[var(--foreground)]"
+            className="p-3 rounded-2xl bg-[var(--card)]/80 backdrop-blur-md border border-[var(--border)] shadow-xl text-[var(--foreground)]"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu size={20} />
           </button>
-        </div>
+        </div> */}
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4 md:p-8">
-          <div className="max-w-6xl mx-auto h-full fade-in">
+        <div className="flex-1 overflow-auto p-4 md:p-8 pb-28 md:pb-8">
+          <div className="max-w-6xl mx-auto h-full">
             {children(activeTab)}
           </div>
         </div>
+
+        {/* Mobile Bottom Nav */}
+        <BottomNav 
+          activeTab={activeTab} 
+          onTabChange={handleTabChange} 
+        />
       </main>
     </div>
   );
