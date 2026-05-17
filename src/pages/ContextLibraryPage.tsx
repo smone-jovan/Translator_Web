@@ -219,7 +219,12 @@ export default function ContextLibraryPage() {
         })
       });
       const data = await res.json();
-      setSuggestions(data.terms || []);
+      // Filter out suggestions that already exist in the glossary (entries state)
+      const existingOriginals = new Set(entries.map(e => e.original_term.trim().toLowerCase()));
+      const filteredSuggestions = (data.terms || []).filter((sug: ExtractedTerm) => 
+        !existingOriginals.has(sug.original_term.trim().toLowerCase())
+      );
+      setSuggestions(filteredSuggestions);
     } catch (e) {
       alert('Extraction failed.');
     } finally {
