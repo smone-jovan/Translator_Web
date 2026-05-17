@@ -25,6 +25,7 @@ class TranslateRequest(BaseModel):
     model: str | None = None
     target_lang: str = "Indonesian"
     lm_url: str | None = None
+    force_overwrite: bool = False
 
 class TranslateResponse(BaseModel):
     translation: str
@@ -59,7 +60,8 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
             thread_id=req.thread_id,
             target_lang=target_lang,
             model=selected_model,
-            lm_url=ai_url
+            lm_url=ai_url,
+            force_overwrite=req.force_overwrite
         )
     )
 
@@ -122,8 +124,10 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
         if req.thread_id:
             ContextEngine.auto_save_glossary(db, req.thread_id, translation)
 
+        clean_translation = ContextEngine.strip_translator_notes(translation)
+
         return TranslateResponse(
-            translation=translation,
+            translation=clean_translation,
             model_used=model_used,
             lorebook_terms=lorebook_count,
         )

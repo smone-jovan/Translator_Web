@@ -199,14 +199,9 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard') => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
     if (!selectedBatchThread) return;
     
-    // Dispatch start event
-    window.dispatchEvent(new CustomEvent('batch-start', { 
-        detail: { total: chapterIds.length } 
-    }));
-
     try {
       const res = await fetch(getApiUrl(`/api/threads/${selectedBatchThread.id}/batch-translate`), {
         method: 'POST',
@@ -214,39 +209,16 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
         body: JSON.stringify({ 
             chapter_ids: chapterIds, 
             ai_extract: aiExtract,
-            overwrite: loadMode === 'hard'
+            overwrite: overwrite,
+            target_lang: targetLang
         })
       });
       
       if (!res.ok) throw new Error('Failed to start batch');
       
-      // We simulate updates for now or the status center polls
-      let completed = 0;
-      const total = chapterIds.length;
-      
-      const simulateProgress = () => {
-          if (completed < total) {
-              completed++;
-              window.dispatchEvent(new CustomEvent('batch-update', { 
-                  detail: { 
-                      completed, 
-                      currentTitle: `Processing Chapter ${chapterIds[completed-1]}` 
-                  } 
-              }));
-              if (completed === total) {
-                window.dispatchEvent(new CustomEvent('batch-end'));
-                fetchThreads(); // Refresh progress
-              } else {
-                setTimeout(simulateProgress, 3000); 
-              }
-          }
-      };
-      
-      simulateProgress();
-
+      fetchThreads();
     } catch (e) {
       console.error(e);
-      window.dispatchEvent(new CustomEvent('batch-end'));
     }
   };
 

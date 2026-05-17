@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [prefetchEnabled, setPrefetchEnabled] = useState(() => localStorage.getItem('prefetch_enabled') === '1');
   const [prefetchCount, setPrefetchCount] = useState(() => parseInt(localStorage.getItem('prefetch_count') || '2'));
   const [prefetchMode, setPrefetchMode] = useState(() => localStorage.getItem('prefetch_mode') || 'soft');
+  const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '50'));
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchGlobalSettings = useCallback(async () => {
@@ -95,6 +96,10 @@ export default function SettingsPage() {
       if (data.prefetch_mode !== undefined) {
         setPrefetchMode(data.prefetch_mode);
         localStorage.setItem('prefetch_mode', data.prefetch_mode);
+      }
+      if (data.max_context_terms !== undefined) {
+        setMaxContextTerms(data.max_context_terms);
+        localStorage.setItem('max_context_terms', data.max_context_terms.toString());
       }
     } catch {
       console.error('Failed to fetch server settings');
@@ -189,6 +194,12 @@ export default function SettingsPage() {
     setPrefetchMode(mode);
     localStorage.setItem('prefetch_mode', mode);
     saveSettingsToServer({ prefetch_mode: mode });
+  };
+
+  const handleMaxContextTermsChange = (count: number) => {
+    setMaxContextTerms(count);
+    localStorage.setItem('max_context_terms', count.toString());
+    saveSettingsToServer({ max_context_terms: count.toString() });
   };
 
   return (
@@ -339,6 +350,64 @@ export default function SettingsPage() {
                     <option value="original">Original Only</option>
                   </select>
                 </div>
+              </div>
+            </div>
+
+            {/* Glossary Limit Slider / Selector */}
+            <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-bold flex items-center gap-2 text-[var(--foreground)]">
+                    <Database size={16} className="text-[var(--primary)]" />
+                    Max Context Terms Limit
+                  </h3>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Maximum number of active glossary terms kept per thread. Excess items are archived and compressed to save tokens.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-[var(--primary)]/10 text-[var(--primary)] rounded-xl text-xs font-bold border border-[var(--primary)]/20 shadow-sm shrink-0 self-start md:self-auto">
+                  <span>Active Limit: {maxContextTerms} terms</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
+                {[20, 50, 70, 100, 150].map((limit) => {
+                  const tokenEstimates: Record<number, string> = {
+                    20: "~500 tokens",
+                    50: "~1,250 tokens",
+                    70: "~1,750 tokens",
+                    100: "~2,500 tokens",
+                    150: "~3,750 tokens"
+                  };
+                  const active = maxContextTerms === limit;
+                  return (
+                    <button
+                      key={limit}
+                      onClick={() => handleMaxContextTermsChange(limit)}
+                      className={cn(
+                        "relative flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-300 group hover:scale-[1.02]",
+                        active
+                          ? "border-[var(--primary)] bg-[var(--primary)]/5 shadow-md"
+                          : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
+                      )}
+                    >
+                      <span className={cn(
+                        "text-lg font-black transition-colors",
+                        active ? "text-[var(--primary)]" : "text-[var(--foreground)]"
+                      )}>
+                        {limit}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted-foreground)] mt-1 font-semibold group-hover:text-[var(--foreground)]">
+                        {tokenEstimates[limit]}
+                      </span>
+                      {active && (
+                        <div className="absolute -top-1.5 -right-1.5 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full p-0.5 shadow-sm">
+                          <CheckCircle2 size={12} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </CardContent>

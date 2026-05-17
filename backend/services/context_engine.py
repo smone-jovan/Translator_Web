@@ -78,13 +78,16 @@ If no new terms, skip.
             if thread and thread.thread_context:
                 full_prompt += f"\n[Thread-Specific Context]:\n{thread.thread_context}\n"
 
-            # Ambil 50 istilah yang paling sering dipakai atau yang terbaru biar AI gak overload
+            # Ambil max_context_terms limit dari setting global
+            limit = gs.max_context_terms if gs else 50
+            
+            # Ambil istilah aktif (non-archived) yang paling sering dipakai atau yang terbaru biar AI gak overload
             from sqlalchemy import desc
             entries_stmt = (
                 select(LorebookEntry)
-                .where(LorebookEntry.thread_id == thread_id)
+                .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
                 .order_by(desc(LorebookEntry.usage_count), desc(LorebookEntry.last_used_at))
-                .limit(50)
+                .limit(limit)
             )
             entries = db.execute(entries_stmt).scalars().all()
             
@@ -98,21 +101,6 @@ If no new terms, skip.
                 if updated:
                     db.commit()
 
-            # Bersihkan glossary kalau sudah kebanyakan (limit 100 per thread)
-            total_count = db.query(LorebookEntry).filter(LorebookEntry.thread_id == thread_id).count()
-            if total_count > 100:
-                # Hapus 20 istilah yang jarang dipakai
-                cleanup_stmt = (
-                    select(LorebookEntry)
-                    .where(LorebookEntry.thread_id == thread_id)
-                    .order_by(LorebookEntry.usage_count.asc(), LorebookEntry.last_used_at.asc())
-                    .limit(20)
-                )
-                to_delete = db.execute(cleanup_stmt).scalars().all()
-                for item in to_delete:
-                    db.delete(item)
-                db.commit()
-
             if entries:
                 terms = "\n".join(
                     f"- {e.original_term} → {e.translated_term}" + (f" ({e.notes})" if e.notes else "")
@@ -123,12 +111,74 @@ If no new terms, skip.
         return full_prompt
 
     @staticmethod
+    def enforce_context_limit(db: Session, thread_id: int):
+        """
+        Enforce global max_context_terms limit on active glossary entries of a thread.
+        Locked entries are protected. Surplus active entries are archived (is_archived = True)
+        and compressed (notes = None) using Least Frequently Used (usage_count ASC)
+        with Least Recently Used (last_used_at ASC) as a tiebreaker.
+        """
+        # 1. Fetch global limit setting
+        gs_stmt = select(GlobalSetting)
+        gs = db.execute(gs_stmt).scalar_one_or_none()
+        limit = gs.max_context_terms if gs else 50
+
+        # 2. Get active entries for this thread
+        active_stmt = (
+            select(LorebookEntry)
+            .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
+            .order_by(LorebookEntry.id)
+        )
+        active_entries = db.execute(active_stmt).scalars().all()
+
+        if len(active_entries) <= limit:
+            return
+
+        # 3. surplus count
+        surplus_count = len(active_entries) - limit
+
+        # 4. Filter unlocked active entries
+        evictable = [e for e in active_entries if not e.is_locked]
+
+        # 5. Sort by usage_count ASC, then last_used_at/created_at ASC
+        def sort_key(e):
+            timestamp = e.last_used_at or e.created_at
+            timestamp_val = timestamp.timestamp() if timestamp else 0
+            return (e.usage_count, timestamp_val, e.id)
+
+        evictable.sort(key=sort_key)
+
+        # 6. Evict top surplus entries
+        evict_list = evictable[:surplus_count]
+        for entry in evict_list:
+            entry.is_archived = True
+            entry.notes = None  # Compress by deleting notes context
+        db.commit()
+
+    @staticmethod
+    def strip_translator_notes(text: str) -> str:
+        """
+        Bersihkan bagian 'Translator Notes' atau 'Notes' dari teks terjemahan cerita.
+        Ini memastikan catatan hanya diproses oleh AI dan tidak ditampilkan ke pembaca.
+        """
+        if not text:
+            return ""
+        import re
+        # Pola pencarian header catatan penerjemah (dengan spasi/baris baru opsional di depannya)
+        header_pattern = re.compile(r"([\n\r]*Translator['s]*\s*Notes?[:\s]*|[\n\r]*### Translator['s]*\s*Notes?[:\s]*|[\n\r]*Notes?[:\s]*)", re.IGNORECASE)
+        match = header_pattern.search(text)
+        if match:
+            return text[:match.start()].strip()
+        return text
+
+    @staticmethod
     def auto_save_glossary(db: Session, thread_id: int, full_text: str):
         """
         Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
         Mendukung pemisah kayak :, ->, →, atau —
         """
         import re
+        from sqlalchemy import select, func
         
         # Cari header semacam "Translator Notes:", "Notes:", dsb.
         header_pattern = re.compile(r"(Translator['s]*\s*Notes?[:\s]*|### Translator['s]*\s*Notes?[:\s]*|Notes?[:\s]*)", re.IGNORECASE)
@@ -142,6 +192,14 @@ If no new terms, skip.
         
         lines = notes_section.split("\n")
         new_entries = []
+        seen_terms = set()
+        
+        # Kata kunci yang mengindikasikan teks tersebut hanyalah header, instruksi, atau catatan meta dari AI
+        garbage_keywords = [
+            "final list", "final output", "as requested", "translator note", "translator's note",
+            "notes", "summary", "no new terms", "no terms found", "note:", "notes:", "important note",
+            "appears to be", "chapter title", "section title", "chapter heading", "author's note"
+        ]
         
         for line in lines:
             line = line.strip()
@@ -159,7 +217,7 @@ If no new terms, skip.
                 term = parts[0].strip().lstrip("-*• ").strip()
                 desc = parts[1].strip()
                 
-                # Abaikan kalau AI cuma bilang "tidak ada istilah baru"
+                # Abaikan kalau AI cuma bilang "tidak ada istilah baru" atau deskripsi kosong
                 skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a", "unknown"]
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
@@ -167,12 +225,27 @@ If no new terms, skip.
                 if term and len(term) < 100 and len(term) > 1:
                     term = term.strip('"\'')
                     
-                    # Cek dulu biar gak dobel
+                    term_clean = term.strip().lower()
+                    
+                    # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
+                    if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
+                        continue
+                        
+                    # Skip jika term merupakan metadata / teks instruksi AI
+                    if any(gk in term_clean for gk in garbage_keywords):
+                        continue
+                        
+                    # Cegah duplikasi di dalam respon AI yang sama (internal deduplication)
+                    if term_clean in seen_terms:
+                        continue
+                    seen_terms.add(term_clean)
+                    
+                    # Cek dulu di basis data biar gak dobel (case-insensitive & trim spaces)
                     exists_stmt = select(LorebookEntry).where(
                         LorebookEntry.thread_id == thread_id,
-                        LorebookEntry.original_term == term
+                        func.lower(func.trim(LorebookEntry.original_term)) == term_clean
                     )
-                    exists = db.execute(exists_stmt).scalar_one_or_none()
+                    exists = db.execute(exists_stmt).scalars().first()
                     
                     if not exists:
                         # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
@@ -195,12 +268,15 @@ If no new terms, skip.
         
         if new_entries:
             db.commit()
-            print(f"✅ [LOREBOOK] Simpan {len(new_entries)} istilah baru di thread {thread_id}: {new_entries}")
+            print(f"[LOREBOOK] Berhasil menyimpan {len(new_entries)} istilah baru untuk utas {thread_id}: {new_entries}")
+            ContextEngine.enforce_context_limit(db, thread_id)
 
     @staticmethod
     async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None):
         """Dedicated pass to extract names/terms BEFORE translation."""
         from services.ai_provider import AIProvider
+        from database import GlobalSetting
+        from sqlalchemy import select
         
         sys_prompt = (
             "You are a literary analyst and terminology expert. \n"
@@ -212,20 +288,24 @@ If no new terms, skip.
         )
         
         try:
+            gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+            sample_size = gs.extract_sample_size if gs else 1000
+            
             ai = AIProvider(lm_url)
             payload = {
                 "messages": [
                     {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:4000]}"}, # Limit to first 4k chars for extraction
+                    {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:sample_size]}"}, # Limit to dynamic sample size for extraction
                 ],
                 "temperature": 0.2,
                 "max_tokens": 1000
             }
             if model: payload["model"] = model
             
-            response = await ai.chat(payload)
+            res = await ai.chat_completion(payload)
+            response = res["choices"][0]["message"]["content"]
             # Use existing logic to save
             ContextEngine.auto_save_glossary(db, thread_id, response)
-            print(f"✨ [AI Extract] Pass completed for thread {thread_id}")
+            print(f"[EKSTRAKSI AI] Proses ekstraksi istilah selesai untuk utas {thread_id}")
         except Exception as e:
-            print(f"⚠️ [AI Extract] Failed: {e}")
+            print(f"[PERINGATAN] [EKSTRAKSI AI] Gagal melakukan ekstraksi istilah: {e}")

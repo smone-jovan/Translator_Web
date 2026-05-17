@@ -13,62 +13,134 @@ import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUp from '@mui/icons-material/KeyboardArrowUp';
 import CheckCircle from '@mui/icons-material/CheckCircle';
 import Sync from '@mui/icons-material/Sync';
+import StopCircle from '@mui/icons-material/StopCircle';
+import Error from '@mui/icons-material/Error';
 
 interface BatchStatus {
   active: boolean;
+  thread_id: number | null;
+  thread_title: string;
   total: number;
   completed: number;
-  currentTitle: string;
+  current_chapter_id: number | null;
+  current_chapter_title: string;
+  failed_ids: number[];
 }
 
 export default function BulkStatusCenter() {
   const [isOpen, setIsOpen] = useState(true);
   const [status, setStatus] = useState<BatchStatus>({
     active: false,
+    thread_id: null,
+    thread_title: '',
     total: 0,
     completed: 0,
-    currentTitle: ''
+    current_chapter_id: null,
+    current_chapter_title: '',
+    failed_ids: []
   });
+  const [showFinished, setShowFinished] = useState(false);
 
-  // For demonstration, let's assume we use a window event to trigger status
+  // Poll active batch status from backend
   useEffect(() => {
-    const handleBatchStart = (e: any) => {
-      setStatus({
-        active: true,
-        total: e.detail.total,
-        completed: 0,
-        currentTitle: 'Initializing...'
-      });
-      setIsOpen(true);
+    let intervalId: any = null;
+
+    const checkStatus = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/threads/active-batch');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.active) {
+            setStatus(data);
+            setShowFinished(false);
+          } else {
+            // If it was active but now not, check if we just completed it
+            setStatus(prev => {
+              if (prev.active && prev.total > 0) {
+                // Mark as fully completed for presentation
+                setShowFinished(true);
+                return {
+                  ...prev,
+                  active: false,
+                  completed: prev.total,
+                  current_chapter_title: 'All tasks completed successfully!'
+                };
+              }
+              return {
+                active: false,
+                thread_id: null,
+                thread_title: '',
+                total: 0,
+                completed: 0,
+                current_chapter_id: null,
+                current_chapter_title: '',
+                failed_ids: []
+              };
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error checking active batch:', err);
+      }
     };
 
-    const handleBatchUpdate = (e: any) => {
-      setStatus(prev => ({
-        ...prev,
-        completed: e.detail.completed,
-        currentTitle: e.detail.currentTitle
-      }));
-    };
+    // Initial check
+    checkStatus();
 
-    const handleBatchEnd = () => {
-        setTimeout(() => {
-            setStatus(prev => ({ ...prev, active: false }));
-        }, 3000);
-    };
+    // Poll every 2 seconds
+    intervalId = setInterval(checkStatus, 2000);
 
-    window.addEventListener('batch-start', handleBatchStart);
-    window.addEventListener('batch-update', handleBatchUpdate);
-    window.addEventListener('batch-end', handleBatchEnd);
     return () => {
-      window.removeEventListener('batch-start', handleBatchStart);
-      window.removeEventListener('batch-update', handleBatchUpdate);
-      window.removeEventListener('batch-end', handleBatchEnd);
+      if (intervalId) clearInterval(intervalId);
     };
   }, []);
 
-  if (!status.active && status.completed === 0) return null;
+  // Auto-hide completed status after 10 seconds
+  useEffect(() => {
+    if (showFinished) {
+      const timer = setTimeout(() => {
+        setShowFinished(false);
+        setStatus(prev => ({
+          ...prev,
+          total: 0,
+          completed: 0
+        }));
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [showFinished]);
+
+  const handleStop = async () => {
+    if (!status.thread_id) return;
+    if (!confirm('Are you sure you want to stop the batch translation? The current chapter will finish translating, and subsequent chapters will be cancelled.')) return;
+    
+    try {
+      const res = await fetch(`http://localhost:8000/api/threads/${status.thread_id}/batch-stop`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        setStatus({
+          active: false,
+          thread_id: null,
+          thread_title: '',
+          total: 0,
+          completed: 0,
+          current_chapter_id: null,
+          current_chapter_title: '',
+          failed_ids: []
+        });
+        setShowFinished(false);
+      }
+    } catch (err) {
+      console.error('Failed to stop batch translation:', err);
+    }
+  };
+
+  const isBatchActive = status.active || showFinished;
+  if (!isBatchActive || status.total === 0) return null;
 
   const progress = status.total > 0 ? (status.completed / status.total) * 100 : 0;
+  const isFinished = status.completed === status.total || showFinished;
 
   return (
     <Box sx={{ 
@@ -76,57 +148,75 @@ export default function BulkStatusCenter() {
       bottom: 24, 
       right: 24, 
       zIndex: 2000,
-      width: 320,
+      width: 340,
       pointerEvents: 'auto'
     }}>
       <Paper sx={{ 
         background: 'var(--card)',
-        backdropFilter: 'blur(20px)',
-        border: '1px solid var(--primary)',
-        borderRadius: '20px',
+        backdropFilter: 'blur(24px)',
+        border: isFinished ? '1.5px solid rgba(76, 175, 80, 0.4)' : '1.5px solid var(--primary)',
+        borderRadius: '24px',
         overflow: 'hidden',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-        color: 'var(--foreground)'
+        boxShadow: '0 12px 40px rgba(0,0,0,0.3)',
+        color: 'var(--foreground)',
+        transition: 'all 0.3s ease'
       }}>
+        {/* Header Area */}
         <Box sx={{ 
           p: 2, 
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'space-between',
-          background: 'var(--secondary)',
+          background: isFinished ? 'rgba(76, 175, 80, 0.08)' : 'rgba(0,0,0,0.15)',
           cursor: 'pointer',
-          color: 'var(--foreground)'
+          borderBottom: '1px solid var(--border)'
         }} onClick={() => setIsOpen(!isOpen)}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Badge 
               overlap="circular"
               anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
               badgeContent={
-                status.completed === status.total ? 
-                <CheckCircle sx={{ fontSize: 14, color: 'var(--primary)' }} /> : 
-                <Sync sx={{ fontSize: 14, color: 'var(--primary)', animation: 'spin 2s linear infinite' }} />
+                isFinished ? 
+                <CheckCircle sx={{ fontSize: 15, color: '#4caf50' }} /> : 
+                <Sync sx={{ fontSize: 15, color: 'var(--primary)', animation: 'spin 2s linear infinite' }} />
               }
             >
-              <AutoAwesome sx={{ color: 'var(--primary)' }} />
+              <AutoAwesome sx={{ color: isFinished ? '#4caf50' : 'var(--primary)', fontSize: 20 }} />
             </Badge>
-            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: 'var(--foreground)' }}>
-              Batch Progress
-            </Typography>
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'var(--foreground)', fontSize: '0.85rem', lineHeight: 1.2 }}>
+                {isFinished ? 'Translation Done' : 'Batch Translating'}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontSize: '0.7rem', display: 'block' }}>
+                {status.thread_title}
+              </Typography>
+            </Box>
           </Box>
-          <Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            {status.active && (
+              <IconButton 
+                size="small" 
+                onClick={(e) => { e.stopPropagation(); handleStop(); }}
+                title="Stop Batch"
+                sx={{ color: '#ef4444', '&:hover': { background: 'rgba(239, 68, 68, 0.1)' } }}
+              >
+                <StopCircle sx={{ fontSize: 18 }} />
+              </IconButton>
+            )}
             <IconButton size="small" sx={{ color: 'var(--foreground)' }}>
               {isOpen ? <KeyboardArrowDown /> : <KeyboardArrowUp />}
             </IconButton>
           </Box>
         </Box>
 
+        {/* Expandable Area */}
         <Collapse in={isOpen}>
-          <Box sx={{ p: 2, pt: 1 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-              <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                {status.completed === status.total ? 'Batch Complete' : `Processing: ${status.completed}/${status.total}`}
+          <Box sx={{ p: 2.5 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.2 }}>
+              <Typography variant="caption" sx={{ opacity: 0.8, fontWeight: 600 }}>
+                {isFinished ? 'All chapters translated' : `Progress: ${status.completed}/${status.total} chapters`}
               </Typography>
-              <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#00f2fe' }}>
+              <Typography variant="caption" sx={{ fontWeight: 900, color: isFinished ? '#4caf50' : 'var(--primary)' }}>
                 {Math.round(progress)}%
               </Typography>
             </Box>
@@ -135,36 +225,75 @@ export default function BulkStatusCenter() {
               variant="determinate" 
               value={progress} 
               sx={{ 
-                height: 6, 
-                borderRadius: 3,
+                height: 8, 
+                borderRadius: 4,
                 background: 'var(--secondary)',
+                border: '1px solid var(--border)',
                 '& .MuiLinearProgress-bar': {
-                  background: 'var(--primary)',
+                  background: isFinished ? '#4caf50' : 'linear-gradient(90deg, var(--primary), #8a2be2)',
+                  borderRadius: 4
                 }
               }} 
             />
 
+            {/* Error badge for failed chapters */}
+            {status.failed_ids.length > 0 && (
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 1, 
+                mt: 1.5, 
+                px: 1.5, 
+                py: 0.8, 
+                borderRadius: '8px', 
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                color: '#ef4444'
+              }}>
+                <Error sx={{ fontSize: 16 }} />
+                <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                  {status.failed_ids.length} chapter(s) failed to translate.
+                </Typography>
+              </Box>
+            )}
+
             <Typography variant="caption" sx={{ 
               display: 'block', 
-              mt: 1.5, 
-              opacity: 0.5, 
+              mt: 2, 
+              color: 'var(--muted-foreground)', 
+              fontWeight: 500,
+              fontSize: '0.75rem',
               whiteSpace: 'nowrap', 
               overflow: 'hidden', 
               textOverflow: 'ellipsis' 
             }}>
-              Current: {status.currentTitle}
+              {isFinished ? 'Feel free to read your translated book now!' : `Now: ${status.current_chapter_title}`}
             </Typography>
 
-            {status.completed === status.total && (
-                <Button 
-                    fullWidth 
-                    size="small" 
-                    variant="outlined" 
-                    onClick={() => setStatus({ active: false, total: 0, completed: 0, currentTitle: '' })}
-                    sx={{ mt: 2, borderColor: 'var(--primary)', color: 'var(--primary)', borderRadius: '8px' }}
-                >
-                    Dismiss
-                </Button>
+            {isFinished && (
+              <Button 
+                fullWidth 
+                size="small" 
+                variant="outlined" 
+                onClick={() => {
+                  setShowFinished(false);
+                  setStatus(prev => ({ ...prev, total: 0, completed: 0 }));
+                }}
+                sx={{ 
+                  mt: 2, 
+                  borderColor: 'var(--border)', 
+                  color: 'var(--foreground)', 
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  fontSize: '0.7rem',
+                  '&:hover': {
+                    borderColor: 'var(--primary)',
+                    background: 'rgba(255,255,255,0.05)'
+                  }
+                }}
+              >
+                Dismiss
+              </Button>
             )}
           </Box>
         </Collapse>

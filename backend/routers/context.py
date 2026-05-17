@@ -20,12 +20,15 @@ class GlobalSettingsUpdate(BaseModel):
     prefetch_enabled: int | None = None
     prefetch_count: int | None = None
     prefetch_mode: str | None = None
+    max_context_terms: int | None = None
+    extract_chapter_count: int | None = None
+    extract_sample_size: int | None = None
 
 class ExtractRequest(BaseModel):
     lm_url: str | None = None
     model: str | None = None
-    chapter_count: int = 25
-    sample_size: int = 1000
+    chapter_count: int | None = None
+    sample_size: int | None = None
 
 class ExtractedTerm(BaseModel):
     original_term: str
@@ -43,7 +46,10 @@ def get_global_context(db: Session = Depends(get_db)):
         "target_language": gs.target_language if gs else "Indonesian",
         "prefetch_enabled": gs.prefetch_enabled if gs else 0,
         "prefetch_count": gs.prefetch_count if gs else 2,
-        "prefetch_mode": gs.prefetch_mode if gs else "soft"
+        "prefetch_mode": gs.prefetch_mode if gs else "soft",
+        "max_context_terms": gs.max_context_terms if gs else 50,
+        "extract_chapter_count": gs.extract_chapter_count if gs else 25,
+        "extract_sample_size": gs.extract_sample_size if gs else 1000
     }
 
 @router.post("/global-context")
@@ -71,6 +77,9 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.prefetch_enabled is not None: gs.prefetch_enabled = req.prefetch_enabled
     if req.prefetch_count is not None: gs.prefetch_count = req.prefetch_count
     if req.prefetch_mode is not None: gs.prefetch_mode = req.prefetch_mode
+    if req.max_context_terms is not None: gs.max_context_terms = req.max_context_terms
+    if req.extract_chapter_count is not None: gs.extract_chapter_count = req.extract_chapter_count
+    if req.extract_sample_size is not None: gs.extract_sample_size = req.extract_sample_size
     
     db.commit()
     return {"status": "ok"}
@@ -86,7 +95,7 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     # 1. Identify starting point (last_read or first chapter)
     from database import UserBookmark
     bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
-    bookmark = db.execute(bookmark_stmt).scalar_one_or_none()
+    bookmark = db.execute(bookmark_stmt).scalars().first()
     
     start_order = 0
     if bookmark:
@@ -95,12 +104,19 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
         if last_ch:
             start_order = last_ch.order
 
+    # 1.5 Get Global Settings for Defaults
+    gs_stmt = select(GlobalSetting)
+    gs = db.execute(gs_stmt).scalar_one_or_none()
+    
+    chapter_count = req.chapter_count if req.chapter_count is not None else (gs.extract_chapter_count if gs else 25)
+    sample_size = req.sample_size if req.sample_size is not None else (gs.extract_sample_size if gs else 1000)
+
     # 2. Fetch up to X chapters starting from start_order
     ch_stmt = (
         select(Chapter)
         .where(Chapter.thread_id == thread_id, Chapter.order >= start_order)
         .order_by(Chapter.order)
-        .limit(req.chapter_count)
+        .limit(chapter_count)
     )
     chapters = db.execute(ch_stmt).scalars().all()
     
@@ -112,7 +128,7 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     total_chars = 0
     for ch in chapters:
         if ch.content_original:
-            sample = ch.content_original[:req.sample_size]
+            sample = ch.content_original[:sample_size]
             text_parts.append(f"--- Chapter {ch.order + 1}: {ch.title_original} ---\n{sample}")
             total_chars += len(sample)
     
@@ -120,15 +136,13 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     if not full_text:
         return {"terms": []}
 
-    # 4. Get Global Settings for Prompt
-    gs_stmt = select(GlobalSetting)
-    gs = db.execute(gs_stmt).scalar_one_or_none()
+    # 4. Use Global Settings for Prompt
     global_rules = (gs.global_context if gs else "") or ""
     target_lang = gs.target_language if gs else "Indonesian"
 
-    # Estimated tokens (Chinese characters average ~0.8 tokens per character in Llama-3/Mistral tokenizers)
+    # Estimated tokens (Chinese characters average ~1.5 tokens per character in Qwen/Llama-3 tokenizers)
     # plus static instructions prompt (~150 tokens) and global rules (~0.25 tokens per char)
-    est_tokens = int(150 + (len(global_rules) / 4) + (total_chars * 0.8))
+    est_tokens = int(150 + (len(global_rules) / 4) + (total_chars * 1.5))
     
     prompt = (
         f"You are an expert literary analyst specializing in Chinese web novels.\n"

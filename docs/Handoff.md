@@ -50,6 +50,10 @@ Sejauh ini, sistem translasinya sudah lumayan "pinter":
   - **Mandatory Overwrite**: Ensures terminology consistency across all processed chapters.
   - **Context-Aware Extraction**: Integrated AI extraction toggle (Recommended for batches).
   - **Status Center**: Real-time progress visualization for bulk tasks.
+- **Hidden Translator Notes & Real-time Streaming Filter**:
+  - **Real-time Filter**: Pendeteksian pola catatan penerjemah secara instan selama streaming AI berjalan. Begitu AI mulai mengeluarkan catatan penerjemah, sisa streaming tidak akan diteruskan ke antrean pembaca agar tampilan tetap bersih.
+  - **Automatic Stripping**: Secara otomatis memotong `Translator Notes` atau `Notes` sebelum terjemahan disimpan ke database (`Chapter.content_translated`) pada proses background translator, penyimpanan manual, maupun respon API sekali jalan (single-shot).
+  - **AI Glossary Learning Maintained**: Catatan penerjemah yang disembunyikan tersebut tetap diproses sepenuhnya oleh sistem context engine (`ContextEngine.auto_save_glossary`) untuk memperkaya glosarium/lorebook novel secara otomatis sebelum dibuang dari teks cerita pembaca.
 
 ### perubahan arsitektur penting:
 1. **Pindah ke background task**: 
@@ -59,6 +63,7 @@ Sejauh ini, sistem translasinya sudah lumayan "pinter":
 2. **Auto-migration**: Database sekarang bisa update kolom sendiri kalau ada perubahan skema (gak perlu hapus DB manual lagi).
 3. **Usage tracking**: Sekarang tiap istilah di lorebook punya `usage_count` dan `last_used_at`.
 4. **Mobile Bottom Nav**: Navigasi utama sekarang pakai *bottom bar* yang ergonomis di HP (Slice 2 beres).
+5. **Hidden Translator Notes & Auto-Stripping**: Sistem secara dinamis memisahkan teks cerita bersih untuk pembaca dari catatan penerjemah yang diperuntukkan bagi kecerdasan buatan, lengkap dengan migrasi database historis (34 bab lama dibersihkan secara otomatis).
 
 ---
 

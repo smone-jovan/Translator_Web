@@ -29,6 +29,8 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, ch
   const [title, setTitle] = useState(threadTitle);
   const [author, setAuthor] = useState('SMONE');
   const [cover, setCover] = useState<string | null>(null);
+  const [coverSource, setCoverSource] = useState<'file' | 'url'>('file');
+  const [coverUrl, setCoverUrl] = useState('');
   const [selectedIds, setSelectedIds] = useState<number[]>(
     chapters.filter(c => c.has_translation).map(c => c.id)
   );
@@ -68,7 +70,8 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, ch
           format,
           title,
           author,
-          cover_b64: cover,
+          cover_b64: coverSource === 'file' ? cover : null,
+          cover_url: coverSource === 'url' ? coverUrl : null,
           chapter_ids: selectedIds
         })
       });
@@ -157,24 +160,80 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, ch
               />
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <label className="text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Cover Image</label>
-              <div className="relative group aspect-[3/4] max-w-[180px] mx-auto rounded-2xl border-2 border-dashed border-[var(--border)] overflow-hidden hover:border-[var(--primary)]/50 transition-all">
-                {cover ? (
-                  <>
-                    <img src={cover} alt="Cover Preview" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
-                      <label className="cursor-pointer bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-lg text-[10px] font-bold text-white">Change Cover</label>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--muted-foreground)]">
-                    <ImageIcon className="w-8 h-8 opacity-20" />
-                    <span className="text-[10px] font-bold uppercase tracking-tighter">Upload Cover</span>
-                  </div>
-                )}
-                <input type="file" accept="image/*" onChange={handleCoverUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+              
+              {/* Cover Source Selector Tabs */}
+              <div className="grid grid-cols-2 gap-1 p-1 bg-[var(--secondary)]/30 rounded-xl border border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => setCoverSource('file')}
+                  className={cn(
+                    "py-1.5 rounded-lg text-[10px] font-bold transition-all",
+                    coverSource === 'file' 
+                      ? "bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] shadow-sm" 
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  Upload File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCoverSource('url')}
+                  className={cn(
+                    "py-1.5 rounded-lg text-[10px] font-bold transition-all",
+                    coverSource === 'url' 
+                      ? "bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] shadow-sm" 
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  Image URL
+                </button>
               </div>
+
+              {coverSource === 'file' ? (
+                <div className="relative group aspect-[3/4] max-w-[150px] mx-auto rounded-2xl border-2 border-dashed border-[var(--border)] overflow-hidden hover:border-[var(--primary)]/50 transition-all">
+                  {cover ? (
+                    <>
+                      <img src={cover} alt="Cover Preview" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                        <label className="cursor-pointer bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-lg text-[10px] font-bold text-white">Change Cover</label>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full gap-2 text-[var(--muted-foreground)]">
+                      <ImageIcon className="w-8 h-8 opacity-20" />
+                      <span className="text-[10px] font-bold uppercase tracking-tighter">Upload Cover</span>
+                    </div>
+                  )}
+                  <input type="file" accept="image/*" onChange={handleCoverUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <input 
+                    type="url" 
+                    value={coverUrl} 
+                    onChange={(e) => setCoverUrl(e.target.value)}
+                    className="w-full bg-[var(--secondary)]/50 border border-[var(--border)] rounded-xl px-4 py-2.5 text-xs focus:ring-2 ring-[var(--primary)]/20 outline-none transition-all"
+                    placeholder="https://example.com/cover.jpg"
+                  />
+                  {coverUrl && (
+                    <div className="relative aspect-[3/4] max-w-[140px] mx-auto rounded-2xl border border-[var(--border)] overflow-hidden">
+                      <img 
+                        src={coverUrl} 
+                        alt="URL Cover Preview" 
+                        className="w-full h-full object-cover" 
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?q=80&w=300";
+                        }}
+                      />
+                      <div className="absolute top-1 right-1 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-bold text-[var(--primary)]">
+                        Preview
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -95,7 +95,7 @@ def list_threads(db: Session = Depends(get_db)):
         
         # Last read info from UserBookmark
         bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == t.id)
-        bookmark = db.execute(bookmark_stmt).scalar_one_or_none()
+        bookmark = db.execute(bookmark_stmt).scalars().first()
         
         last_read_title = None
         progress = 0
@@ -121,6 +121,41 @@ def list_threads(db: Session = Depends(get_db)):
             progress=progress
         ))
     return result
+
+
+@router.get("/threads/active-batch")
+def get_active_batch(db: Session = Depends(get_db)):
+    """Get the currently active global batch translation progress if any."""
+    from services.background_translator import active_batches
+    if not active_batches:
+        return {
+            "active": False,
+            "thread_id": None,
+            "thread_title": "",
+            "total": 0,
+            "completed": 0,
+            "current_chapter_id": None,
+            "current_chapter_title": "",
+            "failed_ids": []
+        }
+    
+    thread_id = list(active_batches.keys())[0]
+    batch = active_batches[thread_id]
+    
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    thread_title = thread.title if thread else "Unknown Book"
+    
+    return {
+        "active": True,
+        "thread_id": thread_id,
+        "thread_title": thread_title,
+        "total": batch.total,
+        "completed": batch.completed,
+        "current_chapter_id": batch.current_chapter_id,
+        "current_chapter_title": batch.current_chapter_title,
+        "failed_ids": batch.failed_ids
+    }
 
 
 @router.get("/threads/{thread_id}", response_model=ThreadDetail)
@@ -150,7 +185,7 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
 
     # Get bookmark for this thread
     bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
-    bookmark = db.execute(bookmark_stmt).scalar_one_or_none()
+    bookmark = db.execute(bookmark_stmt).scalars().first()
 
     return ThreadDetail(
         id=thread.id,
@@ -175,7 +210,7 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
 
     # Update bookmark (Background history)
     bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
-    bookmark = db.execute(bookmark_stmt).scalar_one_or_none()
+    bookmark = db.execute(bookmark_stmt).scalars().first()
     if not bookmark:
         bookmark = UserBookmark(thread_id=thread_id, chapter_id=chapter_id)
         db.add(bookmark)
@@ -257,7 +292,8 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
     if not chapter:
         raise HTTPException(404, "Chapter not found")
         
-    chapter.content_translated = body.translated_text
+    from services.context_engine import ContextEngine
+    chapter.content_translated = ContextEngine.strip_translator_notes(body.translated_text)
     db.commit()
     return {"status": "saved"}
 
@@ -425,10 +461,9 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
 async def batch_translate(
     thread_id: int, 
     req: BatchTranslateRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Trigger batch translation for multiple chapters."""
+    """Trigger sequential, GPU-friendly batch translation for multiple chapters."""
     from database import LorebookEntry
     from services.background_translator import BackgroundTranslator
     
@@ -446,26 +481,55 @@ async def batch_translate(
     gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
     lm_url = gs.lm_url if gs else "http://localhost:1234"
     model = gs.lm_model if gs else None
+    target_lang = req.target_lang or (gs.target_language if gs else "Indonesian")
 
-    # 3. Process each chapter in background
-    for ch_id in req.chapter_ids:
-        # If ai_extract is requested, we run it BEFORE translation
-        # In a real batch, we might want to extract for ALL first, then translate ALL
-        # But for now, we'll queue them sequentially in the background_translator logic
-        background_tasks.add_task(
-            BackgroundTranslator.run_chapter_translation,
-            chapter_id=ch_id,
-            thread_id=thread_id,
-            target_lang=req.target_lang,
-            model=model,
-            lm_url=lm_url,
-            force_extract=req.ai_extract,
-            force_overwrite=req.overwrite
-        )
+    # 3. Start sequential queue
+    await BackgroundTranslator.start_batch(
+        thread_id=thread_id,
+        chapter_ids=req.chapter_ids,
+        target_lang=target_lang,
+        model=model,
+        lm_url=lm_url,
+        force_extract=req.ai_extract,
+        force_overwrite=req.overwrite
+    )
 
     return {
-        "status": "queued",
+        "status": "started",
         "batch_size": len(req.chapter_ids),
         "lore_count": lore_count,
         "recommend_extract": lore_count < 40
     }
+
+
+
+@router.get("/threads/{thread_id}/batch-status")
+def get_batch_status(thread_id: int):
+    """Get the active stateful batch translation progress for a specific thread."""
+    from services.background_translator import active_batches
+    batch = active_batches.get(thread_id)
+    if not batch:
+        return {
+            "active": False,
+            "total": 0,
+            "completed": 0,
+            "current_chapter_id": None,
+            "current_chapter_title": "",
+            "failed_ids": []
+        }
+    return {
+        "active": True,
+        "total": batch.total,
+        "completed": batch.completed,
+        "current_chapter_id": batch.current_chapter_id,
+        "current_chapter_title": batch.current_chapter_title,
+        "failed_ids": batch.failed_ids
+    }
+
+
+@router.post("/threads/{thread_id}/batch-stop")
+async def stop_batch_translation(thread_id: int):
+    """Gracefully cancel and stop active batch translation queue."""
+    from services.background_translator import BackgroundTranslator
+    await BackgroundTranslator.stop_batch(thread_id)
+    return {"status": "stopped"}

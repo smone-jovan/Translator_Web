@@ -27,6 +27,7 @@ class ExportRequest(BaseModel):
     title: Optional[str] = None
     author: Optional[str] = "SMONE"
     cover_b64: Optional[str] = None
+    cover_url: Optional[str] = None
     chapter_ids: List[int]
 
 def clean_html_content(text: str) -> str:
@@ -86,6 +87,20 @@ async def export_thread(
                 book.set_cover("cover.jpg", image_bytes)
             except Exception as e:
                 print(f"⚠️ Failed to process cover image: {e}")
+        elif request.cover_url:
+            try:
+                import httpx
+                print(f"📥 Downloading cover image from: {request.cover_url}")
+                # Fetch image bytes
+                with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                    resp = client.get(request.cover_url)
+                    if resp.status_code == 200:
+                        book.set_cover("cover.jpg", resp.content)
+                        print(f"✅ Cover image downloaded and set successfully.")
+                    else:
+                        print(f"⚠️ Failed to download cover image. Status code: {resp.status_code}")
+            except Exception as e:
+                print(f"⚠️ Error downloading cover image: {e}")
 
         # Add Chapters
         spine = ["nav"]

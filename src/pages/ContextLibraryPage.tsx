@@ -15,6 +15,8 @@ interface LorebookEntry {
   translated_term: string;
   notes?: string;
   auto_extracted?: boolean;
+  is_locked?: boolean;
+  is_archived?: boolean;
 }
 
 interface ThreadItem {
@@ -75,7 +77,15 @@ export default function ContextLibraryPage() {
 
     fetch('http://localhost:8000/api/global-context')
       .then(res => res.json())
-      .then(data => setGlobalContext(data.global_context || ''))
+      .then(data => {
+        setGlobalContext(data.global_context || '');
+        if (data.extract_chapter_count && data.extract_sample_size) {
+          setExtractSettings({
+            chapterCount: data.extract_chapter_count,
+            sampleSize: data.extract_sample_size
+          });
+        }
+      })
       .catch(e => console.error('Failed to fetch global context', e));
   }, []);
 
@@ -129,13 +139,18 @@ export default function ContextLibraryPage() {
         ? `http://localhost:8000/api/lorebook/${editingEntryId}`
         : `http://localhost:8000/api/threads/${selectedThreadId}/lorebook`;
       
+      // Find the entry being edited to get its current lock status
+      const editingEntry = entries.find(e => e.id === editingEntryId);
+      const isLockedVal = editingEntry ? editingEntry.is_locked : false;
+
       const res = await fetch(url, {
         method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           original_term: newEntry.original,
           translated_term: newEntry.translated,
-          notes: newEntry.notes || undefined
+          notes: newEntry.notes || undefined,
+          is_locked: isLockedVal
         })
       });
       const data = await res.json();
@@ -156,7 +171,7 @@ export default function ContextLibraryPage() {
     }
   };
 
-  const quickAddEntry = async (sug: ExtractedTerm) => {
+  const quickAddEntry = async (sug: ExtractedTerm, isLocked: boolean = false) => {
     if (!sug.original_term.trim() || !selectedThreadId) return;
     try {
       const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`, {
@@ -165,7 +180,8 @@ export default function ContextLibraryPage() {
         body: JSON.stringify({
           original_term: sug.original_term,
           translated_term: sug.translated_term || '',
-          notes: sug.notes || undefined
+          notes: sug.notes || undefined,
+          is_locked: isLocked
         })
       });
       const data = await res.json();
@@ -174,6 +190,20 @@ export default function ContextLibraryPage() {
       setSuggestions(prev => prev.filter(s => s.original_term.toLowerCase() !== sug.original_term.toLowerCase()));
     } catch (e) {
       console.error('Failed to quick add entry', e);
+    }
+  };
+
+  const toggleLock = async (entry: LorebookEntry) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/lorebook/${entry.id}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_locked: !entry.is_locked })
+      });
+      const data = await res.json();
+      setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, is_locked: data.is_locked } : e));
+    } catch (e) {
+      console.error('Failed to toggle lock', e);
     }
   };
 
@@ -243,17 +273,34 @@ export default function ContextLibraryPage() {
     }
   };
 
+  const saveExtractSettings = async (chapterCount: number, sampleSize: number) => {
+    try {
+      await fetch('http://localhost:8000/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          extract_chapter_count: chapterCount,
+          extract_sample_size: sampleSize
+        })
+      });
+    } catch (e) {
+      console.error('Failed to save extract settings to server', e);
+    }
+  };
+
   const setPreset = (type: 'quick' | 'normal' | 'deep') => {
-    if (type === 'quick') setExtractSettings({ chapterCount: 5, sampleSize: 1000 });
-    else if (type === 'normal') setExtractSettings({ chapterCount: 15, sampleSize: 1000 });
-    else if (type === 'deep') setExtractSettings({ chapterCount: 25, sampleSize: 1000 });
-    setExtractMode('easy');
+    let cc = 25, ss = 1000;
+    if (type === 'quick') { cc = 5; ss = 1000; }
+    else if (type === 'normal') { cc = 15; ss = 1000; }
+    else if (type === 'deep') { cc = 25; ss = 1000; }
+    setExtractSettings({ chapterCount: cc, sampleSize: ss });
+    saveExtractSettings(cc, ss);
   };
 
   const estInputTokens = Math.ceil(
     150 + 
     (globalContext.length / 4) + 
-    (extractSettings.chapterCount * extractSettings.sampleSize * 0.8)
+    (extractSettings.chapterCount * extractSettings.sampleSize * 1.5)
   );
   const estTotalTokens = estInputTokens + 1500;
 
@@ -348,67 +395,86 @@ export default function ContextLibraryPage() {
                         <h4 className="text-sm font-bold flex items-center gap-2">
                           <Zap size={14} className="text-yellow-500" /> Extraction Scope
                         </h4>
-                        <div className="flex bg-[var(--secondary)] rounded-lg p-0.5">
-                          <button 
-                            onClick={() => setExtractMode('easy')}
-                            className={cn("px-2 py-1 text-[10px] font-bold rounded-md transition-all", extractMode === 'easy' ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]")}
-                          >
-                            EASY
-                          </button>
-                          <button 
-                            onClick={() => setExtractMode('advanced')}
-                            className={cn("px-2 py-1 text-[10px] font-bold rounded-md transition-all", extractMode === 'advanced' ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]")}
-                          >
-                            ADV
-                          </button>
-                        </div>
+                        <button 
+                          onClick={() => setExtractMode(prev => prev === 'easy' ? 'advanced' : 'easy')}
+                          className={cn(
+                            "px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all border",
+                            extractMode === 'advanced' 
+                              ? "bg-[var(--accent)] text-[var(--primary)] border-[var(--primary)]/20 shadow-sm" 
+                              : "bg-[var(--secondary)] text-[var(--muted-foreground)] border-transparent hover:border-[var(--border)]"
+                          )}
+                        >
+                          {extractMode === 'advanced' ? "FINE-TUNED" : "ADVANCED"}
+                        </button>
                       </div>
 
-                      {extractMode === 'easy' ? (
-                        <div className="grid grid-cols-3 gap-2 mb-4">
-                          {[
-                            { id: 'quick', label: 'Quick', ch: 5 },
-                            { id: 'normal', label: 'Normal', ch: 15 },
-                            { id: 'deep', label: 'Deep', ch: 25 }
-                          ].map(p => (
+                      {/* Presets - Always Visible for quick selection */}
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        {[
+                          { id: 'quick', label: 'Quick', ch: 5, size: 1000 },
+                          { id: 'normal', label: 'Normal', ch: 15, size: 1000 },
+                          { id: 'deep', label: 'Deep', ch: 25, size: 1000 }
+                        ].map(p => {
+                          const active = extractSettings.chapterCount === p.ch && extractSettings.sampleSize === p.size;
+                          return (
                             <button
                               key={p.id}
-                              onClick={() => setPreset(p.id as any)}
+                              onClick={() => {
+                                setPreset(p.id as any);
+                                setExtractMode('easy');
+                              }}
                               className={cn(
-                                "flex flex-col items-center py-2 rounded-xl border-2 transition-all",
-                                extractSettings.chapterCount === p.ch && extractSettings.sampleSize === 1000
-                                  ? "border-[var(--primary)] bg-[var(--accent)]/10"
-                                  : "border-[var(--border)] hover:border-[var(--muted-foreground)]"
+                                "flex flex-col items-center py-2 rounded-xl border-2 transition-all duration-200",
+                                active
+                                  ? "border-[var(--primary)] bg-[var(--primary)]/5 text-[var(--primary)] shadow-sm"
+                                  : "border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:border-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                               )}
                             >
                               <span className="text-[10px] font-bold uppercase">{p.label}</span>
-                              <span className="text-[9px] opacity-60">{p.ch} Ch</span>
+                              <span className="text-[9px] opacity-75 mt-0.5">{p.ch} Ch</span>
                             </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="space-y-3 mb-4">
+                          );
+                        })}
+                      </div>
+
+                      {/* Collapsible Sliders in Advanced Mode */}
+                      {extractMode === 'advanced' && (
+                        <div className="space-y-4 mb-4 pt-3 border-t border-dashed border-[var(--border)] animate-in fade-in slide-in-from-top-1 duration-200">
                           <div>
                             <div className="flex justify-between mb-1">
                               <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Chapters Ahead</label>
-                              <span className="text-[10px] font-mono text-[var(--primary)]">{extractSettings.chapterCount}</span>
+                              <span className="text-[10px] font-mono font-bold text-[var(--primary)]">{extractSettings.chapterCount} Ch</span>
                             </div>
                             <input 
                               type="range" min="1" max="50" step="1"
                               value={extractSettings.chapterCount}
-                              onChange={e => setExtractSettings({...extractSettings, chapterCount: parseInt(e.target.value)})}
+                              onChange={e => {
+                                const val = parseInt(e.target.value);
+                                setExtractSettings(prev => {
+                                  const next = { ...prev, chapterCount: val };
+                                  saveExtractSettings(next.chapterCount, next.sampleSize);
+                                  return next;
+                                });
+                              }}
                               className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
                             />
                           </div>
                           <div>
                             <div className="flex justify-between mb-1">
-                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Sample Size (Chars)</label>
-                              <span className="text-[10px] font-mono text-[var(--primary)]">{extractSettings.sampleSize}</span>
+                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Sample Size</label>
+                              <span className="text-[10px] font-mono font-bold text-[var(--primary)]">{extractSettings.sampleSize} Chars</span>
                             </div>
                             <input 
                               type="range" min="200" max="4000" step="100"
                               value={extractSettings.sampleSize}
-                              onChange={e => setExtractSettings({...extractSettings, sampleSize: parseInt(e.target.value)})}
+                              onChange={e => {
+                                const val = parseInt(e.target.value);
+                                setExtractSettings(prev => {
+                                  const next = { ...prev, sampleSize: val };
+                                  saveExtractSettings(next.chapterCount, next.sampleSize);
+                                  return next;
+                                });
+                              }}
                               className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
                             />
                           </div>
@@ -606,6 +672,13 @@ export default function ContextLibraryPage() {
                                   <Plus size={14} />
                                 </button>
                                 <button 
+                                  onClick={() => quickAddEntry(sug, true)}
+                                  title="Accept & Lock"
+                                  className="p-1.5 bg-blue-100 dark:bg-blue-950/40 rounded-lg text-blue-700 dark:text-blue-400 hover:scale-110 active:scale-95 transition-all"
+                                >
+                                  <Lock size={14} />
+                                </button>
+                                <button 
                                   onClick={() => {
                                     setNewEntry({ 
                                       original: sug.original_term, 
@@ -644,21 +717,37 @@ export default function ContextLibraryPage() {
                             <div className="w-10 h-10 rounded-xl bg-[var(--accent)] flex items-center justify-center text-[var(--primary)] font-bold">
                               {entry.original_term.charAt(0)}
                             </div>
-                            <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                            <div className="flex gap-1.5 items-center">
+                              {/* Lock Toggle Button - Always visible if locked, hover visible if unlocked */}
                               <button 
-                                onClick={() => startEditing(entry)}
-                                className="p-1.5 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
-                                title="Edit term"
+                                onClick={() => toggleLock(entry)}
+                                className={cn(
+                                  "p-1.5 rounded-lg hover:scale-110 active:scale-95 transition-all",
+                                  entry.is_locked 
+                                    ? "bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm" 
+                                    : "bg-slate-50 dark:bg-slate-950/20 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 opacity-0 group-hover:opacity-100 transition-all duration-300"
+                                )}
+                                title={entry.is_locked ? "Unlock Term (Allow Auto-Eviction)" : "Lock & Protect Term"}
                               >
-                                <Edit2 size={14} />
+                                <Lock size={14} className={cn(entry.is_locked ? "fill-amber-500/20" : "")} />
                               </button>
-                              <button 
-                                onClick={() => removeEntry(entry.id)} 
-                                className="p-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
-                                title="Delete term"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+
+                              <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                                <button 
+                                  onClick={() => startEditing(entry)}
+                                  className="p-1.5 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
+                                  title="Edit term"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => removeEntry(entry.id)} 
+                                  className="p-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
+                                  title="Delete term"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                           

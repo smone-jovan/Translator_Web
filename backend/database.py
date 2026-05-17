@@ -32,6 +32,9 @@ class GlobalSetting(Base):
     prefetch_enabled: Mapped[int] = mapped_column(default=0)  # 0 = disabled, 1 = enabled
     prefetch_count: Mapped[int] = mapped_column(default=2)    # 1-5 chapters
     prefetch_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
+    max_context_terms: Mapped[int] = mapped_column(default=50) # 20, 50, 70, 100, 150
+    extract_chapter_count: Mapped[int] = mapped_column(default=25)
+    extract_sample_size: Mapped[int] = mapped_column(default=1000)
 
 
 class Thread(Base):
@@ -106,6 +109,8 @@ class LorebookEntry(Base):
     usage_count: Mapped[int] = mapped_column(default=0)
     last_used_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    is_locked: Mapped[bool] = mapped_column(default=False)
+    is_archived: Mapped[bool] = mapped_column(default=False)
 
     thread: Mapped["Thread"] = relationship(back_populates="lorebook")
 
@@ -121,20 +126,46 @@ def get_db():
 def init_db():
     Base.metadata.create_all(bind=engine)
     
-    # Auto-migration: check for missing columns in global_settings
+    # Auto-migration: check for missing columns in global_settings and lorebook_entries
     from sqlalchemy import inspect, text
     inspector = inspect(engine)
-    columns = [c['name'] for c in inspector.get_columns('global_settings')]
+    columns_gs = [c['name'] for c in inspector.get_columns('global_settings')]
+    columns_lb = [c['name'] for c in inspector.get_columns('lorebook_entries')]
     
     with engine.connect() as conn:
-        if 'prefetch_count' not in columns:
-            print("⚠️ Migrating: Adding 'prefetch_count' to global_settings")
+        if 'prefetch_count' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'prefetch_count' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_count INTEGER DEFAULT 2"))
             conn.commit()
             
-        if 'prefetch_mode' not in columns:
-            print("⚠️ Migrating: Adding 'prefetch_mode' to global_settings")
+        if 'prefetch_mode' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'prefetch_mode' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_mode VARCHAR(20) DEFAULT 'soft'"))
             conn.commit()
             
-    print("[OK] Database initialized - app.db ready.")
+        if 'max_context_terms' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'max_context_terms' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN max_context_terms INTEGER DEFAULT 50"))
+            conn.commit()
+
+        if 'extract_chapter_count' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'extract_chapter_count' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN extract_chapter_count INTEGER DEFAULT 25"))
+            conn.commit()
+
+        if 'extract_sample_size' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'extract_sample_size' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN extract_sample_size INTEGER DEFAULT 1000"))
+            conn.commit()
+            
+        if 'is_locked' not in columns_lb:
+            print("[MIGRASI] Menambahkan kolom 'is_locked' ke dalam tabel lorebook_entries...")
+            conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN is_locked BOOLEAN DEFAULT FALSE"))
+            conn.commit()
+            
+        if 'is_archived' not in columns_lb:
+            print("[MIGRASI] Menambahkan kolom 'is_archived' ke dalam tabel lorebook_entries...")
+            conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN is_archived BOOLEAN DEFAULT FALSE"))
+            conn.commit()
+            
+    print("[SUKSES] Inisialisasi basis data selesai - app.db siap digunakan.")

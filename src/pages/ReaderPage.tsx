@@ -83,7 +83,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
     }
   }, [threadId]);
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard') => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
     if (!thread) return;
     
     window.dispatchEvent(new CustomEvent('batch-start', { 
@@ -97,7 +97,8 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
         body: JSON.stringify({ 
             chapter_ids: chapterIds, 
             ai_extract: aiExtract,
-            overwrite: loadMode === 'hard'
+            overwrite: overwrite,
+            target_lang: targetLang
         })
       });
       
@@ -174,7 +175,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
     };
   }, [prefetchEnabled, fetchThread, thread?.chapters]);
 
-  const handleTranslateChapter = useCallback(async (isResume = false, initialText = '', overrideContent?: string, overrideId?: number) => {
+  const handleTranslateChapter = useCallback(async (isResume = false, initialText = '', overrideContent?: string, overrideId?: number, forceOverwrite = false) => {
     const textToTranslate = overrideContent || chapterContent?.content_original;
     const chId = overrideId || chapterContent?.id;
     
@@ -198,6 +199,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
           target_lang: targetLang,
           thread_id: threadId,
           chapter_id: chId,
+          force_overwrite: forceOverwrite,
         }),
       });
 
@@ -233,7 +235,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
     } finally {
       setIsTranslating(false);
     }
-  }, [isTranslating, threadId, fetchThread, chapterContent?.content_original, chapterContent?.id]);
+  }, [isTranslating, threadId, fetchThread, chapterContent?.content_original, chapterContent?.id, globalSettings]);
 
   // Handle Chapter Selection
   useEffect(() => {
@@ -785,16 +787,24 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                   <div className="px-6 py-3 border-b border-[var(--border)] bg-[var(--background)]/50 flex items-center justify-between">
                     <span className="text-[10px] font-black uppercase tracking-widest text-[var(--accent)]">AI Translation</span>
                     <div className="flex items-center gap-2">
-                      <Button 
-                        variant="default" 
-                        size="sm" 
-                        className="h-7 px-3 text-[10px] rounded-lg gap-1.5 shadow-lg shadow-[var(--accent)]/20"
-                        onClick={() => handleTranslateChapter()}
-                        disabled={isTranslating}
-                      >
-                        {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                        {isTranslating ? 'TRANSLATING' : 'GENERATE'}
-                      </Button>
+                      {(() => {
+                        const hasTranslation = !!chapterContent?.content_translated || !!translatedText;
+                        return (
+                           <Button 
+                            variant={hasTranslation ? "outline" : "default"} 
+                            size="sm" 
+                            className={`h-7 px-3 text-[10px] rounded-lg gap-1.5 ${hasTranslation ? 'border border-[color-mix(in_srgb,var(--foreground)_30%,transparent)] text-[var(--foreground)] hover:bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)] bg-transparent' : 'shadow-lg shadow-[var(--accent)]/20'}`}
+                            onClick={() => handleTranslateChapter(false, '', undefined, undefined, hasTranslation)}
+                            disabled={isTranslating}
+                          >
+                            {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                            {isTranslating 
+                              ? (hasTranslation ? 'RE-TRANSLATING' : 'TRANSLATING') 
+                              : (hasTranslation ? 'RE-TRANSLATE' : 'TRANSLATE')
+                            }
+                          </Button>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex-1 overflow-auto p-10 leading-relaxed font-serif bg-[var(--background)]" style={{ fontSize: `${fontSize}px` }}>
