@@ -123,7 +123,7 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     # 4. Get Global Settings for Prompt
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
-    global_rules = gs.global_context if gs else ""
+    global_rules = (gs.global_context if gs else "") or ""
     target_lang = gs.target_language if gs else "Indonesian"
 
     # Estimated tokens (Chinese characters average ~0.8 tokens per character in Llama-3/Mistral tokenizers)

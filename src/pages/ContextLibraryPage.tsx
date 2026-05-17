@@ -218,15 +218,26 @@ export default function ContextLibraryPage() {
           sample_size: extractSettings.sampleSize
         })
       });
-      const data = await res.json();
+      
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (err) {
+        throw new Error('Server returned an unexpected plain text format. Please check the backend uvicorn terminal logs.');
+      }
+      
+      if (!res.ok) {
+        throw new Error(data.detail || 'Extraction failed.');
+      }
+
       // Filter out suggestions that already exist in the glossary (entries state)
       const existingOriginals = new Set(entries.map(e => e.original_term.trim().toLowerCase()));
       const filteredSuggestions = (data.terms || []).filter((sug: ExtractedTerm) => 
         !existingOriginals.has(sug.original_term.trim().toLowerCase())
       );
       setSuggestions(filteredSuggestions);
-    } catch (e) {
-      alert('Extraction failed.');
+    } catch (e: any) {
+      alert(`Extraction Failed: ${e.message || 'Unknown error'}`);
     } finally {
       setIsExtracting(false);
     }
