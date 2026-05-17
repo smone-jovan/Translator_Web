@@ -16,6 +16,8 @@
 *   **Aesthetics First:** Exquisite glassmorphic interface inspired by `app.readomni.com` with smooth, organic micro-interactions and transitions.
 *   **Dynamic Theme Presets:** Toggle instantly between **OLED Dark**, **Warm Sepia**, and the signature **Omni Preset** using visual selectors built fully on HSL CSS design tokens.
 *   **Mobile-First Ergonomics:** Fully responsive layout with an elegant mobile bottom navigation bar and gesture-friendly reading layout for smartphones.
+*   **Custom Cover Personalization System (ADR-019):** High-fidelity canvas compression engine (<100KB JPEG resolution 300x400) to keep SQLite DB/network lightweight, dynamic HSL linear gradients linear fallback, and support for absolute URL cover links.
+*   **Premium Novel Details Dashboard (ADR-021):** Premium overlay modal displaying real-time translation statistics, multi-source metadata aggregates, inline detail editing, custom descriptions, and covers.
 
 ### ⚡ 2. Batch Translation Studio
 *   **Studio Dashboard:** A dedicated command center to translate multiple chapters at once.
@@ -24,12 +26,15 @@
     *   *Hard Load:* High-throughput bulk translation (3-20+ chapters simultaneously) for fast updates.
 *   **Status Center:** Real-time visual tracking of batch queue progress and thread states.
 *   **Mandatory Overwrite:** Enforces glossary updates immediately to rewrite and sync translated text whenever a term is modified.
+*   **Dynamic Action & Continuation Sweep (ADR-026):** Decoupled **"Polish Remaining"** vs **"Re-polish All"** triggers in Soft Load mode to resume batch title polishing from the last completed offset without infinite looping.
 
 ### 🧠 3. Smart Context & Glossary Engine
 *   **AI Extract First (Smart Extraction):** Recommends automatic term extraction before translation if the thread has < 40 glossary terms, ensuring translation consistency.
 *   **Smart Scoping:** Automatic character and term scanning starts precisely from the user's `last_read` chapter bookmark.
 *   **Usage-Based Glossary Routing:** Automatically tracks and ranks the top 50 most relevant terms (`usage_count` & `last_used_at`) and feeds them into the system prompt to avoid token bloat.
 *   **Terminology Auto-Discovery:** Parses "Translator Notes" and LLM suggestions at the end of chapters to auto-save new glossary terms directly.
+*   **Metadata & Synopsis Auto-Translating (ADR-020):** Auto-cleans original descriptions, automatically isolates raw titles from nested bracket/siku tags, and translates summaries from Chinese to target language.
+*   **Volume-Aware Zero-Padding Formatting (ADR-024):** Zero-padded serial title formatting supporting standard, volume-level, and custom dynamic increments (e.g. `V1-001. Title`).
 
 ### 📚 4. Library & Premium Book Export
 *   **Progressive Bookmarking:** Real-time reading history tracking, custom progress banners, and "Last Read" indicators on the chapter index.
@@ -37,15 +42,19 @@
     *   *Custom Cover Upload:* Embed cover images directly from your system.
     *   *Curation & Metadata:* Custom author and book title details.
     *   *Selective Compiling:* Select all or filter to compile translated chapters only.
+*   **SFACG Scraper & Advanced Search (ADR-022):** Direct integration with stealth parsing strategies to fetch chapters, metadata, and tables of contents from SFACG.
+*   **Scraped Author Metadata Integration (ADR-025):** Fully aggregates extracted authorship records into centralized book details.
 
-### ⚙️ 5. Server-Side Configuration Sync
+### ⚙️ 5. Server-Side Configuration Sync & Volume Boundaries
 *   **Unified Multi-Device Sync:** Transitioned from volatile browser `localStorage` to SQLite-backed `global_settings` table, synchronizing settings instantly between desktop and mobile devices on the same network.
 *   **Sequential Background Prefetching:** Configure a smart prefetching range slider (1-5 chapters ahead) to sequentially pre-translate the upcoming chapters in the background while you read.
+*   **Stateful Volume Transition & Prologue Boundary Guards (ADR-027):** Uses isolated state tags (`volume_just_incremented`) and native prologue parsers to block sequential numeric resets from double-incrementing volume sequences.
 
 ### 🛡️ 6. Stability & GPU Guardrails
 *   **Throttling Mitigation:** Title translations chunked into blocks of 50 with a `1.0s` delay to prevent local LLM server timeout or freeze.
 *   **300s Heavy-Duty Timeout:** Elevated HTTP connections to support complex deep-context translations without abrupt closures.
 *   **AbortController Integration:** Automatically cancels past streaming threads when rapidly skipping through chapters to avoid VRAM clashing.
+*   **Isolated Test Driven Development (TDD) Suites (ADR-018):** Standardized regression defense suites bound to SQLite in-memory databases to safeguard structural changes.
 
 ---
 
