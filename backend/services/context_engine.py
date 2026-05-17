@@ -164,11 +164,21 @@ If no new terms, skip.
         if not text:
             return ""
         import re
-        # Pola pencarian header catatan penerjemah (dengan spasi/baris baru opsional di depannya)
-        header_pattern = re.compile(r"([\n\r]*Translator['s]*\s*Notes?[:\s]*|[\n\r]*### Translator['s]*\s*Notes?[:\s]*|[\n\r]*Notes?[:\s]*)", re.IGNORECASE)
+        # Pola pencarian header catatan penerjemah yang fleksibel terhadap format Markdown (seperti **, *, ###, dsb.)
+        header_pattern = re.compile(
+            r"(\n\s*[-—*_]*\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*###\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*Notes?[:\s])", 
+            re.IGNORECASE
+        )
         match = header_pattern.search(text)
         if match:
-            return text[:match.start()].strip()
+            cleaned = text[:match.start()].strip()
+            # Bersihkan sisa-sisa formatting markdown di ujung teks (seperti **, *, ---, ___, #, dsb.)
+            while True:
+                prev_len = len(cleaned)
+                cleaned = cleaned.rstrip(" \t\n\r*•-—#_")
+                if len(cleaned) == prev_len:
+                    break
+            return cleaned
         return text
 
     @staticmethod
@@ -214,18 +224,28 @@ If no new terms, skip.
             
             if separator:
                 parts = line.split(separator, 1)
-                term = parts[0].strip().lstrip("-*• ").strip()
-                desc = parts[1].strip()
+                term = parts[0].strip(" \t\n\r*•-“”\"'")
+                term = re.sub(r"\*\*$", "", term).strip(" \t\n\r*•-“”\"'").strip()
+                
+                desc = parts[1].strip(" \t\n\r*•-“”\"'")
+                desc = re.sub(r"\*\*$", "", desc).strip(" \t\n\r*•-“”\"'").strip()
+                
+                if not term or not desc:
+                    continue
                 
                 # Abaikan kalau AI cuma bilang "tidak ada istilah baru" atau deskripsi kosong
                 skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a", "unknown"]
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
-                if term and len(term) < 100 and len(term) > 1:
-                    term = term.strip('"\'')
-                    
-                    term_clean = term.strip().lower()
+                # STRICT: Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
+                # dan panjangnya tidak boleh lebih dari 30 karakter. Ini 100% mencegah kalimat Bahasa Inggris tersimpan.
+                chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
+                if not chinese_pattern.search(term) or len(term) > 30:
+                    continue
+
+                if len(term) > 1:
+                    term_clean = term.lower()
                     
                     # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
                     if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
