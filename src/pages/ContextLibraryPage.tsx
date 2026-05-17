@@ -611,16 +611,20 @@ export default function ContextLibraryPage() {
                             <div className="w-10 h-10 rounded-xl bg-[var(--accent)] flex items-center justify-center text-[var(--primary)] font-bold">
                               {entry.original_term.charAt(0)}
                             </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => removeEntry(entry.id)} className="p-1.5 text-[var(--muted-foreground)] hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">
-                                <Trash2 size={14} />
-                              </button>
+                            <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
                               <button 
                                 onClick={() => startEditing(entry)}
-                                className="p-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded-lg hover:bg-[var(--secondary)]"
+                                className="p-1.5 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
                                 title="Edit term"
                               >
-                                <FileText size={14} />
+                                <Edit2 size={14} />
+                              </button>
+                              <button 
+                                onClick={() => removeEntry(entry.id)} 
+                                className="p-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
+                                title="Delete term"
+                              >
+                                <Trash2 size={14} />
                               </button>
                             </div>
                           </div>
