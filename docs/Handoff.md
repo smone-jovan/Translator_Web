@@ -1,103 +1,185 @@
-# handoff — status proyek terakhir
-> **update:** 17 Mei 2026 | **status:** Phase 14 — Stateful Volume Transition & Resilient Batch Polish System (Complete)
+# 🌌 ReadOmni AI — Developer Handoff Blueprint
+
+> **WELCOME, DEVELOPER/AGENT:** This document is your absolute source of truth. It has been meticulously updated to capture the entire system architecture, database models, technical boundaries, core pipeline lifecycles, and future expansion paths. By reading this file, you should understand the project fully and be ready to write high-impact code immediately.
 
 ---
 
-## overview singkat
-Kita telah berhasil membangun web app untuk membaca novel dengan translasi AI lokal (LM Studio). Pengalaman membaca terinspirasi oleh **ReadOmni** dengan fokus pada keamanan privasi lokal. Proyek saat ini telah menyelesaikan Phase 13 dengan sistem pengaturan "Soft/Hard Load" bagi Infinite Title Polish, pembersihan judul original novel otomatis (ADR-020), penerjemahan sinopsis buku mandiri ke bahasa tujuan, sistem kustomisasi cover buku premium (Base64 local compressor, link URL langsung, dan dynamic seeded fallbacks), TDD backend, mitigasi encoding Windows, serta linter frontend/backend yang berjalan 100% sempurna dengan 0 error dan 0 warning.
+## 🚀 1. Project Overview & Dev-Sandbox Setup
+
+**ReadOmni AI** is a premium, self-hosted web novel reading and translation platform inspired by `app.readomni.com`. It features a sleek glassmorphic UI, sequential local AI background translation, a bulk translation dashboard, term auto-extraction, custom cover creators, and server-side synchronized configuration.
+
+### 📋 The Technical Stack
+* **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
+* **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
+* **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
+* **AI Core:** LM Studio API (Local mock-OpenAI running at `http://localhost:1234`).
+
+### 🔌 Sandbox Port Assignments
+* **Vite Frontend:** `http://localhost:5173` (Staged to allow LAN sharing `--host` to read on mobile devices).
+* **FastAPI Backend:** `http://localhost:8000` (Bound to `0.0.0.0` for multi-device sync).
+* **LM Studio Local AI:** `http://localhost:1234` (OpenAI compatible REST endpoint).
 
 ---
 
-## struktur folder
-Kalau mau nyari file, ini peta singkatnya:
-- `backend/`: Jeroan Python FastAPI.
-  - `services/`: Tempat logika berat kayak `context_engine.py` (buat bikin prompt) dan `background_translator.py`.
-  - `routers/`: Endpoint API buat scraping, epub, dsb.
-- `src/`: Frontend React (Vite + Tailwind). 
-  - `pages/`: Halaman reader, library, dan setting.
-  - `index.css`: Semua variabel warna dan desain glassmorphism ada di sini.
-- `docs/`: Catatan rencana kerja (`implementation_plan.md`) dan catatan keputusan desain (`decisions/`).
+## 📂 2. Directory Map & Component Roles
+
+```text
+├── backend/
+│   ├── database.py             # SQLite database setup, engine activation, WAL mode configuration
+│   ├── main.py                 # FastAPI app initialization, middleware configurations, error overrides
+│   ├── models.py               # SQLAlchemy Database schemas (Threads, Chapters, Lorebook, Settings)
+│   ├── routers/
+│   │   ├── batch.py            # Studio Bulk translations (Soft/Hard processing logic)
+│   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
+│   │   ├── export.py           # Premium book compiles (EPUB cover generator + selective exports)
+│   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
+│   │   ├── scrape.py           # URL crawling interface using Crawl4AI
+│   │   └── settings.py         # Server-side persistent settings sync (GlobalSetting table)
+│   ├── services/
+│   │   ├── background_translator.py # Core queue, title polishing sweeps, sequential prefetchers
+│   │   ├── context_engine.py   # AI terminology extraction, prompts, lorebook token limits
+│   │   └── epub_exporter.py    # EPUB container compiler and metadata packager
+│   └── scratch/                # Developer isolated testing playground and TDD specs
+├── src/
+│   ├── components/             # Reusable UX controls
+│   │   ├── EditCoverModal.tsx  # Dynamic HTML5 canvas drawing and base64 compression modal
+│   │   ├── ExportModal.tsx     # Compilation controls, metadata forms, checklists
+│   │   └── ScrapeNUModal.tsx   # Crawl4AI parser interface (Scrapes synopsis, metadata, cover links)
+│   ├── pages/
+│   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes)
+│   │   ├── LibraryPage.tsx     # Rack bookshelf, reading history continue carousel, batch studios
+│   │   ├── ReaderPage.tsx      # Immersive reader dual-pane (Split-screen translation workspace)
+│   │   └── SettingsPage.tsx    # Global variables dashboard (Themes, language, prefetch range)
+│   ├── index.css               # Central design tokens, variable scopes, animations
+│   └── main.tsx                # Client bootstrapper
+└── docs/                       # Architectural Decision Records (ADRs 001 to 027)
+```
 
 ---
 
-## status terakhir (apa yang sudah jalan?)
+## 💾 3. SQLite Database Models & Schemas
 
-Sejauh ini, sistem translasinya sudah lumayan "pinter":
-- **Context engine**: AI gak asal nerjemahin. Dia sudah dikasih instruksi etika (kayak jangan nerjemahin nama orang, jaga honorifik, dsb).
-- **AI Glossary Extraction**: Added Dual-Mode (Easy/Advanced) configuration.
-  - **Easy Mode**: Presets for Quick (5 ch), Normal (15 ch), and Deep (25 ch) scans.
-  - **Advanced Mode**: Granular control over chapter count and character sample size.
-  - **Token Estimation**: Real-time input token estimation (chars/4) to manage context limits.
-  - **Smart Scoping**: Extraction starts from the `last_read` chapter position automatically.
-- **Glossary CRUD**: Full Update (PUT) support implemented for terminology management.
-- **Auto-save glossary**: Kalau AI ngasih catatan di akhir bab, sistem otomatis nangkap istilah itu dan simpan ke database. Gak perlu input manual lagi.
-- **Background task**: Translasi jalan di belakang layar pakai FastAPI BackgroundTasks. Jadi kamu bisa tutup tab atau pindah halaman tanpa ngerusak prosesnya.
-- **Advanced Prefetch System**:
-  - **Configurable Range**: User can set background translation range (1-5 chapters ahead).
-  - **Persistence**: Settings are stored server-side in `GlobalSetting` table for multi-device sync.
-  - **Dynamic UI**: Slider controls available in both main Settings and Reader settings overlay.
-  - **Smart Sequential Execution**: Background translator processes the next N chapters sequentially to avoid overloading the local LLM.
-- **Bulk title translator**: Buat novel yang babnya ribuan, kita sudah bikin sistem chunking (50 bab sekali jalan) biar gak error pas nerjemahin judul.
-- **Premium Book Builder (Export System)**:
-  - **Multi-format**: Mendukung ekspor ke **EPUB** (reflowable) dan **TXT**.
-  - **Custom Metadata**: User bisa atur Judul dan Nama Author secara manual sebelum ekspor.
-  - **Custom Cover**: Mendukung upload gambar cover dari PC untuk disisipkan ke file EPUB.
-  - **Selective Export**: Bisa pilih bab mana saja yang mau diekspor lewat checklist UI (Select All / Select Translated Only).
-- **Batch Translation Studio**: 
-  - **Sequential Processing**: Logic to handle bulk translations without overloading VRAM.
-  - **Soft Load**: Sequential 1-by-1 processing for maximum stability and focus.
-  - **Hard Load**: Adjustable bulk processing (3-20+ chapters) for rapid updates.
-  - **Mandatory Overwrite**: Ensures terminology consistency across all processed chapters.
-  - **Context-Aware Extraction**: Integrated AI extraction toggle (Recommended for batches).
-  - **Status Center**: Real-time progress visualization for bulk tasks.
-- **Hidden Translator Notes & Real-time Streaming Filter**:
-  - **Real-time Filter**: Pendeteksian pola catatan penerjemah secara instan selama streaming AI berjalan. Begitu AI mulai mengeluarkan catatan penerjemah, sisa streaming tidak akan diteruskan ke antrean pembaca agar tampilan tetap bersih.
-  - **Automatic Stripping**: Secara otomatis memotong `Translator Notes` atau `Notes` sebelum terjemahan disimpan ke database (`Chapter.content_translated`) pada proses background translator, penyimpanan manual, maupun respon API sekali jalan (single-shot).
-  - **AI Glossary Learning Maintained**: Catatan penerjemah yang disembunyikan tersebut tetap diproses sepenuhnya oleh sistem context engine (`ContextEngine.auto_save_glossary`) untuk memperkaya glosarium/lorebook novel secara otomatis sebelum dibuang dari teks cerita pembaca.
-- **TDD Test Suite & Linter Quality Enforcement**:
-  - **Isolated Backend Unit Tests**: Menyediakan file unit test di `backend/scratch/test_context_engine.py` untuk menguji parser catatan penerjemah dan aturan penyaringan istilah otomatis secara aman menggunakan database in-memory SQLite.
-  - **Windows Unicode Safeguards**: Menambahkan penanganan encoding input/output terminal (`sys.stdout.reconfigure(encoding='utf-8')`) di `main.py` guna menghindari crash saat logging karakter non-ASCII di Windows.
-  - **Clean Build Integration**: Membersihkan dan memperbaiki seluruh peringatan compilation serta React hook warnings, menghasilkan status linter yang 100% bebas dari warning dan error (`0 errors, 0 warnings`).
-- **Custom Book Cover Personalization System**:
-  - **Client-Side Compressor**: Upload gambar dari file local dikompresi di browser via HTML5 Canvas (resolusi 300x400, aspect ratio 3:4, format JPEG, target ukuran <100KB) untuk efisiensi penyimpanan DB dan kelancaran sinkronisasi LAN.
-  - **Dynamic Seeded Gradients**: Hash otomatis berdasarkan judul novel untuk menciptakan cover linear gradient HSL yang modern dan minimalis lengkap dengan inisial glassmorphic bagi novel yang belum memiliki gambar kustom.
-  - **Uniform Sync**: Integrasi visual rak buku (Bookshelf) dan riwayat bacaan (Continue Reading Carousel) dengan hover-scaling premium.
-  - **Direct Image Link**: Dukungan input link URL langsung yang disimpan bersih di database SQLite.
-- **Infinite Title Polish & Dynamic Actions System**:
-  - **Soft/Hard Load Selectors**: Menyediakan pilihan mode polish (Soft Load 50-150 judul bab, atau Hard Load tak terbatas) untuk stabilitas memori GPU.
-  - **Clean Original Title**: Secara otomatis mendeteksi dan mengekstrak judul inti Mandarin orisinil dari tag-tag deskriptif bersiku atau tanda kurung pada database (`thread.original_title`) demi kepatuhan penuh terhadap ADR-020.
-  - **Automated Synopsis Translation**: Secara pintar mendeteksi deskripsi/sinopsis novel dalam bahasa Mandarin, dan menerjemahkannya secara asinkron ke bahasa tujuan (Indonesian/English) saat polish dijalankan.
-  - **Polish Remaining Progression**: Menyediakan aksi dinamis "Polish Remaining" untuk melanjutkan antrean pemolesan bab berikutnya (100 bab per batch di soft load) tanpa mengulang batch pertama yang sudah selesai.
-  - **Decoupled Reset All**: Aksi hapus dan ulang pemolesan total dari awal ("Reset & Re-polish All") diletakkan secara terisolasi di popover pengaturan agar tidak tertekan secara tidak sengaja.
-  - **Stateful Volume Transitions**: Volume transition manager kini dilindungi dengan double-increment guard (`volume_just_incremented`) untuk mencegah lonjakan volume ganda pada bab setelah prologue atau boundary reset, serta parsing prolog yang dinamis.
+The system uses SQLite in **WAL (Write-Ahead Logging)** mode to handle simultaneous read/write actions safely across devices.
 
-### perubahan arsitektur penting:
-1. **Pindah ke background task**: 
-- 🧠 **Smart Context**: AI scans up to 50 chapters ahead from your last read position to build a consistent glossary.
-- ⚙️ **Configurable Extraction**: Dual-mode (Easy/Advanced) settings for extraction depth and token management.
-- 📚 **Thread Isolation**: Separate lorebooks and AI suggestions for every novel thread.
-2. **Auto-migration**: Database sekarang bisa update kolom sendiri kalau ada perubahan skema (kolom `polish_mode` dan `polish_soft_limit` dimasukkan ke tabel `global_settings` secara dinamis saat start).
-3. **Usage tracking**: Sekarang tiap istilah di lorebook punya `usage_count` dan `last_used_at`.
-4. **Mobile Bottom Nav**: Navigasi utama sekarang pakai *bottom bar* yang ergonomis di HP (Slice 2 beres).
-5. **Hidden Translator Notes & Auto-Stripping**: Sistem secara dinamis memisahkan teks cerita bersih untuk pembaca dari catatan penerjemah yang diperuntukkan bagi kecerdasan buatan, lengkap dengan migrasi database historis (34 bab lama dibersihkan secara otomatis).
-6. **Isolated Testing & Windows Safe Shell**: Logika inti dari pembersihan teks kini terisolasi dari status database utama dengan pengujian otomatis instan yang melindungi sistem dari regresi fungsional di masa depan.
-7. **Cover Image Auto-Migration**: Penambahan otomatis kolom `cover_image TEXT` pada skema basis data SQLite saat inisiasi aplikasi tanpa mengganggu data lama.
-8. **Pipeline Polish & Sanitasi Metadata**: API `/threads/{thread_id}/translate-titles` sekarang merangkap sebagai pintu gerbang pembersihan metadata novel (original title dan sinopsis) secara asinkron sebelum memproses batch judul bab.
-9. **Soft Load Continuation Engine**: Menghindari perulangan tak terhingga di frontend pada soft load dengan merombak alur re-polish (ADR-026).
-10. **Stateful Volume Transition & Prologue Boundary**: Menghadirkan guards khusus di backend (`threads.py`) untuk melindungi navigasi multi-volume dari tabrakan sequence reset (ADR-027).
+```mermaid
+erDiagram
+    Thread ||--o{ Chapter : contains
+    Thread ||--o{ Lorebook : possesses
+    GlobalSetting ||--|| Thread : configures
+    
+    Thread {
+        int id PK
+        string title
+        string original_title
+        string author
+        string synopsis
+        string cover_image
+        string source
+        string url
+        int last_read_chapter_id
+    }
+    
+    Chapter {
+        int id PK
+        int thread_id FK
+        string title
+        string title_translated
+        string content_raw
+        string content_translated
+        int volume
+        int order
+        boolean is_translated
+    }
+    
+    Lorebook {
+        int id PK
+        int thread_id FK
+        string key
+        string value
+        int usage_count
+        datetime last_used_at
+    }
+    
+    GlobalSetting {
+        int id PK
+        string theme
+        string target_language
+        int prefetch_range
+        string polish_mode
+        int polish_soft_limit
+    }
+```
 
 ---
 
-## apa yang harus dikerjakan selanjutnya? (Ide Pengembangan Masa Depan)
+## ⚙️ 4. Core Subsystem Lifecycles & Workflows
 
-1. **AI Character Relationship Clustering & Visualizer**: Mendeteksi hubungan antar tokoh utama secara otomatis dari hasil pemindaian teks bab novel, kemudian memvisualisasikannya ke dalam grafik hubungan interaktif (dynamic network graph) di panel Lorebook.
-2. **Offline Translation Model Cache & Optimizations**: Mendukung pengunduhan dan caching template gaya penerjemahan novel berbasis GGUF model lokal untuk memaksimalkan efisiensi memori GPU dan VRAM.
-3. **Dynamic CSS Typography Drawer**: Menyediakan antarmuka kustomisasi jenis huruf (font family upload), spasi antar baris (line height), dan layout bacaan yang sepenuhnya dipersonalisasi di dalam panel samping reader drawer.
+### 🛡️ A. Stateful Volume Transition Bounds (ADR-027)
+To prevent sequential numbering resets from causing "double-volume increments" (e.g. Volume 1 skipping to Volume 3), the backend tracks volume sweeps statefully:
+1. **Explicit Prologue Matches:** The system scans chapter titles using regex and matches prologue keywords (`序章`, `楔子`, `prologue`, etc.). If matched:
+   * Current volume increments cleanly.
+   * Internal chapter index drops to `0`.
+   * Sets `volume_just_incremented = True`.
+2. **Double-Increment Protection:** If `volume_just_incremented` is active on chapter $n$, the sequential reset drop detector (`raw_num < prev_raw_num`) is suppressed on chapter $n+1$, giving the new sequence number space (e.g. Chapter 1) room to stabilize.
+
+```mermaid
+graph TD
+    A[Scan Chapter Title] --> B{Is Prologue?}
+    B -- Yes --> C[Increment Volume, Set Chapter to 0]
+    C --> D[Set volume_just_incremented = True]
+    B -- No --> E{raw_num < prev_raw_num?}
+    E -- Yes --> F{Is volume_just_incremented Active?}
+    F -- Yes --> G[Clear Guard Flag]
+    F -- No --> H[Increment Volume, Reset Sequence]
+    E -- No --> I[Maintain Current Volume]
+```
+
+### 🎨 B. Dynamic Client-Side Cover Engine (ADR-019)
+The visual bookshelf features an optimized multi-source cover pipeline:
+* **canvas Compressor:** Staged inside `EditCoverModal.tsx`. When a user uploads a cover image from their system, it is painted onto a `300x400` Canvas (exact `3:4` ratio), converted to JPEG, compressed to `<100KB`, and saved as a lightweight Base64 string in the database.
+* **Direct URL Image Link:** Supports fetching straight from online paths.
+* **linear Seeded Gradient:** If no cover exists, the system hashes the book's title to produce a unique, aesthetically beautiful linear HSL gradient with a glassmorphic central initials badge.
+
+### ⚡ C. Resilient Incremental Title Polishing (ADR-026 & ADR-024)
+Large novels are polished in batches using a safe **Soft Load** mechanism (typically 100 chapters per request) to protect VRAM:
+* **The Progression States:**
+  * **Polish Titles** (0 titles polished): Initial sweep runs with `repolish=false`.
+  * **Polish Remaining** (Some polished): Skip already translated titles and process the subsequent batch (e.g. 100–199, then 200–299) without looping back to Chapter 0.
+  * **Re-polish All** (All polished): Clears translations and processes a clean full sweep.
+  * **Reset & Re-polish All** (Manual Override): Located inside Polish Settings popover for manual force overwrites.
 
 ---
 
-## tech stack & dependencies
+## 🧪 5. Sandbox Quality Control & Verification
 
-- **frontend**: React 19, Vite, Tailwind v4.
-- **backend**: Python 3.11, FastAPI, SQLAlchemy (SQLite), Unittest.
-- **eksternal**: LM Studio (Local AI), Crawl4AI (Scraper), EbookLib (EPUB).
+Every code change must adhere to the highest standard of type checking and compiler verification:
+* **TSX Type Verification:** Run `npm run typecheck` (executes `tsc --noEmit`). No compilation errors are permitted.
+* **FastAPI Routers Syntax:** Run `py -m py_compile backend/routers/threads.py` to assert syntax sanity.
+* **Isolated TDD Specs:** Run test suites using Python unit tests (e.g. in `backend/scratch/test_context_engine.py`) built around in-memory SQLite instances to verify parsing logic safely.
+
+---
+
+## 📈 6. Future Expansion Roadmap & Your Immediate Tasks
+
+Here are the immediate strategic features you are tasked to build next:
+
+### 1. AI Character Relationship Clustering & Visualizer
+* **Goal:** Detect key narrative figures, track character interactions via chapter occurrences, and draw a dynamic interactive relationship network diagram inside the Lorebook page.
+* **Files to Extend:**
+  * `backend/services/context_engine.py` (Add a graph-node entity extractor).
+  * `src/pages/ContextLibraryPage.tsx` (Implement a SVG network graph visualizer using D3 or canvas).
+
+### 2. GGUF Model Cache & Local Model Store
+* **Goal:** Allow users to download and change LLM translation models directly from the reader panel (storing local paths).
+* **Files to Extend:**
+  * `backend/routers/settings.py` (Add model list schemas).
+  * `src/pages/SettingsPage.tsx` (Add model download dashboards).
+
+### 3. Dynamic Reader Drawer Layout Options
+* **Goal:** Complete customized styles including custom user fonts uploads, adjustable paragraph gaps, line-height limits, and custom column layouts.
+* **Files to Extend:**
+  * `src/pages/ReaderPage.tsx` (Incorporate variables into the settings sliding drawer).
+
+---
+
+*Now that you are up to speed with the entire architecture, schemas, and guardrails, dive in and craft beautiful, production-ready code! Good luck!*
