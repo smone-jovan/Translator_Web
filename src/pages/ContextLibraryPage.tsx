@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
-  X, Plus, BookOpen, Globe, Save, FileText, Sparkles, 
-  Loader2, Check, Search, Filter, MoreVertical, Trash2, Lock,
-  Settings2, ChevronDown, Zap
+  X, Plus, BookOpen, Globe, FileText, Sparkles, 
+  Loader2, Check, Search, Filter, Trash2, Lock,
+  Settings2, Zap
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,7 +52,6 @@ export default function ContextLibraryPage() {
   const [extractMode, setExtractMode] = useState<'easy' | 'advanced'>('easy');
   const [extractSettings, setExtractSettings] = useState({ chapterCount: 25, sampleSize: 1000 });
   const [showExtractSettings, setShowExtractSettings] = useState(false);
-  const [lastExtractionMetadata, setLastExtractionMetadata] = useState<any>(null);
 
   // Refs
   const formRef = useRef<HTMLDivElement>(null);
@@ -194,7 +193,6 @@ export default function ContextLibraryPage() {
       });
       const data = await res.json();
       setSuggestions(data.terms || []);
-      setLastExtractionMetadata(data.metadata || null);
     } catch (e) {
       alert('Extraction failed.');
     } finally {

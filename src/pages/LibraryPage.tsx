@@ -91,6 +91,7 @@ const LibraryBookCard = ({
               anchorEl={anchorEl}
               open={open}
               onClose={handleClose}
+              // @ts-ignore
               PaperProps={{
                 sx: {
                   background: 'var(--card)',
@@ -255,7 +256,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
 
   // Find all books with reading progress
   const activeReads = threads
-    .filter(t => t.progress > 0 && t.progress < 100)
+    .filter(t => t.progress !== undefined && t.progress > 0 && t.progress < 100)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   return (

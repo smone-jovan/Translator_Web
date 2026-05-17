@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { 
   X, Download, Image as ImageIcon, Book, 
-  Check, ChevronRight, Loader2, FileText,
-  Upload
+  Check, Loader2, FileText
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 

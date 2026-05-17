@@ -1,4 +1,4 @@
-import { BookOpen, Languages, Library, Settings, X, Globe, User, Star } from 'lucide-react';
+import { BookOpen, Languages, Library, Settings, Globe, User, Star } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 

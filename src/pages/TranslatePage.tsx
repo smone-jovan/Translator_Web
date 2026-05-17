@@ -287,8 +287,8 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
                 <BookCard 
                   title={thread.title} 
                   author={thread.author || 'Ancient Author'} 
-                  status={thread.chapters_count > 0 ? 'In Progress' : 'Unread'} 
-                  translations_count={thread.chapters_count}
+                  status={(thread.translations_count || 0) > 0 ? 'In Progress' : 'Unread'} 
+                  translations_count={thread.translations_count}
                 />
               </div>
             ))}

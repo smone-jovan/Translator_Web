@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from 'react';
-import { Menu } from 'lucide-react';
 import Sidebar, { type TabId } from './Sidebar';
 import BottomNav from './BottomNav';
 

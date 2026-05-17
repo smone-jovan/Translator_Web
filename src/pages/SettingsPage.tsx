@@ -14,6 +14,7 @@ interface ModelInfo {
 }
 
 const ThemeCard = ({ 
+  id,
   label, 
   active, 
   onClick, 
@@ -21,6 +22,7 @@ const ThemeCard = ({
   textColor, 
   icon: Icon 
 }: { 
+  id?: string,
   label: string, 
   active: boolean, 
   onClick: () => void, 
@@ -29,6 +31,7 @@ const ThemeCard = ({
   icon: React.ElementType 
 }) => (
   <button
+    id={id}
     onClick={onClick}
     className={cn(
       "relative flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all duration-300 group",

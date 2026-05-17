@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  ChevronLeft, ChevronRight, BookOpen, Languages, 
-  Check, Loader2, Save, Settings, 
+  ChevronLeft, ChevronRight, Languages, 
+  Loader2, Save, Settings, 
   RefreshCw, ArrowLeft, Download, Layout, Sparkles,
   Info
 } from 'lucide-react';
@@ -160,7 +160,7 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
 
   // Polling for background updates (ADR-013)
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: any = null;
     // Only poll if prefetch is enabled OR if there are processing chapters
     const hasProcessing = thread?.chapters.some(c => c.translation_status === 'processing');
     

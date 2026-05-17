@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -6,13 +6,11 @@ import LinearProgress from '@mui/material/LinearProgress';
 import IconButton from '@mui/material/IconButton';
 import Collapse from '@mui/material/Collapse';
 import Badge from '@mui/material/Badge';
-import CircularProgress from '@mui/material/CircularProgress';
 import Button from '@mui/material/Button';
 
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUp from '@mui/icons-material/KeyboardArrowUp';
-import Close from '@mui/icons-material/Close';
 import CheckCircle from '@mui/icons-material/CheckCircle';
 import Sync from '@mui/icons-material/Sync';
 
@@ -31,23 +29,6 @@ export default function BulkStatusCenter() {
     completed: 0,
     currentTitle: ''
   });
-
-  // Polling for global status
-  // In a real app, use WebSockets. Here we poll the background_translator status via a new endpoint if needed.
-  // For now, we'll simulate listening to events or polling a generic status endpoint.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Logic to check how many chapters are in "processing" state
-      // This is a simplified mockup. Ideally backend should have a /api/batch/status
-      fetch('http://localhost:8000/api/threads') // We use thread progress or we could add a specific batch status API
-        .then(res => res.json())
-        .then(threads => {
-          // Check if any thread has "processing" chapters
-          // This is a bit expensive, but works for MVP
-        });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   // For demonstration, let's assume we use a window event to trigger status
   useEffect(() => {

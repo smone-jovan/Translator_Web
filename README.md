@@ -117,8 +117,8 @@ Open `http://localhost:5173` on your laptop, or use your laptop's local IP (e.g.
 ├── src/
 │   ├── components/             # Reusable UI controls (Sidebar, ChapterList, ExportModal, dsb.)
 │   ├── pages/
-│   │   ├── BatchStudioPage.tsx # Batch Translation Studio workspace
-│   │   ├── LibraryPage.tsx     # Thread collection & Book builder interface
+│   │   ├── ContextLibraryPage.tsx # Context Library & AI Glossary Extraction Workspace
+│   │   ├── LibraryPage.tsx     # Thread collection, Batch Translation Studio & Book Builder
 │   │   ├── ReaderPage.tsx      # Dual-pane immersive reading environment
 │   │   └── SettingsPage.tsx    # Persistent system configurations
 │   ├── index.css               # Central stylesheet & HSL CSS theme design system
