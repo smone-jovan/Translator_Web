@@ -630,15 +630,37 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <Button 
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => handleSingleTitlePolish(ch.id, e)}
-                            disabled={isTranslatingTitles}
-                            className="rounded-xl h-9 w-9 text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all opacity-40 group-hover:opacity-100"
-                          >
-                            <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
-                          </Button>
+                          {ch.title_translated ? (
+                            <div className="flex items-center justify-end gap-2 group/badge">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.05)] transition-all">
+                                <Sparkles className="w-3 h-3 text-emerald-400" />
+                                Polished
+                              </span>
+                              <Button 
+                                variant="ghost"
+                                size="icon"
+                                onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                                disabled={isTranslatingTitles}
+                                title="Repolish title"
+                                className="rounded-xl h-7 w-7 text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-all opacity-0 group-hover/badge:opacity-100 focus:opacity-100"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end">
+                              <Button 
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                                disabled={isTranslatingTitles}
+                                className="rounded-xl px-3 h-8 text-[11px] font-medium text-[var(--muted-foreground)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 border border-[var(--border)] hover:border-[var(--accent)]/20 transition-all flex items-center gap-1.5"
+                              >
+                                <Sparkles className="w-3.5 h-3.5" />
+                                Polish Title
+                              </Button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -672,15 +694,34 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                         </div>
                         <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">{ch.word_count} words</p>
                       </div>
-                      <Button 
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => handleSingleTitlePolish(ch.id, e)}
-                        disabled={isTranslatingTitles}
-                        className="h-10 w-10 rounded-xl text-[var(--muted-foreground)] active:bg-[var(--accent)]/10"
-                      >
-                        <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
-                      </Button>
+                      {ch.title_translated ? (
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                            Polished
+                          </span>
+                          <Button 
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                            disabled={isTranslatingTitles}
+                            className="h-8 w-8 rounded-xl text-[var(--muted-foreground)] active:bg-[var(--accent)]/10"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button 
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => handleSingleTitlePolish(ch.id, e)}
+                          disabled={isTranslatingTitles}
+                          className="rounded-xl px-2.5 h-8 text-[10px] font-medium text-[var(--muted-foreground)] border border-[var(--border)] active:bg-[var(--accent)]/10 flex items-center gap-1 flex-shrink-0"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          Polish
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
