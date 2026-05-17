@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
   Wifi, WifiOff, Server, RefreshCw, Moon, Sun, 
-  CheckCircle2, Languages, Eye, Layout, ShieldCheck, Database, Info, Globe
+  CheckCircle2, Languages, Eye, Layout, ShieldCheck, Database, Info, Globe, Sparkles
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,8 @@ export default function SettingsPage() {
   const [prefetchEnabled, setPrefetchEnabled] = useState(() => localStorage.getItem('prefetch_enabled') === '1');
   const [prefetchCount, setPrefetchCount] = useState(() => parseInt(localStorage.getItem('prefetch_count') || '2'));
   const [prefetchMode, setPrefetchMode] = useState(() => localStorage.getItem('prefetch_mode') || 'soft');
+  const [polishMode, setPolishMode] = useState(() => localStorage.getItem('polish_mode') || 'soft');
+  const [polishSoftLimit, setPolishSoftLimit] = useState(() => parseInt(localStorage.getItem('polish_soft_limit') || '100'));
   const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '50'));
   const [isSaving, setIsSaving] = useState(false);
 
@@ -96,6 +98,14 @@ export default function SettingsPage() {
       if (data.prefetch_mode !== undefined) {
         setPrefetchMode(data.prefetch_mode);
         localStorage.setItem('prefetch_mode', data.prefetch_mode);
+      }
+      if (data.polish_mode !== undefined) {
+        setPolishMode(data.polish_mode);
+        localStorage.setItem('polish_mode', data.polish_mode);
+      }
+      if (data.polish_soft_limit !== undefined) {
+        setPolishSoftLimit(data.polish_soft_limit);
+        localStorage.setItem('polish_soft_limit', data.polish_soft_limit.toString());
       }
       if (data.max_context_terms !== undefined) {
         setMaxContextTerms(data.max_context_terms);
@@ -193,6 +203,18 @@ export default function SettingsPage() {
     setPrefetchMode(mode);
     localStorage.setItem('prefetch_mode', mode);
     saveSettingsToServer({ prefetch_mode: mode });
+  };
+
+  const handlePolishModeChange = (mode: string) => {
+    setPolishMode(mode);
+    localStorage.setItem('polish_mode', mode);
+    saveSettingsToServer({ polish_mode: mode });
+  };
+
+  const handlePolishSoftLimitChange = (limit: number) => {
+    setPolishSoftLimit(limit);
+    localStorage.setItem('polish_soft_limit', limit.toString());
+    saveSettingsToServer({ polish_soft_limit: limit.toString() });
   };
 
   const handleMaxContextTermsChange = (count: number) => {
@@ -506,6 +528,83 @@ export default function SettingsPage() {
                   <span>3 Ch</span>
                   <span>4 Ch</span>
                   <span>5 Ch</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Section: Infinite Title Polish */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Sparkles size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Infinite Title Polish</h2>
+        </div>
+
+        <Card>
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-bold">Title Polish Mode</h3>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Configure how chapters are loaded and polished with AI.</p>
+                </div>
+                
+                <div className="flex bg-[var(--secondary)] rounded-xl p-1 mt-2">
+                  <button
+                    onClick={() => handlePolishModeChange('soft')}
+                    className={cn(
+                      "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
+                      polishMode === 'soft' 
+                        ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" 
+                        : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    )}
+                  >
+                    SOFT LOAD
+                  </button>
+                  <button
+                    onClick={() => handlePolishModeChange('hard')}
+                    className={cn(
+                      "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
+                      polishMode === 'hard' 
+                        ? "bg-[var(--card)] text-orange-500 shadow-sm" 
+                        : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    )}
+                  >
+                    HARD LOAD
+                  </button>
+                </div>
+                <p className="text-[9px] text-[var(--muted-foreground)] leading-relaxed mt-2 px-1">
+                  {polishMode === 'soft' 
+                    ? "Safe Mode: Only processes the specified limit of chapters from the current reading progress." 
+                    : "Aggressive Mode: Processes and polishes all chapter titles in the thread regardless of count."}
+                </p>
+                <p className="text-[9px] text-[var(--muted-foreground)] leading-relaxed italic border-t border-[var(--border)] pt-3 mt-3">
+                  💡 Dynamic Actions: When triggered, the system also automatically translates the novel synopsis/description (if it is still in Mandarin) and extracts/beautifies the clean core Chinese title as per ADR-020.
+                </p>
+              </div>
+
+              <div className={cn("space-y-4 transition-opacity", polishMode === 'hard' && "opacity-50 pointer-events-none")}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold">Polish Limit (Soft Load)</h3>
+                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">{polishSoftLimit} Titles</span>
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="150"
+                  step="10"
+                  value={polishSoftLimit}
+                  onChange={(e) => handlePolishSoftLimitChange(parseInt(e.target.value))}
+                  className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                />
+                <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] font-medium px-1">
+                  <span>50 Titles</span>
+                  <span>100 Titles</span>
+                  <span>150 Titles</span>
                 </div>
               </div>
             </div>

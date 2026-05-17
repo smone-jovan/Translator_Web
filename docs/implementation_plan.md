@@ -1,7 +1,7 @@
 # Implementation Plan: AI Translator Web (ReadOmni Clone)
 
 > **Dibuat:** 16 Mei 2026  
-> **Status:** ✅ Phase 10 — Batch Translation Studio & Smart Extraction (Complete)  
+> **Status:** ✅ Phase 11 — TDD & Code Quality Verification (Complete)  
 > **Dikerjakan oleh:** Agent-Driven Development
 
 ---
@@ -430,24 +430,48 @@ SQLite Schema
 
 **Acceptance Criteria:**
 - [x] Halaman antarmuka khusus Studio Penerjemahan Massal
-- [x] Pilihan bab manual/checklist interaktif dan visualisasi Status Center real-time
-- [x] Aturan "Mandatory Overwrite" untuk menjamin konsistensi setelah glosarium diubah
+- [x] Pilihan bab manual/checklist interaktif dan visualisasi Status Center r---
 
-**Files:** `src/pages/BatchStudioPage.tsx`, `backend/routers/batch.py`  
-**Scope:** Large (ADR-015)
+## Phase 11: TDD & Code Quality Verification
+
+### Task 25: Isolated TDD Unit Testing
+
+**Deskripsi:** Membangun test suite Python unittest di `backend/scratch/test_context_engine.py` untuk memverifikasi logika pembersihan catatan penerjemah, pemisahan format markdown, dan pemfilteran istilah lorebook otomatis dengan aman menggunakan database in-memory SQLite.
+
+**Acceptance Criteria:**
+- [x] Test suite unittest mandiri dan terisolasi dari database produksi (`app.db`)
+- [x] Pengujian lengkap coverage parser horizontal rule (`---`), translator notes (`Translator Notes:`, `Notes:`), dan batasan panjang glosarium
+- [x] Seluruh pengujian berjalan sukses dan instan (<0.05s)
+
+**Files:** `backend/scratch/test_context_engine.py`
+**Scope:** Small (ADR-018)
 
 ---
 
-### Task 24: Smart Context & AI Extract Recommendation
+### Task 26: Windows Unicode Safety Safeguard
 
-**Deskripsi:** Mengintegrasikan logika AI Extract First yang dinamis. Jika Lorebook suatu thread memiliki < 40 entri, AI ekstraksi glosarium akan diprioritaskan sebelum penerjemahan massal dimulai. Ekstraksi dimulai dari posisi chapter terakhir dibaca secara asinkron sekuensial.
+**Deskripsi:** Mencegah potensi crash saat menjalankan backend lewat powershell di OS Windows dengan melakukan standarisasi encoding standard out ke UTF-8 saat inisialisasi aplikasi.
 
 **Acceptance Criteria:**
-- [x] Pengecekan jumlah Lorebook (>40 vs <40 entries) untuk merekomendasikan ekstraksi AI
-- [x] Pemindaian cerdas bertahap berbasis posisi `last_read` chapter bookmark
+- [x] Pemasangan `sys.stdout.reconfigure(encoding='utf-8')` di file entry point `main.py`
+- [x] Output terminal aman mencetak log karakter non-ASCII (seperti Hanzi Cina atau Pinyin)
 
-**Files:** `backend/services/context_engine.py`, `backend/routers/batch.py`  
-**Scope:** Medium (ADR-015)
+**Files:** `backend/main.py`
+**Scope:** Small (ADR-018)
+
+---
+
+### Task 27: Absolute Zero-Warning Linter State
+
+**Deskripsi:** Menghilangkan warning Fast Refresh React, scoping variabel, serta compiler warnings di frontend Vite + React 19 agar build pipe berjalan 100% mulus dan bebas dari warning clutter.
+
+**Acceptance Criteria:**
+- [x] Restrukturisasi susunan variabel di `BulkTranslateModal.tsx` agar berada dalam range lexical scope yang benar
+- [x] Eliminasi unused dependencies dan penataan dependensi react hooks
+- [x] Hasil running `npm run lint` menghasilkan `0 errors, 0 warnings`
+
+**Files:** `src/components/BulkTranslateModal.tsx`
+**Scope:** Small (ADR-018)
 
 ---
 
@@ -490,3 +514,6 @@ SQLite Schema
 | Task 22: Selective Export UI Modal | ✅ Selesai | Dialog Glassmorphic dengan seleksi bab kustom (ADR-014) |
 | Task 23: Batch Studio Workspace | ✅ Selesai | Antarmuka khusus batch translation massal (ADR-015) |
 | Task 24: Smart Context Engine | ✅ Selesai | Logika rekomendasi AI Extract First berdasarkan lorebook (ADR-015) |
+| Task 25: Isolated TDD Unit Testing | ✅ Selesai | Unittest mandiri untuk `strip_translator_notes` & `auto_save_glossary` (ADR-018) |
+| Task 26: Windows Unicode Safety | ✅ Selesai | UTF-8 sys.stdout override untuk powershell execution (ADR-018) |
+| Task 27: Zero-Warning Linter State | ✅ Selesai | React scoping, fast refresh, dan eslint resolution (ADR-018) |

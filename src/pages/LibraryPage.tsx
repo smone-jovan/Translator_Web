@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BookOpen, Globe, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter } from 'lucide-react';
+import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import IconButton from '@mui/material/IconButton';
+import EditCoverModal, { getTitleGradient } from '@/components/EditCoverModal';
+import ScrapeNUModal from '@/components/ScrapeNUModal';
+
 
 interface ThreadItem {
   id: number;
@@ -21,6 +24,13 @@ interface ThreadItem {
   created_at: string;
   last_read?: string;
   progress?: number;
+  cover_image?: string | null;
+  original_title?: string | null;
+  genres?: string | null;
+  tags?: string | null;
+  status?: string | null;
+  status_coo?: string | null;
+  synopsis?: string | null;
 }
 
 interface LibraryPageProps {
@@ -31,12 +41,16 @@ const LibraryBookCard = ({
   thread, 
   onOpen, 
   onDelete, 
-  onBatchTranslate 
+  onBatchTranslate,
+  onEditCover,
+  onScrapeNU
 }: { 
   thread: ThreadItem, 
   onOpen: () => void, 
   onDelete: () => void,
-  onBatchTranslate: () => void
+  onBatchTranslate: () => void,
+  onEditCover: () => void,
+  onScrapeNU: () => void
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -52,13 +66,38 @@ const LibraryBookCard = ({
       <CardContent className="p-0 flex flex-col h-full">
         {/* Poster Area */}
         <div className="relative aspect-[3/4] bg-[var(--secondary)] overflow-hidden">
-          <div className="absolute inset-0 flex items-center justify-center">
-            {thread.source_type === 'epub' ? (
-              <BookOpen size={48} className="text-[var(--muted-foreground)] opacity-20" />
-            ) : (
-              <Globe size={48} className="text-[var(--muted-foreground)] opacity-20" />
-            )}
-          </div>
+          {thread.cover_image ? (
+            <img 
+              src={thread.cover_image} 
+              alt={thread.title} 
+              className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
+            />
+          ) : (
+            <div 
+              className="absolute inset-0 p-4 flex flex-col justify-between items-center text-center select-none transition-transform duration-500 group-hover:scale-105"
+              style={{ background: getTitleGradient(thread.title) }}
+            >
+              {/* Visual Accent */}
+              <div className="w-8 h-1 bg-white/20 rounded-full mt-2" />
+              
+              {/* Stylized initials in middle */}
+              <div className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-md font-black text-white tracking-widest">
+                {(() => {
+                  const cleanText = thread.title.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
+                  const parts = cleanText.split(/\s+/);
+                  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+                  return thread.title.substring(0, 2).toUpperCase();
+                })()}
+              </div>
+              
+              {/* Mini Title below */}
+              <div className="w-full mb-1">
+                <p className="text-[9px] font-black text-white/90 uppercase tracking-widest line-clamp-2 px-1 leading-tight">
+                  {thread.title}
+                </p>
+              </div>
+            </div>
+          )}
           
           {/* Badge */}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/40 backdrop-blur-md text-[10px] font-bold text-white uppercase tracking-wider">
@@ -79,9 +118,16 @@ const LibraryBookCard = ({
         {/* Info Area */}
         <div className="p-5 flex-1 flex flex-col">
           <div className="flex justify-between items-start mb-1">
-            <h3 className="font-bold text-sm text-[var(--foreground)] line-clamp-1 leading-tight group-hover:text-[var(--primary)] transition-colors">
-              {thread.title}
-            </h3>
+            <div className="flex flex-col gap-0.5 max-w-[85%]">
+              <h3 className="font-bold text-sm text-[var(--foreground)] line-clamp-1 leading-tight group-hover:text-[var(--primary)] transition-colors">
+                {thread.title}
+              </h3>
+              {thread.original_title && (
+                <p className="text-[10px] text-[var(--muted-foreground)]/80 italic font-medium line-clamp-1">
+                  {thread.original_title}
+                </p>
+              )}
+            </div>
             <IconButton 
               size="small" 
               onClick={handleClick}
@@ -115,13 +161,37 @@ const LibraryBookCard = ({
                 <AutoAwesome sx={{ fontSize: 16, color: 'var(--primary)' }} />
                 Translate All (Batch)
               </MenuItem>
+              <MenuItem onClick={() => { onEditCover(); handleClose(); }}>
+                <Sparkles size={16} className="text-[var(--primary)]" />
+                Customize Cover
+              </MenuItem>
+              <MenuItem onClick={() => { onScrapeNU(); handleClose(); }}>
+                <Globe size={16} className="text-[var(--primary)]" />
+                Scrape from NU
+              </MenuItem>
               <MenuItem onClick={() => { onDelete(); handleClose(); }} sx={{ color: '#ef4444' }}>
                 <Trash2 size={16} />
                 Delete Book
               </MenuItem>
             </Menu>
           </div>
-          <p className="text-[10px] text-[var(--muted-foreground)] mb-4">{thread.author || 'Unknown Author'}</p>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-[10px] text-[var(--muted-foreground)] line-clamp-1">{thread.author || 'Unknown Author'}</p>
+            {thread.status && (
+              <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20 shadow-sm uppercase tracking-wide">
+                {thread.status}
+              </span>
+            )}
+          </div>
+          {thread.genres && (
+            <div className="flex flex-wrap gap-1 mb-3">
+              {thread.genres.split(',').slice(0, 2).map((genre, i) => (
+                <span key={i} className="text-[8px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--primary)]/10 text-[var(--primary)] border border-[var(--primary)]/20 uppercase tracking-wide">
+                  {genre.trim()}
+                </span>
+              ))}
+            </div>
+          )}
           
           <div className="mt-auto space-y-3">
             {/* Progress */}
@@ -162,6 +232,27 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBatchThread, setSelectedBatchThread] = useState<any>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [selectedCoverThread, setSelectedCoverThread] = useState<ThreadItem | null>(null);
+  const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
+  const [selectedScrapeThread, setSelectedScrapeThread] = useState<ThreadItem | null>(null);
+  const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
+
+  const handleSaveCover = async (coverValue: string | null) => {
+    if (!selectedCoverThread) return;
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedCoverThread.id}/cover`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cover_image: coverValue })
+      });
+      if (!res.ok) throw new Error('Failed to update cover');
+      
+      fetchThreads();
+    } catch (e) {
+      console.error('Error saving cover:', e);
+      throw e;
+    }
+  };
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -176,7 +267,6 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchThreads();
   }, [fetchThreads]);
 
@@ -201,7 +291,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
     if (!selectedBatchThread) return;
     
     try {
@@ -261,10 +351,35 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                 
                 <div className="relative p-6 md:p-10 flex flex-row items-center gap-6 md:gap-10">
                   {/* Compact Cover */}
-                  <div className="w-24 md:w-32 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/10 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500">
-                    <div className="w-full h-full flex items-center justify-center opacity-40">
-                      {book.source_type === 'epub' ? <BookOpen size={32} /> : <Globe size={32} />}
-                    </div>
+                  <div className="w-24 md:w-32 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/10 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500 relative">
+                    {book.cover_image ? (
+                      <img src={book.cover_image} alt={book.title} className="w-full h-full object-cover" />
+                    ) : (
+                      <div 
+                        className="w-full h-full p-2 flex flex-col justify-between items-center text-center select-none"
+                        style={{ background: getTitleGradient(book.title) }}
+                      >
+                        {/* Visual Accent */}
+                        <div className="w-4 h-0.5 bg-white/20 rounded-full mt-1" />
+                        
+                        {/* Stylized initials in middle */}
+                        <div className="w-8 h-8 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-[10px] font-black text-white tracking-wider">
+                          {(() => {
+                            const cleanText = book.title.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
+                            const parts = cleanText.split(/\s+/);
+                            if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+                            return book.title.substring(0, 2).toUpperCase();
+                          })()}
+                        </div>
+                        
+                        {/* Mini Title below */}
+                        <div className="w-full mb-1">
+                          <p className="text-[7px] font-black text-white/80 uppercase tracking-wider line-clamp-1 px-0.5 leading-tight">
+                            {book.title}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex-1 space-y-4 min-w-0">
@@ -338,6 +453,14 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             onOpen={() => onOpenThread?.(thread.id)}
             onDelete={() => handleDelete(thread.id)}
             onBatchTranslate={() => handleOpenBatchModal(thread)}
+            onEditCover={() => {
+              setSelectedCoverThread(thread);
+              setIsCoverModalOpen(true);
+            }}
+            onScrapeNU={() => {
+              setSelectedScrapeThread(thread);
+              setIsScrapeModalOpen(true);
+            }}
           />
         ))}
 
@@ -364,6 +487,34 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
           threadTitle={selectedBatchThread.title}
           chapters={selectedBatchThread.chapters || []}
           onStartBatch={handleStartBatch}
+        />
+      )}
+
+      {selectedCoverThread && (
+        <EditCoverModal
+          isOpen={isCoverModalOpen}
+          onClose={() => {
+            setIsCoverModalOpen(false);
+            setSelectedCoverThread(null);
+          }}
+          threadId={selectedCoverThread.id}
+          threadTitle={selectedCoverThread.title}
+          currentCover={selectedCoverThread.cover_image || null}
+          onSave={handleSaveCover}
+        />
+      )}
+
+      {selectedScrapeThread && (
+        <ScrapeNUModal
+          isOpen={isScrapeModalOpen}
+          onClose={() => {
+            setIsScrapeModalOpen(false);
+            setSelectedScrapeThread(null);
+          }}
+          threadId={selectedScrapeThread.id}
+          threadTitle={selectedScrapeThread.title}
+          threadOriginalTitle={selectedScrapeThread.original_title || null}
+          onScrapeSuccess={fetchThreads}
         />
       )}
 

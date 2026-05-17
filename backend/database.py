@@ -32,6 +32,8 @@ class GlobalSetting(Base):
     prefetch_enabled: Mapped[int] = mapped_column(default=0)  # 0 = disabled, 1 = enabled
     prefetch_count: Mapped[int] = mapped_column(default=2)    # 1-5 chapters
     prefetch_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
+    polish_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
+    polish_soft_limit: Mapped[int] = mapped_column(default=100) # 50-150 titles
     max_context_terms: Mapped[int] = mapped_column(default=50) # 20, 50, 70, 100, 150
     extract_chapter_count: Mapped[int] = mapped_column(default=25)
     extract_sample_size: Mapped[int] = mapped_column(default=1000)
@@ -43,8 +45,16 @@ class Thread(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
+    author: Mapped[Optional[str]] = mapped_column(String(200))
     source_type: Mapped[str] = mapped_column(String(20), default="url")
     source_url: Mapped[Optional[str]] = mapped_column(Text)
+    cover_image: Mapped[Optional[str]] = mapped_column(Text)
+    original_title: Mapped[Optional[str]] = mapped_column(String(500))
+    genres: Mapped[Optional[str]] = mapped_column(Text)
+    tags: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[Optional[str]] = mapped_column(String(100))
+    status_coo: Mapped[Optional[str]] = mapped_column(String(200))
+    synopsis: Mapped[Optional[str]] = mapped_column(Text)
     thread_context: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
@@ -126,13 +136,54 @@ def get_db():
 def init_db():
     Base.metadata.create_all(bind=engine)
     
-    # Auto-migration: check for missing columns in global_settings and lorebook_entries
+    # Auto-migration: check for missing columns in global_settings, lorebook_entries, and threads
     from sqlalchemy import inspect, text
     inspector = inspect(engine)
     columns_gs = [c['name'] for c in inspector.get_columns('global_settings')]
     columns_lb = [c['name'] for c in inspector.get_columns('lorebook_entries')]
+    columns_th = [c['name'] for c in inspector.get_columns('threads')]
     
     with engine.connect() as conn:
+        if 'author' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'author' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN author VARCHAR(200)"))
+            conn.commit()
+
+        if 'cover_image' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'cover_image' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN cover_image TEXT"))
+            conn.commit()
+            
+        if 'original_title' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'original_title' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN original_title VARCHAR(500)"))
+            conn.commit()
+
+        if 'genres' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'genres' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN genres TEXT"))
+            conn.commit()
+
+        if 'tags' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'tags' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN tags TEXT"))
+            conn.commit()
+
+        if 'status' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'status' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN status VARCHAR(100)"))
+            conn.commit()
+
+        if 'status_coo' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'status_coo' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN status_coo VARCHAR(200)"))
+            conn.commit()
+
+        if 'synopsis' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'synopsis' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN synopsis TEXT"))
+            conn.commit()
+            
         if 'prefetch_count' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'prefetch_count' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_count INTEGER DEFAULT 2"))
@@ -141,6 +192,16 @@ def init_db():
         if 'prefetch_mode' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'prefetch_mode' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN prefetch_mode VARCHAR(20) DEFAULT 'soft'"))
+            conn.commit()
+            
+        if 'polish_mode' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'polish_mode' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN polish_mode VARCHAR(20) DEFAULT 'soft'"))
+            conn.commit()
+            
+        if 'polish_soft_limit' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'polish_soft_limit' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN polish_soft_limit INTEGER DEFAULT 100"))
             conn.commit()
             
         if 'max_context_terms' not in columns_gs:

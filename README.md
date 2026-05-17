@@ -1,7 +1,7 @@
 # 🌌 ReadOmni AI (Self-Hosted Novel Reader & Translator)
 > **A premium, privacy-first web novel reader and batch translator powered by local AI.**
 
-[![Project Status](https://img.shields.io/badge/status-Phase%2010%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
+[![Project Status](https://img.shields.io/badge/status-Phase%2014%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
 [![Tech Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20FastAPI%20%7C%20Tailwind%20v4-blue?style=for-the-badge)](#-tech-stack)
 [![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio%20(Local)-orange?style=for-the-badge&logo=openai)](https://lmstudio.ai/)
 [![Database](https://img.shields.io/badge/Database-SQLite%20(WAL%20Mode)-lightgrey?style=for-the-badge&logo=sqlite)](backend/models.py)
@@ -133,7 +133,7 @@ For detailed insights into the technical architecture, read our official guides:
 *   [docs/SDLC.md](docs/SDLC.md) — The 10-phase software development lifecycle documentation.
 *   [docs/implementation_plan.md](docs/implementation_plan.md) — Exact task definitions and acceptance criteria from Task 1 to 24.
 *   [docs/Handoff.md](docs/Handoff.md) — The main developer handoff guide and future roadmap suggestions.
-*   [docs/decisions/](docs/decisions/) — Directory containing all 15 accepted Architectural Decision Records (ADRs).
+*   [docs/decisions/](docs/decisions/) — Directory containing all 27 accepted Architectural Decision Records (ADRs).
 
 ---
 

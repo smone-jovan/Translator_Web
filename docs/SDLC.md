@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
 > **Terakhir diperbarui:** 17 Mei 2026  
-> **Status Aktif:** ✅ Phase 10 — Batch Translation Studio & Smart Extraction (Complete)  
+> **Status Aktif:** ✅ Phase 13 — Infinite Title Polish & Author Metadata Integration (Complete)  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -56,6 +56,9 @@
 | **Phase 8** | Advanced Monitoring & Performance | ✅ Selesai |
 | **Phase 9** | Premium Book Export (EPUB/TXT) | ✅ Selesai |
 | **Phase 10** | **Batch Translation Studio** | ✅ Selesai |
+| **Phase 11** | **TDD & Code Quality Verification** | ✅ Selesai |
+| **Phase 12** | **Custom Book Cover Personalization** | ✅ Selesai |
+| **Phase 13** | **Infinite Polish & Scraped Author Integration** | ✅ Selesai |
 
 ## Phase 1: Foundation (COMPLETE)
 - **Goal**: Membangun fondasi arsitektur backend, skema basis data, dan design system frontend yang seragam.
@@ -107,13 +110,27 @@
 - **Implementation**: Batch Studio Workspace dengan mode Mudah/Lanjutan, visualisasi status Center, deteksi lorebook <40 entri untuk rekomendasi ekstraksi AI (ADR-015).
 - **Status**: Finished.
 
+## Phase 11: TDD & Code Quality Verification (COMPLETE)
+- **Goal**: Menjamin keandalan logika pembersihan teks, parser AI, dan meminimalkan warning serta error di frontend/backend.
+- **Implementation**: Unit test mandiri `test_context_engine.py` menggunakan in-memory SQLite, standardisasi stream stdout di Windows `main.py`, dan pembersihan 100% eslint & typescript compile errors (ADR-018).
+## Phase 12: Custom Book Cover Personalization (COMPLETE)
+- **Goal**: Menghadirkan kustomisasi sampul buku premium menggunakan upload gambar base64 yang dikompresi secara lokal, link URL langsung, dan linear gradient fallback visual yang dinamis.
+- **Implementation**: Canvas-based local compressor di frontend, SQLite schema auto-migration untuk field `cover_image` di backend, hash HSL generator berdasarkan judul buku, serta sinkronisasi visual pada rak buku dan komidi putar riwayat baca (ADR-019).
+- **Status**: Finished.
+
+## Phase 13: Infinite Polish & Scraped Author Integration (COMPLETE)
+- **Goal**: Mengotomatiskan ekstraksi dan integrasi metadata penulis dari platform Novel Updates & SFACG serta menstabilkan proses pembersihan judul orisinil.
+- **Implementation**: Web scraping selectors untuk penulis, integrasi SQLAlchemy dan schema mapping, prefill nama penulis orisinil di modal ekspor EPUB/TXT, zero-padded formatting untuk penomoran bab yang rapi, dan transisi pengaturan mode soft/hard load (ADR-023, ADR-024, ADR-025).
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing
 
-- **Unit test:** Parsing logic (EPUB chapter splitting, Markdown cleaning).
+- **Automated Unit Tests**: Unit test suites `backend/scratch/test_context_engine.py` berjalan secara otomatis untuk memvalidasi parser catatan penerjemah, pembersihan markdown horizontal rule, dan aturan minimum panjang glosarium.
 - **API test:** Semua endpoint via FastAPI Swagger UI (`/docs`).
 - **UI test:** Chrome DevTools — viewport 375px (mobile), 1280px (desktop).
+- **Linter test**: Enforced `npm run lint` dan compiler verification untuk build 100% bersih.
 - **Flicker test**: Rapid navigation check via ReaderPage.
 
 ---

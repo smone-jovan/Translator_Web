@@ -20,6 +20,8 @@ class GlobalSettingsUpdate(BaseModel):
     prefetch_enabled: int | None = None
     prefetch_count: int | None = None
     prefetch_mode: str | None = None
+    polish_mode: str | None = None
+    polish_soft_limit: int | None = None
     max_context_terms: int | None = None
     extract_chapter_count: int | None = None
     extract_sample_size: int | None = None
@@ -47,6 +49,8 @@ def get_global_context(db: Session = Depends(get_db)):
         "prefetch_enabled": gs.prefetch_enabled if gs else 0,
         "prefetch_count": gs.prefetch_count if gs else 2,
         "prefetch_mode": gs.prefetch_mode if gs else "soft",
+        "polish_mode": gs.polish_mode if gs else "soft",
+        "polish_soft_limit": gs.polish_soft_limit if gs else 100,
         "max_context_terms": gs.max_context_terms if gs else 50,
         "extract_chapter_count": gs.extract_chapter_count if gs else 25,
         "extract_sample_size": gs.extract_sample_size if gs else 1000
@@ -77,6 +81,8 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.prefetch_enabled is not None: gs.prefetch_enabled = req.prefetch_enabled
     if req.prefetch_count is not None: gs.prefetch_count = req.prefetch_count
     if req.prefetch_mode is not None: gs.prefetch_mode = req.prefetch_mode
+    if req.polish_mode is not None: gs.polish_mode = req.polish_mode
+    if req.polish_soft_limit is not None: gs.polish_soft_limit = req.polish_soft_limit
     if req.max_context_terms is not None: gs.max_context_terms = req.max_context_terms
     if req.extract_chapter_count is not None: gs.extract_chapter_count = req.extract_chapter_count
     if req.extract_sample_size is not None: gs.extract_sample_size = req.extract_sample_size

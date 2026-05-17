@@ -21,13 +21,14 @@ interface ExportModalProps {
   onClose: () => void;
   threadId: number;
   threadTitle: string;
+  threadAuthor?: string;
   chapters: Chapter[];
 }
 
-export default function ExportModal({ isOpen, onClose, threadId, threadTitle, chapters }: ExportModalProps) {
+export default function ExportModal({ isOpen, onClose, threadId, threadTitle, threadAuthor, chapters }: ExportModalProps) {
   const [format, setFormat] = useState<'epub' | 'txt'>('epub');
   const [title, setTitle] = useState(threadTitle);
-  const [author, setAuthor] = useState('SMONE');
+  const [author, setAuthor] = useState(threadAuthor || 'SMONE');
   const [cover, setCover] = useState<string | null>(null);
   const [coverSource, setCoverSource] = useState<'file' | 'url'>('file');
   const [coverUrl, setCoverUrl] = useState('');

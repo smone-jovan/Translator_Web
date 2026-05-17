@@ -114,7 +114,7 @@ async def upload_epub(
         book_title = dc_title[0][0]
 
     # Create thread
-    thread = Thread(title=book_title, source_type="epub")
+    thread = Thread(title=book_title, original_title=book_title, source_type="epub")
     db.add(thread)
     db.flush()
 
