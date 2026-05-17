@@ -551,7 +551,7 @@ export default function ContextLibraryPage() {
                   {suggestions.length > 0 && (
                     <div className="space-y-4">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--primary)] flex items-center gap-2">
-                        <Sparkles size={14} /> AI Detected Suggestions
+                        <Sparkles size={14} /> AI Detected Suggestions <span className="text-[10px] text-[var(--muted-foreground)] font-medium normal-case">({suggestions.length} left)</span>
                       </h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {suggestions.map((sug, i) => (
