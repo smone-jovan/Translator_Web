@@ -239,7 +239,12 @@ export default function ContextLibraryPage() {
     setExtractMode('easy');
   };
 
-  const estTokens = Math.ceil((extractSettings.chapterCount * extractSettings.sampleSize) / 4);
+  const estInputTokens = Math.ceil(
+    150 + 
+    (globalContext.length / 4) + 
+    (extractSettings.chapterCount * extractSettings.sampleSize * 0.8)
+  );
+  const estTotalTokens = estInputTokens + 1500;
 
   const selectedThread = threads.find(t => t.id === selectedThreadId);
 
@@ -399,14 +404,26 @@ export default function ContextLibraryPage() {
                         </div>
                       )}
 
-                      <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between">
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)]">Est. Input</span>
-                          <span className="text-xs font-mono font-bold text-[var(--foreground)]">~{estTokens.toLocaleString()} tokens</span>
+                      <div className="pt-3 border-t border-[var(--border)] space-y-2">
+                        <div className="grid grid-cols-2 gap-2 text-left">
+                          <div>
+                            <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)] block">Est. Input</span>
+                            <span className="text-xs font-mono font-bold text-[var(--foreground)]">~{estInputTokens.toLocaleString()} tokens</span>
+                          </div>
+                          <div>
+                            <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)] block">Max Output</span>
+                            <span className="text-xs font-mono font-bold text-[var(--foreground)]">~1,500 tokens</span>
+                          </div>
                         </div>
-                        <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded-lg" onClick={() => setShowExtractSettings(false)}>
-                          Done
-                        </Button>
+                        <div className="pt-2 border-t border-dashed border-[var(--border)] flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-bold uppercase text-[var(--primary)]">Context Needed</span>
+                            <span className="text-sm font-mono font-bold text-[var(--primary)]">~{estTotalTokens.toLocaleString()} tokens</span>
+                          </div>
+                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded-lg" onClick={() => setShowExtractSettings(false)}>
+                            Done
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   )}

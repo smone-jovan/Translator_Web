@@ -120,14 +120,15 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     if not full_text:
         return {"terms": []}
 
-    # Estimated tokens (Char count / 4 is a common rough estimate for English/Mix)
-    est_tokens = int(total_chars / 4)
-
     # 4. Get Global Settings for Prompt
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
     global_rules = gs.global_context if gs else ""
     target_lang = gs.target_language if gs else "Indonesian"
+
+    # Estimated tokens (Chinese characters average ~0.8 tokens per character in Llama-3/Mistral tokenizers)
+    # plus static instructions prompt (~150 tokens) and global rules (~0.25 tokens per char)
+    est_tokens = int(150 + (len(global_rules) / 4) + (total_chars * 0.8))
     
     prompt = (
         f"You are an expert literary analyst specializing in Chinese web novels.\n"
