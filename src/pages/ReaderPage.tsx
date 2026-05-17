@@ -561,26 +561,30 @@ export default function ReaderPage({ threadId, onBack }: ReaderPageProps) {
                   <Sparkles className="w-4 h-4" />
                   Batch Translate
                 </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="rounded-xl gap-2 border-[var(--border)] hover:bg-[var(--secondary)]"
-                  onClick={() => handleTranslateTitles(false)}
-                  disabled={isTranslatingTitles}
-                >
-                  <Languages className="w-4 h-4" />
-                  Polish All
-                </Button>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--accent)]"
-                  onClick={() => handleTranslateTitles(true)}
-                  disabled={isTranslatingTitles}
-                  title="Repolish all titles"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
-                </Button>
+                
+                {thread?.chapters?.some(ch => ch.title_translated) ? (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="rounded-xl gap-2 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 transition-all"
+                    onClick={() => handleTranslateTitles(true)}
+                    disabled={isTranslatingTitles}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isTranslatingTitles ? 'animate-spin' : ''}`} />
+                    {isTranslatingTitles ? 'Polishing...' : 'Re-polished'}
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="rounded-xl gap-2 border-[var(--border)] hover:bg-[var(--secondary)]"
+                    onClick={() => handleTranslateTitles(false)}
+                    disabled={isTranslatingTitles}
+                  >
+                    <Languages className="w-4 h-4" />
+                    {isTranslatingTitles ? 'Polishing...' : 'Polish All'}
+                  </Button>
+                )}
               </div>
             </div>
 
