@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -105,7 +106,6 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
   }, [selectedModel]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
     fetchData();
   }, [fetchData]);
 

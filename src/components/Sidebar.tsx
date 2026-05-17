@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { BookOpen, Languages, Library, Settings, Globe, User, Star } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';

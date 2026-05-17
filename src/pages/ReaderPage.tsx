@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable no-empty */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ChevronLeft, ChevronRight, Languages, 

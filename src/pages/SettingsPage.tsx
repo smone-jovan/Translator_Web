@@ -141,7 +141,6 @@ export default function SettingsPage() {
         });
       } catch { /* silent fail */ }
     };
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     sync();
   }, [targetLang]);
 
