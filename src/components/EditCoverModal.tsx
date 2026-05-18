@@ -227,7 +227,7 @@ export default function EditCoverModal({
       onClose={onClose}
       maxWidth="sm"
       fullWidth
-      // @ts-ignore
+      // @ts-expect-error: PaperProps uses standard sx override styling which MUI type definition warns on under strict configs
       PaperProps={{
         sx: {
           background: 'var(--card)',

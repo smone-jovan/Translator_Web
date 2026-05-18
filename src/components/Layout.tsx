@@ -1,19 +1,46 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useRef, type ReactNode } from 'react';
 import Sidebar, { type TabId } from './Sidebar';
 import BottomNav from './BottomNav';
 
 interface LayoutProps {
   children: (activeTab: TabId) => ReactNode;
+  activeTab: TabId;
   onTabChange?: (tab: TabId) => void;
 }
 
-export default function Layout({ children, onTabChange }: LayoutProps) {
+export default function Layout({ children, activeTab, onTabChange }: LayoutProps) {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>('translate');
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const lastScrollTop = useRef(0);
 
   const handleTabChange = (tab: TabId) => {
-    setActiveTab(tab);
+    setControlsVisible(true);
     onTabChange?.(tab);
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const scrollTop = e.currentTarget.scrollTop;
+    const delta = scrollTop - lastScrollTop.current;
+    
+    if (scrollTop < 20) {
+      setControlsVisible(true);
+    } else if (delta > 30) {
+      setSidebarOpen(false);
+      setControlsVisible(false);
+    } else if (delta < -15) {
+      setControlsVisible(true);
+    }
+    
+    lastScrollTop.current = scrollTop;
+  };
+
+  const handleContentClick = (e: React.MouseEvent) => {
+    if (window.getSelection()?.toString()) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, select, textarea, a, label, [role="button"]')) {
+      return;
+    }
+    setControlsVisible(prev => !prev);
   };
 
   return (
@@ -37,7 +64,11 @@ export default function Layout({ children, onTabChange }: LayoutProps) {
         </div> */}
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-4 md:p-8 pb-28 md:pb-8">
+        <div 
+          className="flex-1 overflow-auto p-4 md:p-8 pb-28 md:pb-8"
+          onScroll={handleScroll}
+          onClick={handleContentClick}
+        >
           <div className="max-w-6xl mx-auto h-full">
             {children(activeTab)}
           </div>
@@ -47,6 +78,7 @@ export default function Layout({ children, onTabChange }: LayoutProps) {
         <BottomNav 
           activeTab={activeTab} 
           onTabChange={handleTabChange} 
+          visible={controlsVisible}
         />
       </main>
     </div>

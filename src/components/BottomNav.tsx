@@ -4,11 +4,17 @@ import { navItems, type TabId } from './Sidebar';
 interface BottomNavProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
+  visible?: boolean;
 }
 
-export default function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
+export default function BottomNav({ activeTab, onTabChange, visible = true }: BottomNavProps) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden px-4 pb-4 pt-2">
+    <div 
+      className={cn(
+        "fixed bottom-0 left-0 right-0 z-50 md:hidden px-4 pb-4 pt-2 transition-all duration-300 ease-in-out",
+        visible ? "translate-y-0 opacity-100" : "translate-y-28 opacity-0 pointer-events-none"
+      )}
+    >
       <div className="bg-[var(--card)]/80 backdrop-blur-xl border border-[var(--border)] rounded-2xl shadow-2xl flex items-center justify-around p-2">
         {navItems.map((item) => (
           <button

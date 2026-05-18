@@ -4,6 +4,28 @@
 /* ============================================
    Omni-Sepia Design System — CSS Variables
    ============================================ */
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
 @layer base {
   :root {
     /* New Default: Obsidian Night (Deep Dark) */
@@ -27,138 +49,117 @@
     --input: #1c1c1e;
     --ring: #00f2fe;
     --radius: 0.75rem;
-
-    /* Tailwind Color Aliases */
-    --color-background: var(--background);
-    --color-foreground: var(--foreground);
-    --color-card: var(--card);
-    --color-card-foreground: var(--card-foreground);
-    --color-popover: var(--popover);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-primary: var(--primary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-secondary: var(--secondary);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-muted: var(--muted);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-accent: var(--accent);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-destructive: var(--destructive);
-    --color-destructive-foreground: var(--destructive-foreground);
-    --color-border: var(--border);
-    --color-input: var(--input);
-    --color-ring: var(--ring);
   }
+}
 
-  [data-theme="black"] {
-    --background: #111418;
-    --foreground: #f2f2f3;
-    --card: #181c22;
-    --card-foreground: #f2f2f3;
-    --popover: #111418;
-    --popover-foreground: #f2f2f3;
-    --primary: #e2e6e9;
-    --primary-foreground: #111418;
-    --secondary: #22262e;
-    --secondary-foreground: #f2f2f3;
-    --muted: #2d333c;
-    --muted-foreground: #949ba4;
-    --accent: #2d333c;
-    --accent-foreground: #f2f2f3;
-    --destructive: #db5154;
-    --destructive-foreground: #f2f2f3;
-    --border: #2d333c;
-    --input: #22262e;
-    --ring: #4b5563;
-  }
+:root[data-theme="black"] {
+  --background: #111418;
+  --foreground: #f2f2f3;
+  --card: #181c22;
+  --card-foreground: #f2f2f3;
+  --popover: #111418;
+  --popover-foreground: #f2f2f3;
+  --primary: #e2e6e9;
+  --primary-foreground: #111418;
+  --secondary: #22262e;
+  --secondary-foreground: #f2f2f3;
+  --muted: #2d333c;
+  --muted-foreground: #949ba4;
+  --accent: #2d333c;
+  --accent-foreground: #f2f2f3;
+  --destructive: #db5154;
+  --destructive-foreground: #f2f2f3;
+  --border: #2d333c;
+  --input: #22262e;
+  --ring: #4b5563;
+}
 
-  [data-theme="oled"] {
-    --background: #000000;
-    --foreground: #f2f2f3;
-    --card: #0a0a0a;
-    --card-foreground: #f2f2f3;
-    --popover: #000000;
-    --popover-foreground: #f2f2f3;
-    --primary: #e2e6e9;
-    --primary-foreground: #000000;
-    --secondary: #171717;
-    --secondary-foreground: #f2f2f3;
-    --muted: #262626;
-    --muted-foreground: #949ba4;
-    --accent: #262626;
-    --accent-foreground: #f2f2f3;
-    --destructive: #db5154;
-    --destructive-foreground: #f2f2f3;
-    --border: #262626;
-    --input: #171717;
-    --ring: #404040;
-  }
+:root[data-theme="oled"] {
+  --background: #000000;
+  --foreground: #f2f2f3;
+  --card: #0a0a0a;
+  --card-foreground: #f2f2f3;
+  --popover: #000000;
+  --popover-foreground: #f2f2f3;
+  --primary: #e2e6e9;
+  --primary-foreground: #000000;
+  --secondary: #171717;
+  --secondary-foreground: #f2f2f3;
+  --muted: #262626;
+  --muted-foreground: #949ba4;
+  --accent: #262626;
+  --accent-foreground: #f2f2f3;
+  --destructive: #db5154;
+  --destructive-foreground: #f2f2f3;
+  --border: #262626;
+  --input: #171717;
+  --ring: #404040;
+}
 
-  [data-theme="white"] {
-    --background: #f8fafc;
-    --foreground: #0f172a;
-    --card: #ffffff;
-    --card-foreground: #0f172a;
-    --popover: #ffffff;
-    --popover-foreground: #0f172a;
-    --primary: #0f172a;
-    --primary-foreground: #f8fafc;
-    --secondary: #f1f5f9;
-    --secondary-foreground: #0f172a;
-    --muted: #e2e8f0;
-    --muted-foreground: #64748b;
-    --accent: #e2e8f0;
-    --accent-foreground: #0f172a;
-    --destructive: #ef4444;
-    --destructive-foreground: #f8fafc;
-    --border: #e2e8f0;
-    --input: #f1f5f9;
-    --ring: #cbd5e1;
-  }
+:root[data-theme="white"] {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #0f172a;
+  --primary-foreground: #f8fafc;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #e2e8f0;
+  --muted-foreground: #64748b;
+  --accent: #e2e8f0;
+  --accent-foreground: #0f172a;
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+  --border: #e2e8f0;
+  --input: #f1f5f9;
+  --ring: #cbd5e1;
+}
 
-  [data-theme="sepia"] {
-    --background: #f5f1e8;
-    --foreground: #4a3f35;
-    --card: #fdfcf9;
-    --card-foreground: #4a3f35;
-    --popover: #f5f1e8;
-    --popover-foreground: #4a3f35;
-    --primary: #4a3f35;
-    --primary-foreground: #f5f1e8;
-    --secondary: #ebe6da;
-    --secondary-foreground: #4a3f35;
-    --muted: #f0ede4;
-    --muted-foreground: #70655b;
-    --accent: #e5e0d5;
-    --accent-foreground: #4a3f35;
-    --destructive: #d94a38;
-    --destructive-foreground: #f5f1e8;
-    --border: #e5e0d5;
-    --input: #ebe6da;
-    --ring: #8b7e74;
-  }
+:root[data-theme="sepia"] {
+  --background: #f5f1e8;
+  --foreground: #4a3f35;
+  --card: #fdfcf9;
+  --card-foreground: #4a3f35;
+  --popover: #f5f1e8;
+  --popover-foreground: #4a3f35;
+  --primary: #4a3f35;
+  --primary-foreground: #f5f1e8;
+  --secondary: #ebe6da;
+  --secondary-foreground: #4a3f35;
+  --muted: #f0ede4;
+  --muted-foreground: #70655b;
+  --accent: #e5e0d5;
+  --accent-foreground: #4a3f35;
+  --destructive: #d94a38;
+  --destructive-foreground: #f5f1e8;
+  --border: #e5e0d5;
+  --input: #ebe6da;
+  --ring: #8b7e74;
+}
 
-  [data-theme="omni"] {
-    --background: #0f2b60;
-    --foreground: #e0e7ff;
-    --card: #153573;
-    --card-foreground: #e0e7ff;
-    --popover: #0f2b60;
-    --popover-foreground: #e0e7ff;
-    --primary: #818cf8;
-    --primary-foreground: #0f2b60;
-    --secondary: #1e4591;
-    --secondary-foreground: #e0e7ff;
-    --muted: #2955a8;
-    --muted-foreground: #a5b4fc;
-    --accent: #2955a8;
-    --accent-foreground: #e0e7ff;
-    --destructive: #ef4444;
-    --destructive-foreground: #0f2b60;
-    --border: #2955a8;
-    --input: #1e4591;
-    --ring: #4f46e5;
-  }
+:root[data-theme="omni"] {
+  --background: #0f2b60;
+  --foreground: #e0e7ff;
+  --card: #153573;
+  --card-foreground: #e0e7ff;
+  --popover: #0f2b60;
+  --popover-foreground: #e0e7ff;
+  --primary: #818cf8;
+  --primary-foreground: #0f2b60;
+  --secondary: #1e4591;
+  --secondary-foreground: #e0e7ff;
+  --muted: #2955a8;
+  --muted-foreground: #a5b4fc;
+  --accent: #2955a8;
+  --accent-foreground: #e0e7ff;
+  --destructive: #ef4444;
+  --destructive-foreground: #0f2b60;
+  --border: #2955a8;
+  --input: #1e4591;
+  --ring: #4f46e5;
 }
 
 /* ============================================

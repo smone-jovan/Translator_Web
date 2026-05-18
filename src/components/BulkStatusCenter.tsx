@@ -16,6 +16,7 @@ import CheckCircle from '@mui/icons-material/CheckCircle';
 import Sync from '@mui/icons-material/Sync';
 import StopCircle from '@mui/icons-material/StopCircle';
 import Error from '@mui/icons-material/Error';
+import { getApiUrl } from '@/lib/api';
 
 interface BatchStatus {
   active: boolean;
@@ -48,7 +49,7 @@ export default function BulkStatusCenter() {
 
     const checkStatus = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/threads/active-batch');
+        const res = await fetch(getApiUrl('/api/threads/active-batch'));
         if (res.ok) {
           const data = await res.json();
           if (data.active) {
@@ -116,7 +117,7 @@ export default function BulkStatusCenter() {
     if (!confirm('Are you sure you want to stop the batch translation? The current chapter will finish translating, and subsequent chapters will be cancelled.')) return;
     
     try {
-      const res = await fetch(`http://localhost:8000/api/threads/${status.thread_id}/batch-stop`, {
+      const res = await fetch(getApiUrl(`/api/threads/${status.thread_id}/batch-stop`), {
         method: 'POST'
       });
       if (res.ok) {
@@ -146,10 +147,11 @@ export default function BulkStatusCenter() {
   return (
     <Box sx={{ 
       position: 'fixed', 
-      bottom: 24, 
-      right: 24, 
+      bottom: { xs: 88, md: 24 }, 
+      right: { xs: 12, md: 24 },
+      left: { xs: 12, md: 'auto' },
       zIndex: 2000,
-      width: 340,
+      width: { xs: 'auto', md: 360 },
       pointerEvents: 'auto'
     }}>
       <Paper sx={{ 
@@ -172,7 +174,7 @@ export default function BulkStatusCenter() {
           cursor: 'pointer',
           borderBottom: '1px solid var(--border)'
         }} onClick={() => setIsOpen(!isOpen)}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
             <Badge 
               overlap="circular"
               anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
@@ -184,16 +186,24 @@ export default function BulkStatusCenter() {
             >
               <AutoAwesome sx={{ color: isFinished ? '#4caf50' : 'var(--primary)', fontSize: 20 }} />
             </Badge>
-            <Box>
+            <Box sx={{ minWidth: 0 }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'var(--foreground)', fontSize: '0.85rem', lineHeight: 1.2 }}>
                 {isFinished ? 'Translation Done' : 'Batch Translating'}
               </Typography>
-              <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontSize: '0.7rem', display: 'block' }}>
+              <Typography variant="caption" sx={{ 
+                color: 'var(--muted-foreground)', 
+                fontSize: '0.7rem', 
+                display: 'block',
+                maxWidth: { xs: 190, sm: 260, md: 230 },
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}>
                 {status.thread_title}
               </Typography>
             </Box>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
             {status.active && (
               <IconButton 
                 size="small" 
@@ -204,7 +214,7 @@ export default function BulkStatusCenter() {
                 <StopCircle sx={{ fontSize: 18 }} />
               </IconButton>
             )}
-            <IconButton size="small" sx={{ color: 'var(--foreground)' }}>
+            <IconButton size="small" sx={{ color: 'var(--foreground)', flexShrink: 0 }}>
               {isOpen ? <KeyboardArrowDown /> : <KeyboardArrowUp />}
             </IconButton>
           </Box>

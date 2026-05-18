@@ -182,6 +182,30 @@ If no new terms, skip.
         return text
 
     @staticmethod
+    def strip_thinking_blocks(text: str) -> str:
+        """
+        Strip <think>...</think> and <thought>...</thought> blocks from the text.
+        If a block is currently unclosed, strip from the opening tag to the end.
+        """
+        if not text:
+            return ""
+        import re
+        # Remove complete think/thought blocks
+        text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<thought\b[^>]*>.*?</thought>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Handle unclosed tags: strip everything after an unclosed tag
+        think_idx = text.lower().find("<think")
+        if think_idx != -1 and "</think" not in text.lower()[think_idx:]:
+            text = text[:think_idx]
+            
+        thought_idx = text.lower().find("<thought")
+        if thought_idx != -1 and "</thought" not in text.lower()[thought_idx:]:
+            text = text[:thought_idx]
+            
+        return text
+
+    @staticmethod
     def auto_save_glossary(db: Session, thread_id: int, full_text: str):
         """
         Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
@@ -294,7 +318,7 @@ If no new terms, skip.
     @staticmethod
     async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None):
         """Dedicated pass to extract names/terms BEFORE translation."""
-        from services.ai_provider import AIProvider
+        from services.ai.factory import AIProviderFactory
         from database import GlobalSetting
         from sqlalchemy import select
         
@@ -311,21 +335,15 @@ If no new terms, skip.
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             sample_size = gs.extract_sample_size if gs else 1000
             
-            ai = AIProvider(lm_url)
-            payload = {
-                "messages": [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:sample_size]}"}, # Limit to dynamic sample size for extraction
-                ],
-                "temperature": 0.2,
-                "max_tokens": 1000
-            }
-            if model: payload["model"] = model
+            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:sample_size]}"},
+            ]
             
-            res = await ai.chat_completion(payload)
-            response = res["choices"][0]["message"]["content"]
+            response = await provider.chat_completion(messages=messages, temperature=0.2)
             # Use existing logic to save
             ContextEngine.auto_save_glossary(db, thread_id, response)
-            print(f"[EKSTRAKSI AI] Proses ekstraksi istilah selesai untuk utas {thread_id}")
+            print(f"[EXTRACT] AI glossary extraction completed for thread {thread_id}")
         except Exception as e:
-            print(f"[PERINGATAN] [EKSTRAKSI AI] Gagal melakukan ekstraksi istilah: {e}")
+            print(f"[WARN] [EXTRACT] AI glossary extraction failed: {e}")

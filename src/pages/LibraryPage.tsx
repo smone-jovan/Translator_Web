@@ -6,7 +6,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import BulkTranslateModal from '@/components/BulkTranslateModal';
-import BulkStatusCenter from '@/components/BulkStatusCenter';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
@@ -105,12 +104,13 @@ const LibraryBookCard = ({
           </div>
 
           {/* Hover Actions */}
-          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-            <Button size="icon" className="rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90" onClick={onOpen}>
-              <Play size={20} className="fill-current" />
-            </Button>
-            <Button variant="destructive" size="icon" className="rounded-full" onClick={onDelete}>
-              <Trash2 size={20} />
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <Button 
+              size="icon" 
+              className="w-12 h-12 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-lg transform scale-90 group-hover:scale-100 transition-all duration-300 flex items-center justify-center" 
+              onClick={onOpen}
+            >
+              <Play size={24} className="fill-current ml-0.5" />
             </Button>
           </div>
         </div>
@@ -517,8 +517,6 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
           onScrapeSuccess={fetchThreads}
         />
       )}
-
-      <BulkStatusCenter />
     </div>
   );
 }

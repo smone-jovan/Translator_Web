@@ -19,27 +19,16 @@ export const navItems: NavItem[] = [
 ];
 
 interface SidebarProps {
-  isOpen: boolean;
+  isOpen?: boolean;
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
   onClose: () => void;
 }
 
-export default function Sidebar({ isOpen, activeTab, onTabChange, onClose }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProps) {
   return (
     <>
-      {/* Mobile overlay */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/20 z-40 md:hidden backdrop-blur-sm"
-          onClick={onClose}
-        />
-      )}
-
-      <aside className={cn(
-        "fixed md:static inset-y-0 left-0 z-50 w-20 bg-[var(--card)] border-r border-[var(--border)] flex flex-col items-center py-8 transition-transform duration-300 ease-in-out shadow-sm",
-        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-      )}>
+      <aside className="hidden md:flex shrink-0 inset-y-0 left-0 z-50 w-20 bg-[var(--card)] border-r border-[var(--border)] flex-col items-center py-8 shadow-sm">
         {/* Brand/Logo */}
         <div className="mb-12">
           <div className="w-10 h-10 rounded-xl bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] font-bold text-xl shadow-lg shadow-[var(--primary)]/20">

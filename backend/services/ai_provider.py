@@ -42,7 +42,7 @@ class AIProvider:
                                     content = data["choices"][0]["delta"].get("content", "")
                                     if content:
                                         yield content
-                                except:
+                                except (json.JSONDecodeError, KeyError, IndexError):
                                     continue
                         return # Success, exit
             except Exception as e:

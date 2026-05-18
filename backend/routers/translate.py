@@ -14,7 +14,8 @@ import asyncio
 from sqlalchemy import select, func
 from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting
 from services.context_engine import ContextEngine
-from services.ai_provider import AIProvider
+from services.ai.factory import AIProviderFactory
+from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 
 router = APIRouter(prefix="/api", tags=["Translation"])
 
@@ -38,7 +39,7 @@ async def get_lm_url(req_lm_url: str | None, db: Session) -> str:
     if req_lm_url:
         return req_lm_url.rstrip("/")
     gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
-    return (gs.lm_url if gs else "http://localhost:1234").rstrip("/")
+    return resolve_active_base_url(gs)
 
 @router.post("/translate/stream")
 async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db)):
@@ -48,7 +49,7 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
     
     ai_url = await get_lm_url(req.lm_url, db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
-    selected_model = req.model or (gs.lm_model if gs else None)
+    selected_model = resolve_active_model(gs, req.model)
 
     if not req.chapter_id:
         raise HTTPException(400, "chapter_id is required for streaming")
@@ -92,39 +93,36 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
     
-    ai_url = await get_lm_url(req.lm_url or (gs.lm_url if gs else None), db)
+    ai_url = await get_lm_url(req.lm_url, db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
-    selected_model = req.model or (gs.lm_model if gs else None)
+    selected_model = resolve_active_model(gs, req.model)
 
-    ai = AIProvider(ai_url)
+    provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model)
     system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang)
+    max_tokens = get_chapter_translation_max_tokens(gs)
 
     lorebook_count = 0
     if req.thread_id:
         count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == req.thread_id)
         lorebook_count = db.execute(count_stmt).scalar() or 0
 
-    payload = {
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": req.text},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 4096,
-        "stream": False,
-    }
-    if selected_model:
-        payload["model"] = selected_model
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": req.text},
+    ]
 
     try:
-        data = await ai.chat_completion(payload)
-        translation = data["choices"][0]["message"]["content"]
-        model_used = data.get("model", selected_model or "unknown")
+        translation = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
+        model_used = selected_model or "unknown"
 
         if req.thread_id:
             ContextEngine.auto_save_glossary(db, req.thread_id, translation)
 
-        clean_translation = ContextEngine.strip_translator_notes(translation)
+        always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
+        clean_translation = translation
+        if always_hide_thoughts:
+            clean_translation = ContextEngine.strip_thinking_blocks(clean_translation)
+        clean_translation = ContextEngine.strip_translator_notes(clean_translation)
 
         return TranslateResponse(
             translation=clean_translation,

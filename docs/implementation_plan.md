@@ -475,6 +475,64 @@ SQLite Schema
 
 ---
 
+## Phase 12: Decoupled Port & Adapter Architecture (ADR-029)
+
+### Task 28: Base Abstract Interfaces (Port definitions)
+
+**Deskripsi:** Membuat abstract base classes (ABC) untuk mendefinisikan contract port Scraper dan AI Provider agar terpisah dari I/O.
+
+**Acceptance Criteria:**
+- [x] File `backend/services/scrapers/base.py` terbuat dengan kelas `BaseScraperAdapter`.
+- [x] File `backend/services/ai/base.py` terbuat dengan kelas `BaseAIProviderAdapter`.
+- [x] Seluruh kelas abstrak menggunakan pengetikan data (Pydantic schemas) yang ketat.
+
+**Files:** `backend/services/scrapers/base.py`, `backend/services/ai/base.py`
+**Scope:** Small (ADR-029)
+
+---
+
+### Task 29: Swappable Scraper Adapters & Engine
+
+**Deskripsi:** Memisahkan kode parser Novel Updates dan SFACG dari route handler `scrape.py` ke dalam concrete adapter class masing-masing.
+
+**Acceptance Criteria:**
+- [x] `NovelUpdatesAdapter` diimplementasikan dengan scraping & selector rules yang sesuai.
+- [x] `SFACGAdapter` diimplementasikan dengan metadata scraping & search rules yang sesuai.
+- [x] `MetadataScraperEngine` dibuat sebagai deep coordinator.
+
+**Files:** `backend/services/scrapers/novel_updates.py`, `backend/services/scrapers/sfacg.py`, `backend/services/scrapers/engine.py`
+**Scope:** Medium (ADR-029)
+
+---
+
+### Task 30: Swappable AI Adapters & Factory
+
+**Deskripsi:** Mengisolasi adapter client LLM (LM Studio dan OpenAI) di bawah interface standard.
+
+**Acceptance Criteria:**
+- [x] `LMStudioAdapter` terbuat dan terhubung ke local mock-OpenAI endpoint.
+- [x] `OpenAIAdapter` terbuat dan siap menampung integrasi API OpenAI resmi.
+- [x] `AIProviderFactory` terbuat untuk memetakan setting URL/Model ke adapter aktif.
+
+**Files:** `backend/services/ai/lm_studio.py`, `backend/services/ai/openai.py`, `backend/services/ai/factory.py`
+**Scope:** Medium (ADR-029)
+
+---
+
+### Task 31: Route Handler Decoupling
+
+**Deskripsi:** Melakukan pembersihan menyeluruh terhadap router `scrape.py` dan `translate.py` agar murni berinteraksi dengan interface abstrak.
+
+**Acceptance Criteria:**
+- [x] Router `scrape.py` menyusut drastis dan murni mendelegasikan pemrosesan ke `MetadataScraperEngine`.
+- [x] Router `translate.py` & `background_translator.py` murni berinteraksi dengan engine/adapter generik AI.
+- [x] Seluruh fungsionalitas volume guardian (ADR-027) dan prefetching tetap berjalan normal.
+
+**Files:** `backend/routers/scrape.py`, `backend/routers/translate.py`, `backend/services/background_translator.py`
+**Scope:** Medium (ADR-029)
+
+---
+
 ## Risks & Mitigations
 
 | Risiko | Impact | Mitigasi |
@@ -517,3 +575,7 @@ SQLite Schema
 | Task 25: Isolated TDD Unit Testing | ✅ Selesai | Unittest mandiri untuk `strip_translator_notes` & `auto_save_glossary` (ADR-018) |
 | Task 26: Windows Unicode Safety | ✅ Selesai | UTF-8 sys.stdout override untuk powershell execution (ADR-018) |
 | Task 27: Zero-Warning Linter State | ✅ Selesai | React scoping, fast refresh, dan eslint resolution (ADR-018) |
+| Task 28: Base Abstract Interfaces | ✅ Selesai | Definisikan abstract base classes untuk Scrapers dan AI Providers |
+| Task 29: Swappable Scraper Adapters | ✅ Selesai | Ekstrak parser Novel Updates dan SFACG ke kelas adapter terpisah |
+| Task 30: Swappable AI Adapters | ✅ Selesai | Ekstrak provider LM Studio dan OpenAI ke kelas adapter terpisah |
+| Task 31: Route Handler Decoupling | ✅ Selesai | Hubungkan router scrape dan translate ke engine/factory baru |

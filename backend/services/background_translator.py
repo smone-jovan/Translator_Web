@@ -1,11 +1,13 @@
 import asyncio
 import json
 import re
+import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import SessionLocal, Chapter, GlobalSetting
 from services.context_engine import ContextEngine
-from services.ai_provider import AIProvider
+from services.ai.factory import AIProviderFactory
+from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 
 # Registry for active chapter translations to prevent duplicates
 # chapter_id -> Task
@@ -15,6 +17,8 @@ translation_queues = {}
 
 # Global lock to ensure single-concurrency for AI requests under Soft Load
 translation_lock = asyncio.Lock()
+# Global state to track last request timestamp for pacing (ADR-029)
+_last_api_call_time = 0.0
 
 class ActiveBatch:
     def __init__(self, thread_id: int, chapter_ids: list, target_lang: str, model: str | None, lm_url: str | None, force_extract: bool, force_overwrite: bool):
@@ -46,9 +50,9 @@ class BackgroundTranslator:
         force_extract: bool = False,
         force_overwrite: bool = False
     ):
-        """Mulai proses translasi bab di background."""
+        """Start background chapter translation task."""
         if chapter_id in active_tasks:
-            print(f"[PERINGATAN] Bab {chapter_id} sedang dalam proses penerjemahan aktif. Permintaan baru diabaikan.")
+            print(f"[WARN] Chapter {chapter_id} is already being translated. Ignoring duplicate request.")
             return
 
         task = asyncio.create_task(
@@ -72,7 +76,7 @@ class BackgroundTranslator:
         lm_url: str | None = None,
         force_extract: bool = False,
         force_overwrite: bool = False
-    ):
+    ) -> bool:
         # 1. Siapkan data bab-nya
         content_original = None
         system_prompt = ""
@@ -83,26 +87,26 @@ class BackgroundTranslator:
             chapter = db.execute(stmt).scalar_one_or_none()
             
             if not chapter:
-                print(f"[GALAT] Bab {chapter_id} tidak ditemukan di dalam basis data.")
-                return
+                print(f"[ERROR] Chapter {chapter_id} not found in database.")
+                return False
                 
             if not chapter.content_original:
-                print(f"[GALAT] Teks asli bab {chapter_id} kosong. Proses penerjemahan dibatalkan.")
+                print(f"[ERROR] Chapter {chapter_id} has no original content. Translation aborted.")
                 chapter.translation_status = "error"
                 db.commit()
-                return
+                return False
 
             if chapter.content_translated and not force_overwrite:
-                print(f"[LEWATI] Bab {chapter_id} sudah memiliki terjemahan. Melewati proses ini.")
-                return
+                print(f"[SKIP] Chapter {chapter_id} already has a translation. Skipping.")
+                return True
 
             # Resolve lm_url and model from GlobalSetting if not explicitly passed
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             if gs:
                 if not lm_url:
-                    lm_url = gs.lm_url
+                    lm_url = resolve_active_base_url(gs)
                 if not model:
-                    model = gs.lm_model
+                    model = resolve_active_model(gs)
             
             if not lm_url:
                 lm_url = "http://localhost:1234"
@@ -113,20 +117,20 @@ class BackgroundTranslator:
 
         # Acquire lock if needed BEFORE we update state and start LLM operations
         if use_lock:
-            print(f"[KUNCI] [Muat Halus] Bab {chapter_id} sedang menunggu kunci terjemahan AI...")
+            print(f"[LOCK] [Soft Load] Chapter {chapter_id} waiting for AI translation lock...")
             await translation_lock.acquire()
-            print(f"[KUNCI] [Muat Halus] Bab {chapter_id} berhasil mendapatkan kunci terjemahan AI.")
+            print(f"[LOCK] [Soft Load] Chapter {chapter_id} acquired AI translation lock.")
 
         try:
             with SessionLocal() as db:
                 stmt = select(Chapter).where(Chapter.id == chapter_id)
                 chapter = db.execute(stmt).scalar_one_or_none()
                 if not chapter:
-                    return
+                    return False
 
                 # AI Extract First Logic
                 if force_extract:
-                    print(f"[EKSTRAKSI AI] Memulai ekstraksi istilah penting untuk bab {chapter_id} sebelum menerjemahkan...")
+                    print(f"[EXTRACT] Starting glossary extraction for chapter {chapter_id} before translation...")
                     await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model)
 
                 # Ambil konten aslinya dan set status ke processing
@@ -137,22 +141,50 @@ class BackgroundTranslator:
                 # 2. Rakit prompt-nya lewat ContextEngine
                 system_prompt = ContextEngine.build_translation_prompt(db, thread_id, target_lang, content_original)
 
+            # Pace the API requests based on selected model's strict RPM limits (ADR-029)
+            global _last_api_call_time
+            llm_provider = "lm_studio"
+            resolved_model = model
+            if gs:
+                llm_provider = getattr(gs, "llm_provider", "lm_studio")
+                resolved_model = resolve_active_model(gs, model)
+
+            required_delay = 1.0
+            if llm_provider == "gemini":
+                m_lower = (resolved_model or "").lower()
+                if "gemini-3.1-flash-lite" in m_lower:
+                    required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
+                elif "gemini-2.5-flash-lite" in m_lower:
+                    required_delay = 6.2  # 10 RPM = 6.0s (Safety margin: 6.2s)
+                elif "gemini-2.5-flash" in m_lower:
+                    required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
+                elif "gemini-3-flash" in m_lower:
+                    required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
+                elif "gemma-4-31b" in m_lower:
+                    required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
+                else:
+                    required_delay = 12.2
+
+            time_since_last = time.time() - _last_api_call_time
+            if time_since_last < required_delay:
+                wait_time = required_delay - time_since_last
+                print(f"[PACING] [RPM Safety Guard] Delaying request for {wait_time:.2f}s to respect {resolved_model} RPM limits...")
+                await asyncio.sleep(wait_time)
+
+            _last_api_call_time = time.time()
+
             # 3. Panggil AI-nya (LM Studio)
             try:
-                ai = AIProvider(lm_url or "http://localhost:1234")
-                payload = {
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": content_original},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 8192,
-                    "stream": True,
-                }
-                if model:
-                    payload["model"] = model
+                provider = AIProviderFactory.get_provider(base_url=lm_url or "http://localhost:1234", model=model)
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content_original},
+                ]
 
+                always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
+                max_tokens = get_chapter_translation_max_tokens(gs)
                 full_content = ""
+                sent_clean_content = ""
                 chunk_count = 0
                 notes_started = False
                 notes_header_pattern = re.compile(
@@ -160,55 +192,81 @@ class BackgroundTranslator:
                     re.IGNORECASE
                 )
                 
-                async for content in ai.stream_chat(payload):
+                async for content in provider.stream_chat(messages=messages, temperature=0.3, max_tokens=max_tokens):
                     full_content += content
                     chunk_count += 1
                     
                     # Kirim hasil streaming ke queue biar frontend bisa update real-time
                     if chapter_id in translation_queues:
+                        clean_content = full_content
+                        if always_hide_thoughts:
+                            clean_content = ContextEngine.strip_thinking_blocks(clean_content)
+                            
                         if not notes_started:
-                            match = notes_header_pattern.search(full_content)
+                            match = notes_header_pattern.search(clean_content)
                             if match:
                                 notes_started = True
                                 cutoff = match.start()
-                                sent_so_far = len(full_content) - len(content)
-                                if cutoff > sent_so_far:
-                                    chunk_to_send = full_content[sent_so_far:cutoff]
+                                clean_before_notes = clean_content[:cutoff]
+                                new_chunk = clean_before_notes[len(sent_clean_content):]
+                                if new_chunk:
                                     for q in translation_queues[chapter_id]:
-                                        await q.put(chunk_to_send)
+                                        await q.put(new_chunk)
+                                    sent_clean_content = clean_before_notes
                             else:
-                                for q in translation_queues[chapter_id]:
-                                    await q.put(content)
+                                new_chunk = clean_content[len(sent_clean_content):]
+                                if new_chunk:
+                                    for q in translation_queues[chapter_id]:
+                                        await q.put(new_chunk)
+                                    sent_clean_content = clean_content
                     
                     # Simpan berkala tiap 20 chunk biar kalau putus gak ilang semua
                     if chunk_count % 20 == 0:
                         with SessionLocal() as db:
                             ch = db.get(Chapter, chapter_id)
                             if ch:
-                                ch.content_translated = ContextEngine.strip_translator_notes(full_content)
+                                clean_to_save = full_content
+                                if always_hide_thoughts:
+                                    clean_to_save = ContextEngine.strip_thinking_blocks(clean_to_save)
+                                ch.content_translated = ContextEngine.strip_translator_notes(clean_to_save)
                                 db.commit()
+
+                if not full_content.strip():
+                    print(f"[WARN] Empty stream for chapter {chapter_id}; retrying with non-streaming completion.")
+                    full_content = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
 
                 # Selesai! Simpan hasil final dan update lorebook kalau ada istilah baru
                 with SessionLocal() as db:
-                    ContextEngine.auto_save_glossary(db, thread_id, full_content)
-                    
                     ch = db.get(Chapter, chapter_id)
                     if ch:
-                        ch.content_translated = ContextEngine.strip_translator_notes(full_content)
+                        clean_to_save = full_content
+                        if always_hide_thoughts:
+                            clean_to_save = ContextEngine.strip_thinking_blocks(clean_to_save)
+                        clean_to_save = ContextEngine.strip_translator_notes(clean_to_save).strip()
+
+                        if not clean_to_save:
+                            raise ValueError(
+                                f"AI provider returned an empty translation for chapter {chapter_id}."
+                            )
+
+                        ContextEngine.auto_save_glossary(db, thread_id, full_content)
+                        ch.content_translated = clean_to_save
                         ch.translation_status = "done"
                         db.commit()
-                        print(f"[BERHASIL] Penerjemahan bab {chapter_id} selesai dilakukan di latar belakang.")
+                        print(f"[OK] Chapter {chapter_id} background translation completed successfully.")
 
                 # Cek apakah harus otomatis nerjemahin bab selanjutnya (prefetch)
-                await BackgroundTranslator.check_and_prefetch(chapter_id, thread_id, target_lang, model, lm_url)
+                # Dihapus dari sini karena prefetch hanya dipicu saat pengguna mengakses bab, mencegah infinite runaway translation.
+                return True
 
             except Exception as e:
-                print(f"[GALAT] Terjadi kesalahan saat menerjemahkan bab {chapter_id}: {e}")
+                print(f"[ERROR] Failed to translate chapter {chapter_id}: {e}")
                 with SessionLocal() as db:
                     ch = db.get(Chapter, chapter_id)
                     if ch:
                         ch.translation_status = "error"
                         db.commit()
+                return False
             finally:
                 # Kasih sinyal ke queue kalau sudah beres
                 if chapter_id in translation_queues:
@@ -224,7 +282,7 @@ class BackgroundTranslator:
 
     @staticmethod
     async def check_and_prefetch(current_chapter_id: int, thread_id: int, target_lang: str, model: str | None, lm_url: str | None):
-        """Otomatis terjemahin bab berikutnya biar user gak nunggu lama."""
+        """Otomatis terjemahin bab berikutnya dalam batas prefetch_count dari posisi baca saat ini."""
         try:
             with SessionLocal() as db:
                 gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
@@ -234,7 +292,6 @@ class BackgroundTranslator:
                 curr_ch = db.get(Chapter, current_chapter_id)
                 if not curr_ch: return
 
-                # Cari bab-bab selanjutnya berdasarkan urutan (order)
                 prefetch_count = getattr(gs, "prefetch_count", 1)
                 prefetch_mode = getattr(gs, "prefetch_mode", "soft")
                 
@@ -247,30 +304,16 @@ class BackgroundTranslator:
                 )
                 next_chapters = db.execute(next_chapters_stmt).scalars().all()
 
-                if prefetch_mode == "soft":
-                    # Soft Load: Only prefetch the VERY NEXT chapter if it's idle
-                    # This creates a sequential chain of translations
-                    if next_chapters:
-                        target_ch = next_chapters[0]
-                        if target_ch.translation_status == "idle" and not target_ch.content_translated:
-                            print(f"[PRA-TERJEMAH] [Muat Halus] Memulai pra-terjemahan untuk bab berikutnya: {target_ch.id}")
-                            asyncio.create_task(
-                                BackgroundTranslator.run_chapter_translation(
-                                    target_ch.id, thread_id, target_lang, model, lm_url
-                                )
+                for next_ch in next_chapters:
+                    if next_ch.translation_status == "idle" and not next_ch.content_translated:
+                        print(f"[PREFETCH] [{prefetch_mode.capitalize()} Load] Queueing prefetch for chapter: {next_ch.id} (Order: {next_ch.order})")
+                        asyncio.create_task(
+                            BackgroundTranslator.run_chapter_translation(
+                                next_ch.id, thread_id, target_lang, model, lm_url
                             )
-                else:
-                    # Hard Load: Prefetch ALL chapters in the range immediately in parallel
-                    for next_ch in next_chapters:
-                        if next_ch.translation_status == "idle" and not next_ch.content_translated:
-                            print(f"[PRA-TERJEMAH] [Muat Cepat] Memulai pra-terjemahan simultan untuk bab: {next_ch.id} (Urutan: {next_ch.order})")
-                            asyncio.create_task(
-                                BackgroundTranslator.run_chapter_translation(
-                                    next_ch.id, thread_id, target_lang, model, lm_url
-                                )
-                            )
+                        )
         except Exception as e:
-            print(f"[PERINGATAN] Gagal menjalankan pra-terjemahan: {e}")
+            print(f"[WARN] Prefetch failed: {e}")
 
     @staticmethod
     async def start_batch(
@@ -334,7 +377,7 @@ class BackgroundTranslator:
                 
                 try:
                     # Jalankan translasi bab secara berurutan
-                    await BackgroundTranslator._do_translate(
+                    success = await BackgroundTranslator._do_translate(
                         chapter_id=ch_id,
                         thread_id=batch.thread_id,
                         target_lang=batch.target_lang,
@@ -343,6 +386,8 @@ class BackgroundTranslator:
                         force_extract=batch.force_extract,
                         force_overwrite=batch.force_overwrite
                     )
+                    if not success:
+                        batch.failed_ids.append(ch_id)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:

@@ -6,25 +6,9 @@ import re
 
 from sqlalchemy import select
 from database import get_db, GlobalSetting, Thread, Chapter
-from services.ai_provider import AIProvider
+from services.ai.factory import AIProviderFactory
 
 router = APIRouter(prefix="/api", tags=["Context"])
-
-class ContextUpdate(BaseModel):
-    context: str
-
-class GlobalSettingsUpdate(BaseModel):
-    lm_url: str | None = None
-    lm_model: str | None = None
-    target_language: str | None = None
-    prefetch_enabled: int | None = None
-    prefetch_count: int | None = None
-    prefetch_mode: str | None = None
-    polish_mode: str | None = None
-    polish_soft_limit: int | None = None
-    max_context_terms: int | None = None
-    extract_chapter_count: int | None = None
-    extract_sample_size: int | None = None
 
 class ExtractRequest(BaseModel):
     lm_url: str | None = None
@@ -36,59 +20,6 @@ class ExtractedTerm(BaseModel):
     original_term: str
     translated_term: str | None = None
     notes: str | None = None
-
-@router.get("/global-context")
-def get_global_context(db: Session = Depends(get_db)):
-    stmt = select(GlobalSetting)
-    gs = db.execute(stmt).scalar_one_or_none()
-    return {
-        "global_context": gs.global_context if gs else "",
-        "lm_url": gs.lm_url if gs else "http://localhost:1234",
-        "lm_model": gs.lm_model if gs else None,
-        "target_language": gs.target_language if gs else "Indonesian",
-        "prefetch_enabled": gs.prefetch_enabled if gs else 0,
-        "prefetch_count": gs.prefetch_count if gs else 2,
-        "prefetch_mode": gs.prefetch_mode if gs else "soft",
-        "polish_mode": gs.polish_mode if gs else "soft",
-        "polish_soft_limit": gs.polish_soft_limit if gs else 100,
-        "max_context_terms": gs.max_context_terms if gs else 50,
-        "extract_chapter_count": gs.extract_chapter_count if gs else 25,
-        "extract_sample_size": gs.extract_sample_size if gs else 1000
-    }
-
-@router.post("/global-context")
-def update_global_context(req: ContextUpdate, db: Session = Depends(get_db)):
-    stmt = select(GlobalSetting)
-    gs = db.execute(stmt).scalar_one_or_none()
-    if not gs:
-        gs = GlobalSetting()
-        db.add(gs)
-    gs.global_context = req.context
-    db.commit()
-    return {"status": "ok"}
-
-@router.post("/settings")
-def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
-    stmt = select(GlobalSetting)
-    gs = db.execute(stmt).scalar_one_or_none()
-    if not gs:
-        gs = GlobalSetting()
-        db.add(gs)
-    
-    if req.lm_url is not None: gs.lm_url = req.lm_url
-    if req.lm_model is not None: gs.lm_model = req.lm_model
-    if req.target_language is not None: gs.target_language = req.target_language
-    if req.prefetch_enabled is not None: gs.prefetch_enabled = req.prefetch_enabled
-    if req.prefetch_count is not None: gs.prefetch_count = req.prefetch_count
-    if req.prefetch_mode is not None: gs.prefetch_mode = req.prefetch_mode
-    if req.polish_mode is not None: gs.polish_mode = req.polish_mode
-    if req.polish_soft_limit is not None: gs.polish_soft_limit = req.polish_soft_limit
-    if req.max_context_terms is not None: gs.max_context_terms = req.max_context_terms
-    if req.extract_chapter_count is not None: gs.extract_chapter_count = req.extract_chapter_count
-    if req.extract_sample_size is not None: gs.extract_sample_size = req.extract_sample_size
-    
-    db.commit()
-    return {"status": "ok"}
 
 @router.post("/threads/{thread_id}/extract-context")
 async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
@@ -158,60 +89,103 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
         f"1. Focus on the MOST FREQUENT and SIGNIFICANT terms (Protagonist, key items, recurring locations).\n"
         f"2. Ignore generic or common words. Only take high-priority patterns.\n"
         f"3. Provide: The original Chinese term, a natural {target_lang} translation, and brief notes.\n"
-        f"4. Format as a JSON list: [{{ \"original_term\": \"...\", \"translated_term\": \"...\", \"notes\": \"...\" }}].\n"
+        f"4. Format STRICTLY as a raw JSON list without markdown backticks. Example:\n"
+        f'[{{\n  "original_term": "...",\n  "translated_term": "...",\n  "notes": "..."\n}}]\n'
     )
     
     ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
-    ai = AIProvider(ai_url)
+    provider = AIProviderFactory.get_provider(base_url=ai_url, model=req.model)
     
-    payload = {
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": full_text},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1500,
-        "stream": False
-    }
-    if req.model:
-        payload["model"] = req.model
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": full_text},
+    ]
     
     try:
-        data = await ai.chat_completion(payload)
-        content = data["choices"][0]["message"]["content"]
+        content = await provider.chat_completion(messages=messages, temperature=0.2)
         
+        # 0. Clean and capture reasoning blocks
+        thought_process = ""
+        thought_match = re.search(r'<(?:thought|think)>(.*?)</(?:thought|think)>', content, flags=re.DOTALL)
+        if thought_match:
+            thought_process = thought_match.group(1).strip()
+            
+        # Also capture if the opening tag was missing but the closing tag exists
+        elif '</thought>' in content:
+            parts = content.split('</thought>')
+            thought_process = parts[0].strip()
+            content = parts[-1]
+        elif '</think>' in content:
+            parts = content.split('</think>')
+            thought_process = parts[0].strip()
+            content = parts[-1]
+
+        content = re.sub(r'<thought>.*?</thought>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        
+        # Strip markdown formatting
+        content = content.replace('```json', '').replace('```', '')
+        
+        # Helper to build metadata
+        def build_metadata():
+            return {
+                "est_input_tokens": est_tokens,
+                "total_chars": total_chars,
+                "reasoning": thought_process
+            }
+
         # Robust parsing logic
-        # 1. Try to find JSON block
-        json_match = re.search(r'\[\s*\{.*\}\s*\]', content, re.DOTALL)
-        if json_match:
-            try:
-                terms = json.loads(json_match.group(0))
+        # 1. Try to find and parse complete JSON block
+        try:
+            start_idx = content.find('[')
+            end_idx = content.rfind(']')
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = content[start_idx:end_idx+1]
+                terms = json.loads(json_str)
                 return {
                     "terms": terms, 
-                    "metadata": {
-                        "est_input_tokens": est_tokens,
-                        "total_chars": total_chars
-                    }
+                    "metadata": build_metadata()
                 }
-            except:
-                pass
+        except:
+            pass
 
-        # 2. Fallback to manual line parsing (Simplified for new format)
+        # 2. Advanced Relaxed Regex Fallback (extracting keys individually)
+        # This handles cut-off JSON, missing brackets, missing commas, etc.
         manual_terms = []
+        originals = re.findall(r'"original_term"\s*:?\s*"([^"]+)"', content)
+        translateds = re.findall(r'"translated_term"\s*:?\s*"([^"]+)"', content)
+        notes = re.findall(r'"notes"\s*:?\s*"([^"]+)"', content)
+        
+        if originals:
+            for i in range(len(originals)):
+                manual_terms.append({
+                    "original_term": originals[i],
+                    "translated_term": translateds[i] if i < len(translateds) else "",
+                    "notes": notes[i] if i < len(notes) else ""
+                })
+            return {
+                "terms": manual_terms, 
+                "metadata": build_metadata()
+            }
+
+        # 3. Final Fallback to line parsing (if completely unformatted)
         lines = content.split('\n')
         for line in lines:
             line = line.strip().lstrip("-*•").strip()
-            if ":" in line:
+            if ":" in line and not line.startswith('"'):
                 parts = line.split(":", 1)
-                term = parts[0].strip()
-                if len(term) < 50 and term:
+                term = parts[0].strip().strip('"')
+                if len(term) < 50 and term and term.lower() not in ["original_term", "translated_term", "notes"]:
                     manual_terms.append({
                         "original_term": term,
                         "translated_term": "", # Placeholder if manual fallback fails
-                        "notes": parts[1].strip()
+                        "notes": parts[1].strip().strip('"')
                     })
         
-        return {"terms": manual_terms}
+        return {
+            "terms": manual_terms,
+            "metadata": build_metadata()
+        }
 
     except Exception as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, f"Extraction Parsing Failed: {str(e)}")

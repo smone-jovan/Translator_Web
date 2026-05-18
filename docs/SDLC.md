@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
-> **Terakhir diperbarui:** 17 Mei 2026  
-> **Status Aktif:** ✅ Phase 13 — Infinite Title Polish & Author Metadata Integration (Complete)  
+> **Terakhir diperbarui:** 18 Mei 2026  
+> **Status Aktif:** ✅ Phase 14 — Batch Reliability & Global Progress UX (Complete)  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -59,6 +59,7 @@
 | **Phase 11** | **TDD & Code Quality Verification** | ✅ Selesai |
 | **Phase 12** | **Custom Book Cover Personalization** | ✅ Selesai |
 | **Phase 13** | **Infinite Polish & Scraped Author Integration** | ✅ Selesai |
+| **Phase 14** | **Batch Reliability & Global Progress UX** | ✅ Selesai |
 
 ## Phase 1: Foundation (COMPLETE)
 - **Goal**: Membangun fondasi arsitektur backend, skema basis data, dan design system frontend yang seragam.
@@ -121,6 +122,16 @@
 ## Phase 13: Infinite Polish & Scraped Author Integration (COMPLETE)
 - **Goal**: Mengotomatiskan ekstraksi dan integrasi metadata penulis dari platform Novel Updates & SFACG serta menstabilkan proses pembersihan judul orisinil.
 - **Implementation**: Web scraping selectors untuk penulis, integrasi SQLAlchemy dan schema mapping, prefill nama penulis orisinil di modal ekspor EPUB/TXT, zero-padded formatting untuk penomoran bab yang rapi, dan transisi pengaturan mode soft/hard load (ADR-023, ADR-024, ADR-025).
+- **Status**: Finished.
+
+## Phase 14: Batch Reliability & Global Progress UX (COMPLETE)
+- **Goal**: Membuat batch translation lebih jujur, tahan terhadap empty stream/provider safety block, dan progress-nya tetap terlihat global saat user berpindah halaman.
+- **Implementation**: Validasi hasil akhir batch agar chapter kosong tidak pernah ditandai `done`, fallback non-streaming saat stream Gemini kosong, resolver provider-aware untuk model/base URL, `BulkStatusCenter` global di `App.tsx`, dan tab Library dipertahankan saat kembali dari Reader (ADR-034).
+- **Status**: Finished.
+
+## Phase 15: Configurable Chapter Token Safety Cap (COMPLETE)
+- **Goal**: Mengurangi hallucination drift dan token burn pada terjemahan chapter panjang tanpa mengunci user ke satu batas keras.
+- **Implementation**: Tambah global toggle chapter token safety cap, preset `7K/15K/22K/30K`, default `22K`, mode uncapped saat toggle dimatikan, wiring backend `max_tokens` ke jalur translate chapter, update Settings UI, dan sinkronisasi ADR-035.
 - **Status**: Finished.
 
 ---

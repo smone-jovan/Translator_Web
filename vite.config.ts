@@ -11,6 +11,20 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    watch: {
+      ignored: [
+        '**/backend/**',
+        '**/app.db*',
+        '**/scratch/**',
+        '**/*.db*',
+        '**/*.py',
+        '**/*.txt',
+        '**/*.db-wal',
+        '**/*.db-shm'
+      ]
+    }
+  },
   optimizeDeps: {
     include: [
       '@mui/material',

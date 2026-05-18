@@ -12,7 +12,7 @@
 * **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
 * **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
 * **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
-* **AI Core:** LM Studio API (Local mock-OpenAI running at `http://localhost:1234`).
+* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps.
 
 ### 🔌 Sandbox Port Assignments
 * **Vite Frontend:** `http://localhost:5173` (Staged to allow LAN sharing `--host` to read on mobile devices).
@@ -25,88 +25,138 @@
 
 ```text
 ├── backend/
-│   ├── database.py             # SQLite database setup, engine activation, WAL mode configuration
-│   ├── main.py                 # FastAPI app initialization, middleware configurations, error overrides
-│   ├── models.py               # SQLAlchemy Database schemas (Threads, Chapters, Lorebook, Settings)
+│   ├── database.py             # SQLite database setup, WAL mode, SQLAlchemy ORM models (all tables)
+│   ├── main.py                 # FastAPI app initialization, CORS middleware, router registration
 │   ├── routers/
-│   │   ├── batch.py            # Studio Bulk translations (Soft/Hard processing logic)
+│   │   ├── context.py          # Global context CRUD, /api/settings endpoint, AI term extraction
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
-│   │   ├── export.py           # Premium book compiles (EPUB cover generator + selective exports)
+│   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
 │   │   ├── scrape.py           # URL crawling interface using Crawl4AI
-│   │   └── settings.py         # Server-side persistent settings sync (GlobalSetting table)
+│   │   ├── threads.py          # Thread/Chapter CRUD, title polish, batch translation, metadata scraping
+│   │   └── translate.py        # Single-chapter streaming translation endpoint
 │   ├── services/
-│   │   ├── background_translator.py # Core queue, title polishing sweeps, sequential prefetchers
-│   │   ├── context_engine.py   # AI terminology extraction, prompts, lorebook token limits
-│   │   └── epub_exporter.py    # EPUB container compiler and metadata packager
+│   │   ├── ai_provider.py      # LM Studio dual-stack client (localhost/127.0.0.1 fallback)
+│   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker loops
+│   │   └── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
 │   └── scratch/                # Developer isolated testing playground and TDD specs
 ├── src/
 │   ├── components/             # Reusable UX controls
+│   │   ├── BottomNav.tsx       # Mobile bottom navigation bar
+│   │   ├── BulkStatusCenter.tsx # Live batch translation progress dashboard
+│   │   ├── BulkTranslateModal.tsx # Batch translation configuration modal (Easy & Advanced modes)
 │   │   ├── EditCoverModal.tsx  # Dynamic HTML5 canvas drawing and base64 compression modal
 │   │   ├── ExportModal.tsx     # Compilation controls, metadata forms, checklists
-│   │   └── ScrapeNUModal.tsx   # Crawl4AI parser interface (Scrapes synopsis, metadata, cover links)
+│   │   ├── Layout.tsx          # App shell layout with sidebar + content area
+│   │   ├── ScrapeNUModal.tsx   # Novel Updates & SFACG metadata scraper interface
+│   │   ├── Sidebar.tsx         # Desktop sidebar navigation
+│   │   └── ui/                 # shadcn/ui primitives (Button, Card, etc.)
 │   ├── pages/
 │   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes)
 │   │   ├── LibraryPage.tsx     # Rack bookshelf, reading history continue carousel, batch studios
 │   │   ├── ReaderPage.tsx      # Immersive reader dual-pane (Split-screen translation workspace)
-│   │   └── SettingsPage.tsx    # Global variables dashboard (Themes, language, prefetch range)
+│   │   ├── SettingsPage.tsx    # Global variables dashboard (Themes, language, prefetch range)
+│   │   └── TranslatePage.tsx   # Quick single-URL import and translate page
+│   ├── lib/                    # Utility functions (api.ts, utils.ts)
 │   ├── index.css               # Central design tokens, variable scopes, animations
+│   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADRs 001 to 027)
+└── docs/                       # Architectural Decision Records (ADR-001 through ADR-035)
 ```
 
 ---
 
 ## 💾 3. SQLite Database Models & Schemas
 
-The system uses SQLite in **WAL (Write-Ahead Logging)** mode to handle simultaneous read/write actions safely across devices.
+The system uses SQLite in **WAL (Write-Ahead Logging)** mode (activated via SQLAlchemy `event.listens_for` on connect) to handle simultaneous read/write actions safely across devices.
 
 ```mermaid
 erDiagram
     Thread ||--o{ Chapter : contains
-    Thread ||--o{ Lorebook : possesses
-    GlobalSetting ||--|| Thread : configures
+    Thread ||--o{ LorebookEntry : possesses
+    Thread ||--o{ UserBookmark : tracks
+    Chapter ||--o{ TranslationSegment : splits
+    UserBookmark }o--|| Chapter : references
     
     Thread {
         int id PK
         string title
         string original_title
         string author
-        string synopsis
-        string cover_image
-        string source
-        string url
-        int last_read_chapter_id
+        string source_type
+        text source_url
+        text cover_image
+        text genres
+        text tags
+        string status
+        string status_coo
+        text synopsis
+        text thread_context
+        datetime created_at
     }
     
     Chapter {
         int id PK
         int thread_id FK
-        string title
-        string title_translated
-        string content_raw
-        string content_translated
-        int volume
         int order
-        boolean is_translated
+        string title_original
+        string title_translated
+        text content_original
+        text content_translated
+        string translation_status
+        datetime created_at
     }
     
-    Lorebook {
+    TranslationSegment {
+        int id PK
+        int chapter_id FK
+        int order
+        text original_text
+        text translated_text
+        string display_mode
+    }
+    
+    UserBookmark {
         int id PK
         int thread_id FK
-        string key
-        string value
+        int chapter_id FK
+        datetime last_read_at
+    }
+    
+    LorebookEntry {
+        int id PK
+        int thread_id FK
+        string original_term
+        string translated_term
+        text notes
         int usage_count
         datetime last_used_at
+        datetime created_at
+        boolean is_locked
+        boolean is_archived
     }
     
     GlobalSetting {
         int id PK
-        string theme
+        text global_context
+        string lm_url
+        string lm_model
         string target_language
-        int prefetch_range
+        int prefetch_enabled
+        int prefetch_count
+        string prefetch_mode
         string polish_mode
         int polish_soft_limit
+        int max_context_terms
+        int extract_chapter_count
+        int extract_sample_size
+        int always_hide_thoughts
+        string llm_provider
+        string openai_url
+        string openai_model
+        string gemini_model
+        int chapter_token_cap_enabled
+        int chapter_token_cap
     }
 ```
 
@@ -145,8 +195,31 @@ Large novels are polished in batches using a safe **Soft Load** mechanism (typic
 * **The Progression States:**
   * **Polish Titles** (0 titles polished): Initial sweep runs with `repolish=false`.
   * **Polish Remaining** (Some polished): Skip already translated titles and process the subsequent batch (e.g. 100–199, then 200–299) without looping back to Chapter 0.
-  * **Re-polish All** (All polished): Clears translations and processes a clean full sweep.
   * **Reset & Re-polish All** (Manual Override): Located inside Polish Settings popover for manual force overwrites.
+
+### 🐛 D. Desktop Navigation & Theme Persistence (ADR-028)
+To resolve flickering navigation panels and broken Sepia/White themes on strict browsers:
+* **Sidebar Simplification:** The sliding drawer pattern (`translate-x-full`) was entirely stripped from `Sidebar.tsx`. The mobile UI handles navigation purely through `BottomNav.tsx`, leaving `Sidebar.tsx` as a standard, bulletproof desktop-only element (`hidden md:flex`).
+* **Tailwind v4 Variables:** The `index.css` global theme variables (`--background`, `--foreground`, etc.) were refactored to use the native Tailwind v4 `@theme` directive (e.g. `--color-background: var(--background);`).
+* **Theme Specificity:** The `[data-theme="*"]` blocks were moved out of `@layer base` to ensure they have the absolute highest CSS specificity and cannot be overwritten by default dark mode or browser styles.
+* **Auto-Dark Mode Mitigations:** Added `<meta name="color-scheme" content="light dark" />` and `<meta name="darkreader-lock" />` to `index.html` to prevent extensions like Dark Reader from forcefully inverting custom light themes. However, aggressive renderer-level features (like **Opera GX "Force Dark Pages"**) still require the user to manually disable the feature for this site to prevent color corruption.
+
+### E. Batch Reliability & Global Progress UX (ADR-034)
+Batch translation is a global background workflow, not a Library-only action.
+
+* **Global Progress Surface:** `BulkStatusCenter` is mounted in `App.tsx` so progress stays visible while users move across Translate, Library, Context, Settings, and Reader detail/list views. It is intentionally hidden while reading an individual chapter to avoid covering the reading surface.
+* **Controlled Navigation State:** `App.tsx` owns the active tab and passes it into `Layout`. Opening a book sets the active tab to Library, so returning from Reader lands back on Library instead of resetting to Translate.
+* **Provider-Aware Model Routing:** `backend/services/ai/settings.py` resolves the active model/base URL from the selected provider. Gemini uses `gemini_model`, OpenAI uses `openai_model`, and LM Studio uses `lm_model`. Stale incompatible payloads such as qwen while Gemini is active are ignored.
+* **Empty Stream Defense:** `BackgroundTranslator` retries an empty streaming response with non-streaming completion once. If the final cleaned translation is still empty, the chapter is marked `error`, not `done`.
+* **Gemini Safety Blocks:** Provider content filters such as `content_filter: PROHIBITED_CONTENT` are treated as real per-chapter failures. Retry those chapters with LM Studio/local models or another provider rather than looping indefinitely.
+
+### F. Configurable Chapter Token Safety Cap (ADR-035)
+Long chapter translation now uses a configurable guardrail instead of a single hardcoded ceiling.
+
+* **Global Toggle:** `chapter_token_cap_enabled` in `global_settings` turns the cap on or off for all chapter translation paths.
+* **Preset Cap Values:** `chapter_token_cap` supports `7000`, `15000`, `22000`, and `30000` token presets. Current default is `22000`.
+* **Scope:** Applies to manual chapter translate, re-translate, streaming chapter translate, background prefetch, and batch-per-chapter translation. It does not apply to title polish, glossary extraction, or metadata scraping.
+* **Intent:** Reduce hallucination drift and wasted token burn on long chapter translations while preserving an uncapped escape hatch for power users with unusually large chapters.
 
 ---
 
@@ -154,14 +227,21 @@ Large novels are polished in batches using a safe **Soft Load** mechanism (typic
 
 Every code change must adhere to the highest standard of type checking and compiler verification:
 * **TSX Type Verification:** Run `npm run typecheck` (executes `tsc --noEmit`). No compilation errors are permitted.
-* **FastAPI Routers Syntax:** Run `py -m py_compile backend/routers/threads.py` to assert syntax sanity.
+* **ESLint:** Run `npm run lint` to verify zero linting errors across all `.tsx`/`.ts` files.
+* **FastAPI Routers Syntax:** Run `py -m py_compile backend/routers/threads.py` (or any modified router) to assert syntax sanity.
 * **Isolated TDD Specs:** Run test suites using Python unit tests (e.g. in `backend/scratch/test_context_engine.py`) built around in-memory SQLite instances to verify parsing logic safely.
+* **WAL Mode Verification:** On startup, SQLite WAL mode is activated automatically via `database.py` event listener. Verify with `PRAGMA journal_mode` returning `wal`.
+* **Frontend Gate Status:** As of ADR-035 follow-up, `npm run typecheck` and `npm run lint` both pass again after the reader controls and global token safety settings work landed.
 
 ---
 
 ## 📈 6. Future Expansion Roadmap & Your Immediate Tasks
 
 Here are the immediate strategic features you are tasked to build next:
+
+Recent completed platform work before these roadmap items:
+- ADR-034: global batch progress visibility and honest chapter failure handling
+- ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 
 ### 1. AI Character Relationship Clustering & Visualizer
 * **Goal:** Detect key narrative figures, track character interactions via chapter occurrences, and draw a dynamic interactive relationship network diagram inside the Lorebook page.
@@ -172,7 +252,7 @@ Here are the immediate strategic features you are tasked to build next:
 ### 2. GGUF Model Cache & Local Model Store
 * **Goal:** Allow users to download and change LLM translation models directly from the reader panel (storing local paths).
 * **Files to Extend:**
-  * `backend/routers/settings.py` (Add model list schemas).
+  * `backend/routers/context.py` (Add model list schemas to GlobalSettingsUpdate).
   * `src/pages/SettingsPage.tsx` (Add model download dashboards).
 
 ### 3. Dynamic Reader Drawer Layout Options

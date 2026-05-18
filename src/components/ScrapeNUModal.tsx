@@ -18,6 +18,18 @@ interface ScrapeNUModalProps {
   onScrapeSuccess: () => void;
 }
 
+interface ScrapedMetadata {
+  success?: boolean;
+  title: string;
+  original_title: string;
+  cover_image?: string | null;
+  status?: string | null;
+  status_coo?: string | null;
+  genres?: string | null;
+  tags?: string | null;
+  synopsis?: string | null;
+}
+
 export default function ScrapeNUModal({
   isOpen,
   onClose,
@@ -30,29 +42,31 @@ export default function ScrapeNUModal({
   const [includeCover, setIncludeCover] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successData, setSuccessData] = useState<any | null>(null);
+  const [successData, setSuccessData] = useState<ScrapedMetadata | null>(null);
   const [source, setSource] = useState<'novelupdates' | 'sfacg'>('novelupdates');
   const [searchBy, setSearchBy] = useState<'original' | 'translated'>('original');
 
   // Initialize values
   useEffect(() => {
     if (isOpen) {
-      setErrorMsg(null);
-      setSuccessData(null);
-      setIncludeCover(true);
-      
-      // Auto-detect SFACG source from original title or title
-      const isSfacg = (threadOriginalTitle && threadOriginalTitle.includes('sfacg.com')) || 
-                      (threadTitle && threadTitle.includes('sfacg.com'));
-      
-      if (isSfacg) {
-        setSource('sfacg');
-        setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
-      } else {
-        setSource('novelupdates');
-        setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
-      }
-      setSearchBy('original');
+      setTimeout(() => {
+        setErrorMsg(null);
+        setSuccessData(null);
+        setIncludeCover(true);
+        
+        // Auto-detect SFACG source from original title or title
+        const isSfacg = (threadOriginalTitle && threadOriginalTitle.includes('sfacg.com')) || 
+                        (threadTitle && threadTitle.includes('sfacg.com'));
+        
+        if (isSfacg) {
+          setSource('sfacg');
+          setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
+        } else {
+          setSource('novelupdates');
+          setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
+        }
+        setSearchBy('original');
+      }, 0);
     }
   }, [isOpen, threadTitle, threadOriginalTitle]);
 
@@ -92,8 +106,9 @@ export default function ScrapeNUModal({
       } else {
         throw new Error('Failed to parse metadata from Novel Updates.');
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'An error occurred while connecting to the scraper.');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'An error occurred while connecting to the scraper.';
+      setErrorMsg(errMsg);
     } finally {
       setIsLoading(false);
     }

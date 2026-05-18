@@ -1,9 +1,9 @@
 # 🌌 ReadOmni AI (Self-Hosted Novel Reader & Translator)
 > **A premium, privacy-first web novel reader and batch translator powered by local AI.**
 
-[![Project Status](https://img.shields.io/badge/status-Phase%2014%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
+[![Project Status](https://img.shields.io/badge/status-Phase%2015%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
 [![Tech Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20FastAPI%20%7C%20Tailwind%20v4-blue?style=for-the-badge)](#-tech-stack)
-[![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio%20(Local)-orange?style=for-the-badge&logo=openai)](https://lmstudio.ai/)
+[![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio%20%7C%20Gemini%20%7C%20OpenAI-orange?style=for-the-badge&logo=openai)](https://lmstudio.ai/)
 [![Database](https://img.shields.io/badge/Database-SQLite%20(WAL%20Mode)-lightgrey?style=for-the-badge&logo=sqlite)](backend/models.py)
 
 **ReadOmni AI** is a premium, self-hosted web application built for reading, crawling, and translating web novels and local EPUB files with complete privacy. By integrating with local LLMs (via **LM Studio**), the entire translation pipeline runs on your local machine, ensuring no data ever leaves your network. 
@@ -37,7 +37,11 @@
 *   **Volume-Aware Zero-Padding Formatting (ADR-024):** Zero-padded serial title formatting supporting standard, volume-level, and custom dynamic increments (e.g. `V1-001. Title`).
 
 ### 📚 4. Library & Premium Book Export
-*   **Progressive Bookmarking:** Real-time reading history tracking, custom progress banners, and "Last Read" indicators on the chapter index.
+*   **Progressive Bookmarking & Frame-Accurate Scroll Sync (ADR-032):** Automatically saves the user's exact scroll position percentage (on both mobile and desktop) in the background with a 2s client-side debounce, restoring their reading position instantly upon chapter load.
+*   **"Continue Reading" History Banner:** The Library automatically tracks and displays your most recently read novel, allowing you to instantly jump back into the exact chapter and scroll percentage where you left off.
+*   **Premium Reader UX Refinements (ADR-033):** Mobile-first floating toolbars, morphing radial SVG scroll-to-top buttons, elegant "End of Chapter" premium dividers, and in-chapter bottom controls create a reading experience rivaling Apple Books.
+*   **Batch Reliability & Global Progress UX (ADR-034):** Background translation progress now remains visible across the whole app, provider-aware model routing prevents stale model mismatches, and empty/blocked results are surfaced honestly instead of silently succeeding.
+*   **Configurable Chapter Token Safety Cap (ADR-035):** Global per-chapter token guardrail with `7K`, `15K`, `22K`, and `30K` presets plus uncapped mode to reduce hallucination drift and wasted token burn on long chapter translations.
 *   **EPUB & TXT Compiler:** Compile translated chapters into beautifully formatted files with:
     *   *Custom Cover Upload:* Embed cover images directly from your system.
     *   *Curation & Metadata:* Custom author and book title details.
@@ -47,7 +51,11 @@
 
 ### ⚙️ 5. Server-Side Configuration Sync & Volume Boundaries
 *   **Unified Multi-Device Sync:** Transitioned from volatile browser `localStorage` to SQLite-backed `global_settings` table, synchronizing settings instantly between desktop and mobile devices on the same network.
+*   **Swappable Cloud AI Providers & Adapters (ADR-029):** Seamlessly transition between local offline models (LM Studio) and cloud APIs (OpenAI & Google Gemini) with dynamic card-based selector configuration, secure API key synchronization, and direct streaming outputs. Supports premium free-tier options like `gemini-3.1-flash-lite` and `gemma-4-31b`.
+*   **Intelligent Model Mapping & Safety Guards (ADR-030):** Automatically normalizes frontend model names (e.g. `gemma-4-31b`) to strict API endpoints (e.g. `gemma-4-31b-it`). Implements robust parsing for Gemini content/safety filters to explicitly notify users if a web novel chapter violates LLM safety guidelines instead of crashing.
+*   **Dynamic RPM Safety Guard (Throttling pacing):** Integrates an automated pacing mechanism in the Python background worker that dynamically adjusts request delays according to the selected model's strict RPM limits (e.g., 4.2s for Gemini 3.1 Flash Lite/Gemma, 12.2s for Gemini 2.5/3 Flash), making it 100% safe to run background batch translations on the Google AI Studio Free Tier without hitting 429 rate limit triggers.
 *   **Sequential Background Prefetching:** Configure a smart prefetching range slider (1-5 chapters ahead) to sequentially pre-translate the upcoming chapters in the background while you read.
+*   **Chapter Token Safety Controls:** Global toggle plus presets (`7K`, `15K`, `22K`, `30K`) let users trade safety vs. uninterrupted long-form output. Default is `22K`; turning it off removes the cap entirely.
 *   **Stateful Volume Transition & Prologue Boundary Guards (ADR-027):** Uses isolated state tags (`volume_just_incremented`) and native prologue parsers to block sequential numeric resets from double-incrementing volume sequences.
 
 ### 🛡️ 6. Stability & GPU Guardrails
@@ -65,7 +73,7 @@
 *   **Database:** SQLite with SQLAlchemy ORM (WAL mode enabled for robust read/write operations).
 *   **Scraping Engine:** Crawl4AI (LLM-friendly, stealth web scraping).
 *   **EPUB Core:** EbookLib & BeautifulSoup4 (Accurate file parsing & compilation).
-*   **AI Backend:** LM Studio (OpenAI-compatible local server at `http://localhost:1234`).
+*   **AI Backend & Engines:** Multi-provider adapter system supporting local offline models (LM Studio at `http://localhost:1234`), cloud OpenAI models (GPT-4o/GPT-4o-mini), and cloud Google Gemini models (Gemini 3.1 Flash Lite, Gemma 4 31B, Gemini 3 Flash, Gemini 2.5 Flash, Gemini 1.5 Pro) with configurable per-chapter token safety caps.
 
 ---
 
@@ -74,7 +82,10 @@
 ### 📋 Prerequisites
 *   **Node.js** v20+
 *   **Python** v3.11+
-*   **LM Studio** installed and running on port `1234`. Make sure to enable local server in LM Studio.
+*   **Translation Engine (Any of the following):**
+    *   **LM Studio:** Running locally on port `1234` with an active model (for offline gratis translation).
+    *   **Google Gemini API Key:** Personal API key from Google AI Studio (includes a generous personal Free Tier).
+    *   **OpenAI API Key:** Cloud API key from OpenAI (paid API access).
 
 ### 1. Backend Installation & Start
 ```powershell
@@ -142,7 +153,14 @@ For detailed insights into the technical architecture, read our official guides:
 *   [docs/SDLC.md](docs/SDLC.md) — The 10-phase software development lifecycle documentation.
 *   [docs/implementation_plan.md](docs/implementation_plan.md) — Exact task definitions and acceptance criteria from Task 1 to 24.
 *   [docs/Handoff.md](docs/Handoff.md) — The main developer handoff guide and future roadmap suggestions.
-*   [docs/decisions/](docs/decisions/) — Directory containing all 27 accepted Architectural Decision Records (ADRs).
+*   [docs/decisions/](docs/decisions/) — Directory containing all 35 Architectural Decision Records (ADRs), including the latest global progress and chapter token safety decisions.
+
+---
+
+## ⚠️ Troubleshooting & Known Gotchas
+
+*   **Broken/Inverted Themes (White/Sepia looking dark):** If the light themes (White, Sepia) appear as dark grey or muddy brown, you have a browser extension or setting actively forcing dark mode. **You must disable "Dark Reader" or Opera GX's "Force Dark Pages" feature for this site.** These extensions forcefully override custom design tokens at the renderer level.
+*   **Constant Page Reloading (Vite):** If the browser keeps refreshing while a novel is being fetched or translated, ensure `vite.config.ts` has the `server.watch.ignored` paths set to ignore the `backend/` directory and `.db` files.
 
 ---
 

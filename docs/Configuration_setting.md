@@ -14,8 +14,11 @@ Akses aplikasi melalui browser di HP menggunakan IP lokal laptop Anda:
 
 ## 3. Persistent Settings
 Pengaturan berikut sekarang tersinkronisasi secara otomatis di seluruh perangkat:
-- **LM Studio URL**: Default `http://localhost:1234` (atau IP laptop jika diakses dari HP).
-- **Active Model**: Model yang dipilih di Laptop akan otomatis terpilih di HP.
+- **Swappable AI Translation Model (ADR-029)**: Pilihan provider terjemahan yang dinamis:
+  - **LM Studio (Local)**: Terjemahan offline gratis menggunakan model LLM lokal Anda di komputer (default).
+  - **OpenAI (Cloud)**: Akses cloud berbayar ke OpenAI API (GPT-4o, GPT-4o-mini).
+  - **Google Gemini**: Akses Gemini API gratis/premium dengan kecepatan sangat tinggi dan gratis tier personal melimpah dari Google AI Studio.
+- **API Keys & Model custom**: API Key dan Model untuk OpenAI & Gemini tersimpan secara aman di database server dan disinkronkan ke seluruh klien.
 - **Target Language**: Bahasa tujuan (Indonesian/English).
 - **Advanced Prefetch**: 
   - **Toggle**: Mengaktifkan/menonaktifkan translasi otomatis bab selanjutnya.

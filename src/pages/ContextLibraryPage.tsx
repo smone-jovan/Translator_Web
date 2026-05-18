@@ -53,6 +53,8 @@ export default function ContextLibraryPage() {
   // AI Extract
   const [isExtracting, setIsExtracting] = useState(false);
   const [suggestions, setSuggestions] = useState<ExtractedTerm[]>([]);
+  const [aiReasoning, setAiReasoning] = useState<string>('');
+  const [showAiReasoning, setShowAiReasoning] = useState(false);
   const [extractMode, setExtractMode] = useState<'easy' | 'advanced'>('easy');
   const [extractSettings, setExtractSettings] = useState({ chapterCount: 25, sampleSize: 1000 });
   const [showExtractSettings, setShowExtractSettings] = useState(false);
@@ -235,6 +237,8 @@ export default function ContextLibraryPage() {
   const handleExtractContext = async () => {
     if (!selectedThreadId) return;
     setIsExtracting(true);
+    setAiReasoning('');
+    setShowAiReasoning(false);
     
     const lmUrl = localStorage.getItem('lm_url') || 'http://localhost:1234';
     const lmModel = localStorage.getItem('lm_model') || '';
@@ -260,6 +264,10 @@ export default function ContextLibraryPage() {
       
       if (!res.ok) {
         throw new Error(data.detail || 'Extraction failed.');
+      }
+
+      if (data.metadata?.reasoning) {
+        setAiReasoning(data.metadata.reasoning);
       }
 
       // Filter out suggestions that already exist in the glossary (entries state)
@@ -649,12 +657,37 @@ export default function ContextLibraryPage() {
                   )}
 
                   {/* AI Suggestions Section */}
-                  {suggestions.length > 0 && (
+                  {(suggestions.length > 0 || aiReasoning) && (
                     <div className="space-y-4">
-                      <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--primary)] flex items-center gap-2">
-                        <Sparkles size={14} /> AI Detected Suggestions <span className="text-[10px] text-[var(--muted-foreground)] font-medium normal-case">({suggestions.length} left)</span>
-                      </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {/* AI Reasoning Accordion */}
+                      {aiReasoning && (
+                        <div className="mb-6 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/5 overflow-hidden">
+                          <button 
+                            onClick={() => setShowAiReasoning(!showAiReasoning)}
+                            className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--primary)]/5 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <Sparkles size={16} className="text-[var(--primary)]" />
+                              <span className="text-sm font-bold text-[var(--foreground)]">AI Reasoning & Lore Notes</span>
+                            </div>
+                            <span className="text-xs text-[var(--primary)] font-semibold uppercase tracking-wider">
+                              {showAiReasoning ? 'Hide' : 'Read Notes'}
+                            </span>
+                          </button>
+                          {showAiReasoning && (
+                            <div className="p-4 border-t border-[var(--primary)]/10 text-sm text-[var(--muted-foreground)] leading-relaxed font-serif whitespace-pre-wrap">
+                              {aiReasoning}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {suggestions.length > 0 && (
+                        <>
+                          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--primary)] flex items-center gap-2">
+                            <Sparkles size={14} /> AI Detected Suggestions <span className="text-[10px] text-[var(--muted-foreground)] font-medium normal-case">({suggestions.length} left)</span>
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {suggestions.map((sug, i) => (
                           <Card key={i} className="border-amber-200/50 bg-amber-50/20 dark:border-amber-950/30 dark:bg-amber-950/10">
                             <CardContent className="p-4 flex items-start justify-between gap-3">
@@ -707,6 +740,8 @@ export default function ContextLibraryPage() {
                           </Card>
                         ))}
                       </div>
+                        </>
+                      )}
                     </div>
                   )}
 

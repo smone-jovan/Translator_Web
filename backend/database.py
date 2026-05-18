@@ -5,7 +5,7 @@ Tabel: threads, chapters, lorebook_entries, translation_segments, user_bookmarks
 
 from typing import List, Optional
 from datetime import datetime
-from sqlalchemy import create_engine, String, Text, DateTime, ForeignKey, func
+from sqlalchemy import create_engine, event, String, Text, DateTime, ForeignKey, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = "sqlite:///./app.db"
@@ -13,6 +13,14 @@ DATABASE_URL = "sqlite:///./app.db"
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}
 )
+
+# Activate WAL mode for concurrent read/write safety across multi-device sessions (ADR-008)
+@event.listens_for(engine, "connect")
+def _set_sqlite_wal(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -37,6 +45,17 @@ class GlobalSetting(Base):
     max_context_terms: Mapped[int] = mapped_column(default=50) # 20, 50, 70, 100, 150
     extract_chapter_count: Mapped[int] = mapped_column(default=25)
     extract_sample_size: Mapped[int] = mapped_column(default=1000)
+    always_hide_thoughts: Mapped[int] = mapped_column(default=1) # 0 = disabled, 1 = enabled
+    chapter_token_cap_enabled: Mapped[int] = mapped_column(default=1) # 0 = disabled, 1 = enabled
+    chapter_token_cap: Mapped[int] = mapped_column(default=22000)
+    
+    # Cloud & Provider settings (ADR-029)
+    llm_provider: Mapped[str] = mapped_column(String(50), default="lm_studio")
+    openai_url: Mapped[str] = mapped_column(String(500), default="https://api.openai.com/v1")
+    openai_model: Mapped[str] = mapped_column(String(200), default="gpt-4o")
+    gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
+    openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
+    gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
 
 
 class Thread(Base):
@@ -102,6 +121,7 @@ class UserBookmark(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
     chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False)
+    scroll_progress: Mapped[float] = mapped_column(default=0.0)
     last_read_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
     thread: Mapped["Thread"] = relationship(back_populates="bookmarks")
@@ -142,6 +162,7 @@ def init_db():
     columns_gs = [c['name'] for c in inspector.get_columns('global_settings')]
     columns_lb = [c['name'] for c in inspector.get_columns('lorebook_entries')]
     columns_th = [c['name'] for c in inspector.get_columns('threads')]
+    columns_ub = [c['name'] for c in inspector.get_columns('user_bookmarks')]
     
     with engine.connect() as conn:
         if 'author' not in columns_th:
@@ -219,6 +240,51 @@ def init_db():
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN extract_sample_size INTEGER DEFAULT 1000"))
             conn.commit()
             
+        if 'llm_provider' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'llm_provider' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN llm_provider VARCHAR(50) DEFAULT 'lm_studio'"))
+            conn.commit()
+            
+        if 'openai_url' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openai_url' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openai_url VARCHAR(500) DEFAULT 'https://api.openai.com/v1'"))
+            conn.commit()
+            
+        if 'openai_model' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openai_model' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openai_model VARCHAR(200) DEFAULT 'gpt-4o'"))
+            conn.commit()
+            
+        if 'gemini_model' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'gemini_model' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN gemini_model VARCHAR(200) DEFAULT 'gemini-2.5-flash'"))
+            conn.commit()
+            
+        if 'openai_api_key' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openai_api_key' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openai_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+            
+        if 'gemini_api_key' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'gemini_api_key' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN gemini_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+            
+        if 'always_hide_thoughts' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'always_hide_thoughts' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN always_hide_thoughts INTEGER DEFAULT 1"))
+            conn.commit()
+
+        if 'chapter_token_cap_enabled' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'chapter_token_cap_enabled' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN chapter_token_cap_enabled INTEGER DEFAULT 1"))
+            conn.commit()
+
+        if 'chapter_token_cap' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'chapter_token_cap' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN chapter_token_cap INTEGER DEFAULT 22000"))
+            conn.commit()
+            
         if 'is_locked' not in columns_lb:
             print("[MIGRASI] Menambahkan kolom 'is_locked' ke dalam tabel lorebook_entries...")
             conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN is_locked BOOLEAN DEFAULT FALSE"))
@@ -227,6 +293,11 @@ def init_db():
         if 'is_archived' not in columns_lb:
             print("[MIGRASI] Menambahkan kolom 'is_archived' ke dalam tabel lorebook_entries...")
             conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN is_archived BOOLEAN DEFAULT FALSE"))
+            conn.commit()
+            
+        if 'scroll_progress' not in columns_ub:
+            print("[MIGRASI] Menambahkan kolom 'scroll_progress' ke dalam tabel user_bookmarks...")
+            conn.execute(text("ALTER TABLE user_bookmarks ADD COLUMN scroll_progress REAL DEFAULT 0.0"))
             conn.commit()
             
     print("[SUKSES] Inisialisasi basis data selesai - app.db siap digunakan.")

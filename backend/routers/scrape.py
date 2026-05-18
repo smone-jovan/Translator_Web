@@ -1,15 +1,24 @@
 """
 POST /api/scrape — Fetch URL, clean HTML, return Markdown.
 Uses httpx + BeautifulSoup (lightweight, no browser needed).
+Also contains URL imports and NovelUpdates/SFACG metadata scrapers.
 """
 
 import re
-from fastapi import APIRouter, HTTPException
+import urllib.parse
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import httpx
 from bs4 import BeautifulSoup
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+
+from database import get_db, Thread, Chapter, GlobalSetting
+from services.scrapers.engine import MetadataScraperEngine
 
 router = APIRouter(prefix="/api", tags=["Scraping"])
+scraper_engine = MetadataScraperEngine()
 
 
 class ScrapeRequest(BaseModel):
@@ -20,6 +29,17 @@ class ScrapeResponse(BaseModel):
     title: str
     markdown: str
     word_count: int
+
+
+class ImportURLRequest(BaseModel):
+    url: str
+
+
+class ScrapeMetadataRequest(BaseModel):
+    original_title: Optional[str] = None
+    include_cover: bool = True
+    search_by: Optional[str] = "original"  # "original" or "translated"
+    source: Optional[str] = "novelupdates"   # "novelupdates" or "sfacg"
 
 
 # Tags to strip completely
@@ -75,10 +95,6 @@ def html_to_markdown(html: str) -> tuple[str, str]:
 
     # Convert to text with paragraph breaks
     lines = []
-    
-    # We want to visit elements and extract their text, but avoid nested duplication
-    # We'll use a recursive helper or a set to track visited nodes if needed, 
-    # but for simplicity, we'll iterate through children and handle them based on type.
     
     processed_tags = set()
 
@@ -156,3 +172,112 @@ async def scrape_url(req: ScrapeRequest):
         markdown=markdown,
         word_count=len(markdown.split()),
     )
+
+
+@router.post("/threads/import-url")
+async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
+    """Scrape a URL and create a new Thread/Chapter for it."""
+    if not req.url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL must start with http:// or https://")
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+        ) as client:
+            resp = await client.get(req.url)
+            resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch URL: {e}")
+
+    title, markdown = html_to_markdown(resp.text)
+    if not markdown:
+        raise HTTPException(422, "No content extracted from URL.")
+
+    # Create Thread
+    thread = Thread(
+        title=title,
+        original_title=title,
+        source_type="url",
+        source_url=req.url
+    )
+    db.add(thread)
+    db.flush() # Get ID
+
+    # Create first chapter
+    chapter = Chapter(
+        thread_id=thread.id,
+        order=0,
+        title_original=title, # Often URL is just one chapter
+        content_original=markdown
+    )
+    db.add(chapter)
+    db.commit()
+
+    return {"thread_id": thread.id, "chapter_id": chapter.id}
+
+
+@router.post("/threads/{thread_id}/scrape_metadata")
+async def scrape_metadata(
+    thread_id: int,
+    req: ScrapeMetadataRequest,
+    db: Session = Depends(get_db)
+):
+    """Scrape metadata from Novel Updates or SFACG directly."""
+    # 1. Fetch thread
+    thread_stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(thread_stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+        
+    query = req.original_title or thread.source_url or thread.title or ""
+    if not query:
+        raise HTTPException(400, "No query title or URL available to scrape metadata")
+
+    # Call swappable scraper coordinator
+    result = await scraper_engine.scrape(
+        query=query,
+        source=req.source,
+        search_by=req.search_by,
+        include_cover=req.include_cover,
+        db_session=db
+    )
+
+    if not result.success:
+        raise HTTPException(500, result.synopsis or "Failed to scrape metadata")
+
+    # Persist scraped fields to DB Thread
+    thread.original_title = result.original_title
+    if result.title:
+        thread.title = result.title
+    if result.genres:
+        thread.genres = result.genres
+    if result.tags:
+        thread.tags = result.tags
+    if result.synopsis:
+        thread.synopsis = result.synopsis
+    if result.status_coo:
+        thread.status_coo = result.status_coo
+    if result.status:
+        thread.status = result.status
+    if result.cover_image:
+        thread.cover_image = result.cover_image
+    if result.author:
+        thread.author = result.author
+        
+    db.commit()
+    
+    return {
+        "success": True,
+        "original_title": result.original_title,
+        "title": result.title,
+        "author": result.author,
+        "genres": result.genres,
+        "tags": result.tags,
+        "status": result.status,
+        "status_coo": result.status_coo,
+        "synopsis": result.synopsis,
+        "cover_image": result.cover_image,
+        "detail_url": result.detail_url
+    }

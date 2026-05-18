@@ -8,19 +8,30 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from database import init_db
-from routers import scrape, epub, translate, threads, lorebook, context, export
+
+from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Inisialisasi database saat server pertama kali jalan."""
+    init_db()
+    print("[OK] Database initialized - app.db ready.")
+    yield
+
 
 app = FastAPI(
     title="AI Translator Web — Backend",
     description="API untuk scraping, EPUB parsing, dan translasi via LM Studio lokal.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
-# CORS — izinkan request dari frontend Vite
+# CORS — izinkan request dari frontend Vite (wildcard acceptable for self-hosted LAN app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,13 +39,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    """Inisialisasi database saat server pertama kali jalan."""
-    init_db()
-    print("[OK] Database initialized - app.db ready.")
 
 
 @app.get("/", tags=["Health"])
@@ -50,3 +54,7 @@ app.include_router(threads.router)
 app.include_router(lorebook.router)
 app.include_router(context.router)
 app.include_router(export.router)
+app.include_router(settings.router)
+app.include_router(polish.router)
+app.include_router(batch.router)
+
