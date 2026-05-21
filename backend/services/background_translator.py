@@ -131,7 +131,7 @@ class BackgroundTranslator:
                 # AI Extract First Logic
                 if force_extract:
                     print(f"[EXTRACT] Starting glossary extraction for chapter {chapter_id} before translation...")
-                    await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model)
+                    await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model, target_lang)
 
                 # Ambil konten aslinya dan set status ke processing
                 content_original = chapter.content_original
@@ -225,10 +225,10 @@ class BackgroundTranslator:
                         with SessionLocal() as db:
                             ch = db.get(Chapter, chapter_id)
                             if ch:
-                                clean_to_save = full_content
-                                if always_hide_thoughts:
-                                    clean_to_save = ContextEngine.strip_thinking_blocks(clean_to_save)
-                                ch.content_translated = ContextEngine.strip_translator_notes(clean_to_save)
+                                ch.content_translated = ContextEngine.clean_final_translation(
+                                    full_content,
+                                    always_hide_thoughts=bool(always_hide_thoughts)
+                                )
                                 db.commit()
 
                 if not full_content.strip():
@@ -239,10 +239,10 @@ class BackgroundTranslator:
                 with SessionLocal() as db:
                     ch = db.get(Chapter, chapter_id)
                     if ch:
-                        clean_to_save = full_content
-                        if always_hide_thoughts:
-                            clean_to_save = ContextEngine.strip_thinking_blocks(clean_to_save)
-                        clean_to_save = ContextEngine.strip_translator_notes(clean_to_save).strip()
+                        clean_to_save = ContextEngine.clean_final_translation(
+                            full_content,
+                            always_hide_thoughts=bool(always_hide_thoughts)
+                        )
 
                         if not clean_to_save:
                             raise ValueError(

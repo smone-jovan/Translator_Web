@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import LorebookEntry, Thread, GlobalSetting
+from services.hallucination_detector import HallucinationDetector
 
 class ContextEngine:
     """
@@ -58,6 +59,8 @@ Output ONLY the {lang_name} translation.
 No extra commentary, no summary, no conversational filler.
 Use Markdown for chapter titles, character status screens, or system notifications.
 Ensure double newlines between paragraphs for clear readability.
+If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
+Never output malformed token soup, mixed-script noise, isolated symbol clusters, or analysis phrases pretending to be translation.
 After the chapter, if needed, add a “Translator Notes:” section with brief bullet points for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
 **FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
 Do NOT include terms from the Style Reference examples unless they are in the chapter.
@@ -73,6 +76,9 @@ If no new terms, skip.
             full_prompt += f"\n[Global Literary Style]:\n{gs.global_context}\n"
 
         if thread_id:
+            if original_text:
+                ContextEngine.reactivate_referenced_archived_terms(db, thread_id, original_text)
+
             thread_stmt = select(Thread).where(Thread.id == thread_id)
             thread = db.execute(thread_stmt).scalar_one_or_none()
             if thread and thread.thread_context:
@@ -109,6 +115,35 @@ If no new terms, skip.
                 full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
 
         return full_prompt
+
+    @staticmethod
+    def reactivate_referenced_archived_terms(db: Session, thread_id: int, original_text: str) -> int:
+        """
+        Restore archived lorebook entries when their original term appears again in the
+        current chapter text. This keeps long-tail context recoverable without forcing
+        users to re-add terms manually.
+        """
+        if not original_text:
+            return 0
+
+        archived_stmt = (
+            select(LorebookEntry)
+            .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == True)
+            .order_by(LorebookEntry.id)
+        )
+        archived_entries = db.execute(archived_stmt).scalars().all()
+
+        restored_count = 0
+        for entry in archived_entries:
+            if entry.original_term and entry.original_term in original_text:
+                entry.is_archived = False
+                restored_count += 1
+
+        if restored_count:
+            db.commit()
+            ContextEngine.enforce_context_limit(db, thread_id)
+
+        return restored_count
 
     @staticmethod
     def enforce_context_limit(db: Session, thread_id: int):
@@ -206,6 +241,18 @@ If no new terms, skip.
         return text
 
     @staticmethod
+    def clean_final_translation(text: str, always_hide_thoughts: bool = True) -> str:
+        if not text:
+            return ""
+
+        cleaned = text
+        if always_hide_thoughts:
+            cleaned = ContextEngine.strip_thinking_blocks(cleaned)
+        cleaned = ContextEngine.strip_translator_notes(cleaned)
+        cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
+        return cleaned.strip()
+
+    @staticmethod
     def auto_save_glossary(db: Session, thread_id: int, full_text: str):
         """
         Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
@@ -294,12 +341,12 @@ If no new terms, skip.
                     if not exists:
                         # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
                         final_translated = desc
-                        final_notes = f"Auto-extracted"
-                        
+                        final_notes = f"Auto-extracted: {term}"
+
                         if "(" in desc and desc.endswith(")"):
-                            p_start = desc.rfind("(") 
+                            p_start = desc.rfind("(")
                             final_translated = desc[:p_start].strip()
-                            final_notes = desc[p_start+1:-1].strip()
+                            final_notes = f"{desc[p_start+1:-1].strip()} (Auto-extracted)"
 
                         new_entry = LorebookEntry(
                             thread_id=thread_id,
@@ -316,18 +363,21 @@ If no new terms, skip.
             ContextEngine.enforce_context_limit(db, thread_id)
 
     @staticmethod
-    async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None):
+    async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None, target_lang: str = "English"):
         """Dedicated pass to extract names/terms BEFORE translation."""
         from services.ai.factory import AIProviderFactory
         from database import GlobalSetting
         from sqlalchemy import select
-        
+
         sys_prompt = (
             "You are a literary analyst and terminology expert. \n"
-            "Task: Extract key names, locations, cultivation techniques, and unique terms from the provided Chinese text.\n"
+            "Task: Extract key names, locations, cultivation techniques, sects, clans, buildings, and unique terms from the provided Chinese text.\n"
+            f"CRITICAL LANGUAGE RULE: ALL output — translated terms, notes, and context descriptions — MUST be written in {target_lang}. NEVER output notes or descriptions in Chinese.\n"
+            "MANDATORY RULE FOR CONTEXT/NOTES: Your brief context MUST explicitly explain relationships. If it is a person, state who they are connected to. If it is a place/sect/building, state its location or affiliated faction.\n"
             "Format your output ONLY as a list of 'Translator Notes' like this:\n"
-            "- 原本术语 → Translated Term (Brief context)\n"
-            "Example: - 宁凡 → Ning Fan (Main Character)\n"
+            f"- 原本术语 → Translated Term ({target_lang} context explicitly stating relationships/affiliations)\n"
+            "Example: - 宁凡 → Ning Fan (Main Character, Disciple of Old Demon) \n"
+            "Example: - 天云宗 → Heavenly Cloud Sect (Rival sect located in the Northern Region)\n"
             "If no important terms, output: 'No new terms found.'"
         )
         
@@ -347,3 +397,91 @@ If no new terms, skip.
             print(f"[EXTRACT] AI glossary extraction completed for thread {thread_id}")
         except Exception as e:
             print(f"[WARN] [EXTRACT] AI glossary extraction failed: {e}")
+
+    @staticmethod
+    async def extract_relationships_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None, target_lang: str = "English"):
+        """Dedicated pass to extract character relationships from source text."""
+        from services.ai.factory import AIProviderFactory
+        from database import GlobalSetting, CharacterRelationship
+        from sqlalchemy import select
+        import json
+        import re
+
+        sys_prompt = (
+            "You are an expert literary analyst mapping out character relationships in a Chinese web novel.\n"
+            "Task: Identify any interpersonal relationships, factions, or affiliations between characters mentioned in the text.\n"
+            "Format your output STRICTLY as a JSON array of objects, with no markdown formatting or extra text.\n"
+            f"CRITICAL: For 'source', 'target', 'type', and 'notes' fields, you MUST write ALL values in {target_lang}. NEVER output Chinese characters in any field. The audience reads {target_lang} only.\n"
+            'Example:\n[\n  {"source": "Ning Fan", "target": "Old Demon", "type": "Master & Disciple", "notes": "Ning Fan learns cultivation from the old demon"}\n]\n'
+            "If no relationships are found, output an empty array: []"
+        )
+
+        try:
+            gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+            sample_size = gs.extract_sample_size if gs else 1000
+
+            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"Extract relationships from this text:\n\n{original_text[:sample_size]}"},
+            ]
+
+            response = await provider.chat_completion(messages=messages, temperature=0.1)
+
+            # Clean response to find JSON array
+            json_str = response.strip()
+            # If wrapped in markdown block, extract it
+            if json_str.startswith("```json"):
+                json_str = json_str.split("```json")[1].split("```")[0].strip()
+            elif json_str.startswith("```"):
+                json_str = json_str.split("```")[1].split("```")[0].strip()
+
+            relationships_data = json.loads(json_str)
+
+            if not isinstance(relationships_data, list):
+                print(f"[WARN] [RELATIONSHIPS] Expected a JSON list, got {type(relationships_data)}")
+                return 0
+
+            new_count = 0
+            for item in relationships_data:
+                if "source" not in item or "target" not in item or "type" not in item:
+                    continue
+
+                src = item["source"].strip()
+                tgt = item["target"].strip()
+                rel_type = item["type"].strip()
+                notes = item.get("notes", "").strip()
+
+                if not src or not tgt or src == tgt:
+                    continue
+
+                # Check for duplicates
+                exists = db.execute(
+                    select(CharacterRelationship).where(
+                        CharacterRelationship.thread_id == thread_id,
+                        CharacterRelationship.source_term == src,
+                        CharacterRelationship.target_term == tgt,
+                        CharacterRelationship.relationship_type == rel_type
+                    )
+                ).scalars().first()
+
+                if not exists:
+                    new_rel = CharacterRelationship(
+                        thread_id=thread_id,
+                        source_term=src,
+                        target_term=tgt,
+                        relationship_type=rel_type,
+                        notes=notes
+                    )
+                    db.add(new_rel)
+                    new_count += 1
+
+            if new_count > 0:
+                db.commit()
+
+            print(f"[EXTRACT] Found {new_count} new relationships for thread {thread_id}")
+            return new_count
+
+        except Exception as e:
+            print(f"[WARN] [RELATIONSHIPS] Extraction failed: {e}")
+            return 0

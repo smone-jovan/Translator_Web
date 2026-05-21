@@ -84,12 +84,14 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     prompt = (
         f"You are an expert literary analyst specializing in Chinese web novels.\n"
         f"Your task is to identify and extract key proper nouns from the text provided, following these rules:\n\n"
+        f"CRITICAL LANGUAGE RULE: ALL output — translated_term AND notes — MUST be written entirely in {target_lang}. NEVER write notes, descriptions, or context in Chinese. The audience reads {target_lang} ONLY.\n\n"
         f"RULES & ETHICS (MANDATORY):\n{global_rules}\n\n"
         f"EXTRACTION GUIDELINES:\n"
-        f"1. Focus on the MOST FREQUENT and SIGNIFICANT terms (Protagonist, key items, recurring locations).\n"
+        f"1. Focus on the MOST FREQUENT and SIGNIFICANT terms (Protagonist, key items, recurring locations, sects/clans, buildings/cities).\n"
         f"2. Ignore generic or common words. Only take high-priority patterns.\n"
-        f"3. Provide: The original Chinese term, a natural {target_lang} translation, and brief notes.\n"
-        f"4. Format STRICTLY as a raw JSON list without markdown backticks. Example:\n"
+        f"3. Provide: The original Chinese term, a natural {target_lang} translation, and brief notes IN {target_lang}.\n"
+        f"4. MANDATORY FOR NOTES: The 'notes' MUST be in {target_lang} and MUST explicitly explain the entity's relationship/role (e.g., 'Master of X', 'Capital City of Y Empire', 'Rival Clan to Z'). Be descriptive about connections.\n"
+        f"5. Format STRICTLY as a raw JSON list without markdown backticks. Example:\n"
         f'[{{\n  "original_term": "...",\n  "translated_term": "...",\n  "notes": "..."\n}}]\n'
     )
     
@@ -189,3 +191,69 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
 
     except Exception as e:
         raise HTTPException(502, f"Extraction Parsing Failed: {str(e)}")
+
+@router.post("/threads/{thread_id}/extract-relationships")
+async def extract_thread_relationships(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
+    """Analyze chapter text to extract character relationships."""
+    from services.context_engine import ContextEngine
+
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    # 1. Identify starting point
+    from database import UserBookmark
+    bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
+    bookmark = db.execute(bookmark_stmt).scalars().first()
+
+    start_order = 0
+    if bookmark:
+        last_ch_stmt = select(Chapter).where(Chapter.id == bookmark.chapter_id)
+        last_ch = db.execute(last_ch_stmt).scalar_one_or_none()
+        if last_ch:
+            start_order = last_ch.order
+
+    # 1.5 Get Global Settings
+    gs_stmt = select(GlobalSetting)
+    gs = db.execute(gs_stmt).scalar_one_or_none()
+
+    chapter_count = req.chapter_count if req.chapter_count is not None else (gs.extract_chapter_count if gs else 25)
+    sample_size = req.sample_size if req.sample_size is not None else (gs.extract_sample_size if gs else 1000)
+
+    # 2. Fetch up to X chapters starting from start_order
+    ch_stmt = (
+        select(Chapter)
+        .where(Chapter.thread_id == thread_id, Chapter.order >= start_order)
+        .order_by(Chapter.order)
+        .limit(chapter_count)
+    )
+    chapters = db.execute(ch_stmt).scalars().all()
+
+    if not chapters:
+        return {"status": "ok", "new_count": 0}
+
+    # 3. Combine text samples
+    text_parts = []
+    for ch in chapters:
+        if ch.content_original:
+            sample = ch.content_original[:sample_size]
+            text_parts.append(f"--- Chapter {ch.order + 1}: {ch.title_original} ---\n{sample}")
+
+    full_text = "\n\n".join(text_parts)
+    if not full_text:
+        return {"status": "ok", "new_count": 0}
+
+    ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
+    target_lang = gs.target_language if gs else "Indonesian"
+
+    new_count = await ContextEngine.extract_relationships_pass(
+        db=db,
+        thread_id=thread_id,
+        original_text=full_text,
+        lm_url=ai_url,
+        model=req.model,
+        target_lang=target_lang
+    )
+
+    return {"status": "ok", "new_count": new_count}
