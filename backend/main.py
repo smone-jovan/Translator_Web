@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 
-from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch
+from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -57,4 +58,5 @@ app.include_router(export.router)
 app.include_router(settings.router)
 app.include_router(polish.router)
 app.include_router(batch.router)
-
+app.include_router(tools.router)
+app.include_router(relationships.router)

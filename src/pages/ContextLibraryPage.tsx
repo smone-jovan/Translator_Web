@@ -1,15 +1,18 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef } from 'react';
-import { 
-  X, Plus, BookOpen, Globe, FileText, Sparkles, 
+import {
+  X, Plus, BookOpen, Globe, FileText, Sparkles,
   Loader2, Search, Filter, Trash2, Lock,
-  Settings2, Zap, Edit2
+  Settings2, Zap, Edit2, ScanSearch
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import RelationshipGraph from '@/components/RelationshipGraph';
 
 interface LorebookEntry {
   id: number;
@@ -36,7 +39,11 @@ interface ExtractedTerm {
 export default function ContextLibraryPage() {
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'glossary' | 'context'>('glossary');
+  const [activeSubTab, setActiveSubTab] = useState<'glossary' | 'context' | 'relationships'>('glossary');
+
+  // Relationships
+  const [relationships, setRelationships] = useState<any[]>([]);
+  const [isScanningRels, setIsScanningRels] = useState(false);
   
   // Contexts
   const [globalContext, setGlobalContext] = useState('');
@@ -71,7 +78,7 @@ export default function ContextLibraryPage() {
 
   // Initial load
   useEffect(() => {
-    fetch('http://localhost:8000/api/threads')
+    fetch(getApiUrl('/api/threads'))
       .then(res => res.json())
       .then(data => {
         setThreads(data);
@@ -79,7 +86,7 @@ export default function ContextLibraryPage() {
       })
       .catch(e => console.error('Failed to fetch threads', e));
 
-    fetch('http://localhost:8000/api/global-context')
+    fetch(getApiUrl('/api/global-context'))
       .then(res => res.json())
       .then(data => {
         setGlobalContext(data.global_context || '');
@@ -99,6 +106,7 @@ export default function ContextLibraryPage() {
       setEntries([]);
       setThreadContext('');
       setSuggestions([]);
+      setRelationships([]);
       setEditingEntryId(null);
       setShowAddForm(false);
       return;
@@ -106,16 +114,52 @@ export default function ContextLibraryPage() {
     setSuggestions([]);
     setEditingEntryId(null);
     setShowAddForm(false);
-    fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`)
+    fetch(getApiUrl(`/api/threads/${selectedThreadId}/lorebook`))
       .then(res => res.json())
       .then(data => setEntries(data))
       .catch(e => console.error('Failed to fetch lorebook', e));
 
-    fetch(`http://localhost:8000/api/threads/${selectedThreadId}/context`)
+    fetch(getApiUrl(`/api/threads/${selectedThreadId}/context`))
       .then(res => res.json())
       .then(data => setThreadContext(data.thread_context || ''))
       .catch(e => console.error('Failed to fetch thread context', e));
+
+    fetchRelationships();
   }, [selectedThreadId]);
+
+  const fetchRelationships = async () => {
+    if (!selectedThreadId) return;
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/relationships`));
+      const data = await res.json();
+      setRelationships(data);
+    } catch (e) {
+      console.error('Failed to fetch relationships', e);
+    }
+  };
+
+  const scanRelationships = async () => {
+    if (!selectedThreadId) return;
+    setIsScanningRels(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/extract-relationships`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chapter_count: extractSettings.chapterCount,
+          sample_size: extractSettings.sampleSize
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Scan failed');
+      toast.success(`Scan complete! Found ${data.new_count} new relationships.`);
+      fetchRelationships();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to scan relationships');
+    } finally {
+      setIsScanningRels(false);
+    }
+  };
 
   const saveContext = async (type: 'global' | 'thread') => {
     setIsSaving(true);
@@ -123,7 +167,7 @@ export default function ContextLibraryPage() {
     const body = { context: type === 'global' ? globalContext : threadContext };
     
     try {
-      await fetch(`http://localhost:8000${endpoint}`, {
+      await fetch(getApiUrl(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -140,8 +184,8 @@ export default function ContextLibraryPage() {
     try {
       const isEdit = editingEntryId !== null;
       const url = isEdit 
-        ? `http://localhost:8000/api/lorebook/${editingEntryId}`
-        : `http://localhost:8000/api/threads/${selectedThreadId}/lorebook`;
+        ? getApiUrl(`/api/lorebook/${editingEntryId}`)
+        : getApiUrl(`/api/threads/${selectedThreadId}/lorebook`);
       
       // Find the entry being edited to get its current lock status
       const editingEntry = entries.find(e => e.id === editingEntryId);
@@ -178,7 +222,7 @@ export default function ContextLibraryPage() {
   const quickAddEntry = async (sug: ExtractedTerm, isLocked: boolean = false) => {
     if (!sug.original_term.trim() || !selectedThreadId) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/lorebook`, {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/lorebook`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -199,7 +243,7 @@ export default function ContextLibraryPage() {
 
   const toggleLock = async (entry: LorebookEntry) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/lorebook/${entry.id}/lock`, {
+      const res = await fetch(getApiUrl(`/api/lorebook/${entry.id}/lock`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_locked: !entry.is_locked })
@@ -227,7 +271,7 @@ export default function ContextLibraryPage() {
 
   const removeEntry = async (id: number) => {
     try {
-      await fetch(`http://localhost:8000/api/lorebook/${id}`, { method: 'DELETE' });
+      await fetch(getApiUrl(`/api/lorebook/${id}`), { method: 'DELETE' });
       setEntries(prev => prev.filter(e => e.id !== id));
     } catch (e) {
       console.error('Failed to remove entry', e);
@@ -244,7 +288,7 @@ export default function ContextLibraryPage() {
     const lmModel = localStorage.getItem('lm_model') || '';
 
     try {
-      const res = await fetch(`http://localhost:8000/api/threads/${selectedThreadId}/extract-context`, {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/extract-context`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -285,7 +329,7 @@ export default function ContextLibraryPage() {
 
   const saveExtractSettings = async (chapterCount: number, sampleSize: number) => {
     try {
-      await fetch('http://localhost:8000/api/settings', {
+      await fetch(getApiUrl('/api/settings'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -323,15 +367,27 @@ export default function ContextLibraryPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-64px)] w-full overflow-hidden bg-[var(--background)]">
+    <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-64px)] min-h-[calc(100vh-64px)] w-full overflow-hidden bg-[var(--background)]">
       {/* Internal Sidebar: Thread List */}
-      <aside className="w-72 border-r border-[var(--border)] flex flex-col bg-[var(--card)]/50">
+      <aside className="w-full md:w-72 border-b md:border-b-0 md:border-r border-[var(--border)] flex flex-col bg-[var(--card)]/50">
         <div className="p-6 border-b border-[var(--border)]">
           <h2 className="text-lg font-bold text-[var(--foreground)] mb-1">Context Library</h2>
           <p className="text-xs text-[var(--muted-foreground)]">Manage lore and terminology</p>
         </div>
         
-        <div className="flex-1 overflow-auto py-4 px-3 space-y-1">
+        <div className="md:hidden p-4 border-b border-[var(--border)]">
+          <select
+            value={selectedThreadId ?? ''}
+            onChange={(e) => setSelectedThreadId(e.target.value ? parseInt(e.target.value, 10) : null)}
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm outline-none"
+          >
+            {threads.map(thread => (
+              <option key={thread.id} value={thread.id}>{thread.title}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="hidden md:block flex-1 overflow-auto py-4 px-3 space-y-1">
           {threads.map(thread => (
             <button
               key={thread.id}
@@ -357,12 +413,12 @@ export default function ContextLibraryPage() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-hidden min-h-0">
         {selectedThread ? (
           <>
             {/* Thread Header */}
-            <header className="px-8 py-6 border-b border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm relative z-[60]">
-              <div className="flex items-center justify-between mb-6">
+            <header className="px-4 md:px-8 py-5 md:py-6 border-b border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm relative z-[60]">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
                 <div>
                   <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
                     {selectedThread.title}
@@ -371,7 +427,7 @@ export default function ContextLibraryPage() {
                     Manage terminology and translation behavior.
                   </p>
                 </div>
-                <div className="flex items-center gap-3 relative">
+                <div className="flex items-center gap-3 relative self-start lg:self-auto">
                   <div className="flex items-center bg-[var(--card)] border border-[var(--border)] rounded-xl p-1 shadow-sm">
                     <Button 
                       variant="ghost" 
@@ -551,11 +607,21 @@ export default function ContextLibraryPage() {
                   <Filter size={16} className="rotate-90" /> Rules
                   {activeSubTab === 'context' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--primary)]" />}
                 </button>
+                <button
+                  onClick={() => setActiveSubTab('relationships')}
+                  className={cn(
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
+                    activeSubTab === 'relationships' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  <Globe size={16} /> Relationships ({relationships.length})
+                  {activeSubTab === 'relationships' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--primary)]" />}
+                </button>
               </div>
             </header>
 
             {/* Content Tab: Glossary or Rules */}
-            <div className="flex-1 overflow-auto p-8">
+            <div className="flex-1 overflow-auto p-4 md:p-8">
               {activeSubTab === 'glossary' && (
                 <div className="space-y-8">
                   {/* ... (Glossary content same as before) ... */}
@@ -746,7 +812,7 @@ export default function ContextLibraryPage() {
                   )}
 
                   {/* Term Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredEntries.map(entry => (
                       <Card key={entry.id} className="group hover:border-[var(--primary)]/50 transition-all duration-300 shadow-sm hover:shadow-md relative overflow-hidden">
                         <CardContent className="p-6">
@@ -822,7 +888,7 @@ export default function ContextLibraryPage() {
 
               {/* Content Tab: Rules */}
               {activeSubTab === 'context' && (
-                <div className="space-y-10 max-w-5xl mx-auto pb-12">
+                <div className="space-y-8 md:space-y-10 max-w-5xl mx-auto pb-12">
                   {/* Section 1: Translation Instructions */}
                   <section className="space-y-4">
                     <div className="flex flex-col">
@@ -912,6 +978,28 @@ export default function ContextLibraryPage() {
                       ))}
                     </div>
                   </section>
+                </div>
+              )}
+
+              {activeSubTab === 'relationships' && (
+                <div className="space-y-6 h-full flex flex-col">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-bold tracking-tight">Character Network</h3>
+                      <p className="text-xs text-[var(--muted-foreground)]">AI-detected interpersonal connections and affiliations.</p>
+                    </div>
+                    <Button
+                      onClick={scanRelationships}
+                      disabled={isScanningRels}
+                      className="rounded-xl gap-2 shadow-lg shadow-[var(--primary)]/20"
+                    >
+                      {isScanningRels ? <Loader2 size={14} className="animate-spin" /> : <ScanSearch size={14} />}
+                      Scan Characters
+                    </Button>
+                  </div>
+                  <div className="flex-1 min-h-0 bg-[var(--background)] rounded-2xl border border-[var(--border)] relative overflow-hidden">
+                    <RelationshipGraph relationships={relationships} />
+                  </div>
                 </div>
               )}
             </div>

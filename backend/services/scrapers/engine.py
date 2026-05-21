@@ -1,3 +1,4 @@
+from typing import List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
@@ -8,6 +9,7 @@ from services.scrapers.novel_updates import NovelUpdatesAdapter
 from services.scrapers.sfacg import SFACGAdapter
 
 class MetadataScraperEngine:
+
     """
     Coordinator engine that manages swappable scraper adapters.
     Handles AI-powered title cleaning before initiating the scrape process.
@@ -51,6 +53,42 @@ class MetadataScraperEngine:
             print(f"⚠️ [Engine] Failed to clean title using AI: {e}. Falling back to original.")
             
         return raw_title
+
+    async def scrape_candidates(
+        self,
+        query: str,
+        source: str = "novelupdates",
+        search_by: str = "original",
+        include_cover: bool = True,
+        db_session: Session = None
+    ) -> List[ScrapedNovelMetadata]:
+        """
+        Coordinates title cleaning and triggers the chosen scraper adapter to return candidates.
+        """
+        # 1. Resolve base_url for AI title cleaning
+        lm_url = "http://localhost:1234"
+        if db_session:
+            gs_stmt = select(GlobalSetting)
+            gs = db_session.execute(gs_stmt).scalar_one_or_none()
+            if gs:
+                lm_url = gs.lm_url
+
+        # 2. Check source bypass/override based on query content
+        is_sfacg = (source == "sfacg") or ("sfacg.com" in query)
+        active_source = "sfacg" if is_sfacg else "novelupdates"
+        
+        # 3. Clean query title if not a direct URL/ID
+        cleaned_query = query
+        if active_source == "novelupdates" and not query.startswith(("http://", "https://")):
+            cleaned_query = await self.clean_title_with_ai(query, lm_url)
+            print(f"✨ [Engine] Raw query: '{query}' -> Cleaned query: '{cleaned_query}'")
+
+        # 4. Trigger active adapter
+        adapter = self.adapters.get(active_source)
+        if not adapter:
+            return []
+            
+        return await adapter.scrape_candidates(cleaned_query, search_by=search_by, include_cover=include_cover)
 
     async def scrape(
         self,

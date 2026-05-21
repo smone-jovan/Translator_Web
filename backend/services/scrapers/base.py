@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 
 class ScrapedNovelMetadata(BaseModel):
@@ -26,3 +26,11 @@ class BaseScraperAdapter(ABC):
         Scrapes a single novel's metadata using the provided query (can be title, URL or ID).
         """
         pass
+
+    async def scrape_candidates(self, query: str, search_by: str = "original", include_cover: bool = True) -> List[ScrapedNovelMetadata]:
+        """
+        Scrapes multiple candidate novel metadata results matching the search query.
+        """
+        res = await self.scrape_metadata(query, search_by=search_by, include_cover=include_cover)
+        return [res] if res.success else []
+

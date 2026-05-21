@@ -277,8 +277,9 @@ async def translate_titles(
             indices.append(-1)
 
     for i, c in enumerate(chapters):
-        # Process if untranslated OR if repolish requested
-        if c.title_original and (not c.title_translated or repolish):
+        # Process if untranslated OR if repolish requested OR if current translation still contains Chinese (when target_lang is not Chinese)
+        is_untranslated = not c.title_translated or (target_lang.lower() != "chinese" and contains_chinese(c.title_translated))
+        if c.title_original and (is_untranslated or repolish):
             titles_to_process.append(c.title_original)
             indices.append(i)
 
@@ -313,12 +314,13 @@ async def translate_titles(
 
         sys_prompt = (
             f"You are a professional literary editor and translator specializing in {target_lang}. \n"
-            "Task: Translate and creatively polish these chapter titles.\n\n"
+            f"Task: Translate and creatively polish these chapter titles into {target_lang}.\n\n"
             "Requirements:\n"
             "1. Maintain EXACT label format (e.g., [BOOK_TITLE]: or [CHAPTER_0]:).\n"
-            "2. Titles should feel 'Polished' and 'Cool', not just literal translations.\n"
-            "3. Remove excessive Pinyin or redundant chapter numbers if they exist in the text.\n"
-            "4. Return one polished title per line."
+            f"2. All polished titles MUST be written in {target_lang}. Do NOT output Chinese characters.\n"
+            "3. Titles should feel 'Polished' and 'Cool', not just literal translations.\n"
+            "4. Remove excessive Pinyin or redundant chapter numbers if they exist in the text.\n"
+            "5. Return one polished title per line."
         )
         user_prompt = "\n".join(prompt_lines)
 

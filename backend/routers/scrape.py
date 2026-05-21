@@ -281,3 +281,99 @@ async def scrape_metadata(
         "cover_image": result.cover_image,
         "detail_url": result.detail_url
     }
+
+
+@router.post("/threads/{thread_id}/scrape_candidates")
+async def scrape_candidates_route(
+    thread_id: int,
+    req: ScrapeMetadataRequest,
+    db: Session = Depends(get_db)
+):
+    """Scrape metadata candidates from Novel Updates or SFACG."""
+    # 1. Fetch thread
+    thread_stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(thread_stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+        
+    query = req.original_title or thread.source_url or thread.title or ""
+    if not query:
+        raise HTTPException(400, "No query title or URL available to scrape metadata")
+
+    # Call swappable scraper coordinator
+    results = await scraper_engine.scrape_candidates(
+        query=query,
+        source=req.source,
+        search_by=req.search_by,
+        include_cover=req.include_cover,
+        db_session=db
+    )
+
+    if not results:
+        raise HTTPException(404, f"No candidates found on {req.source} for '{query}'")
+
+    return {
+        "success": True,
+        "candidates": [
+            {
+                "title": r.title,
+                "original_title": r.original_title,
+                "author": r.author,
+                "genres": r.genres,
+                "tags": r.tags,
+                "synopsis": r.synopsis,
+                "status": r.status,
+                "status_coo": r.status_coo,
+                "cover_image": r.cover_image,
+                "detail_url": r.detail_url
+            }
+            for r in results
+        ]
+    }
+
+
+class SaveMetadataRequest(BaseModel):
+    title: str
+    original_title: str
+    author: Optional[str] = None
+    genres: Optional[str] = None
+    tags: Optional[str] = None
+    synopsis: Optional[str] = None
+    status: Optional[str] = None
+    status_coo: Optional[str] = None
+    cover_image: Optional[str] = None
+    detail_url: Optional[str] = None
+
+
+@router.post("/threads/{thread_id}/save_metadata")
+async def save_metadata_route(
+    thread_id: int,
+    req: SaveMetadataRequest,
+    db: Session = Depends(get_db)
+):
+    """Save chosen metadata to DB."""
+    thread_stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(thread_stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    thread.title = req.title
+    thread.original_title = req.original_title
+    if req.author:
+        thread.author = req.author
+    if req.genres:
+        thread.genres = req.genres
+    if req.tags:
+        thread.tags = req.tags
+    if req.synopsis:
+        thread.synopsis = req.synopsis
+    if req.status:
+        thread.status = req.status
+    if req.status_coo:
+        thread.status_coo = req.status_coo
+    if req.cover_image is not None:
+        thread.cover_image = req.cover_image
+    
+    db.commit()
+    return {"success": True}
+

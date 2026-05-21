@@ -13,6 +13,8 @@ from sqlalchemy import select, func
 from typing import List, Optional
 
 from database import get_db, Thread, Chapter, GlobalSetting, UserBookmark
+from services.cleaner_tools import CleanerTools
+from services.hallucination_detector import HallucinationDetector
 
 router = APIRouter(prefix="/api", tags=["Threads"])
 
@@ -75,6 +77,50 @@ class ChapterContent(BaseModel):
     translation_status: Optional[str]
     scroll_progress: float = 0.0
     segments: List[TranslationSegmentOut] = []
+
+
+class HallucinationMatchOut(BaseModel):
+    token: str
+    count: int
+    start_index: int
+    end_index: int
+    snippet: str
+
+
+class ChapterHallucinationAuditOut(BaseModel):
+    chapter_id: int
+    chapter_order: int
+    chapter_title: Optional[str]
+    status: str
+    has_repetition: bool
+    match_count: int
+    repetition_matches: List[HallucinationMatchOut] = []
+
+
+class ThreadHallucinationAuditOut(BaseModel):
+    thread_id: int
+    checked_chapters: int
+    flagged_chapters: int
+    repetition_threshold: int
+    chapters: List[ChapterHallucinationAuditOut]
+
+
+class CleanerToolResponse(BaseModel):
+    thread_id: int
+    tool: str
+    chapters_scanned: int
+    chapters_deleted: int
+    chapters_updated: int
+    lines_removed: int
+
+
+class CleanupPreviewResponse(BaseModel):
+    chapters_scanned: int
+    chapters_deleted: int
+    chapters_updated: int
+    lines_removed: int
+    deleted_chapter_ids: List[int]
+    cleaned_text: str
 
 
 @router.get("/threads", response_model=List[ThreadItemOut])
@@ -211,6 +257,176 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/threads/{thread_id}/hallucination-check", response_model=ThreadHallucinationAuditOut)
+def check_thread_hallucination(thread_id: int, db: Session = Depends(get_db)):
+    """Audit translated chapters for 10x consecutive repeated-word hallucinations."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    chapters_stmt = select(Chapter).where(Chapter.thread_id == thread_id).order_by(Chapter.order)
+    chapters = db.execute(chapters_stmt).scalars().all()
+
+    threshold = 10
+    audits: list[ChapterHallucinationAuditOut] = []
+    flagged_count = 0
+
+    for chapter in chapters:
+        translated = (chapter.content_translated or "").strip()
+        if not translated:
+            audits.append(ChapterHallucinationAuditOut(
+                chapter_id=chapter.id,
+                chapter_order=chapter.order,
+                chapter_title=chapter.title_translated or chapter.title_original,
+                status="no_translation",
+                has_repetition=False,
+                match_count=0,
+                repetition_matches=[],
+            ))
+            continue
+
+        audit = HallucinationDetector.summarize_text_audit(translated, threshold=threshold)
+        if audit["has_repetition"]:
+            flagged_count += 1
+
+        audits.append(ChapterHallucinationAuditOut(
+            chapter_id=chapter.id,
+            chapter_order=chapter.order,
+            chapter_title=chapter.title_translated or chapter.title_original,
+            status="flagged" if audit["has_repetition"] else "clean",
+            has_repetition=audit["has_repetition"],
+            match_count=len(audit["repetition_matches"]),
+            repetition_matches=[HallucinationMatchOut(**match) for match in audit["repetition_matches"]],
+        ))
+
+    return ThreadHallucinationAuditOut(
+        thread_id=thread_id,
+        checked_chapters=len(audits),
+        flagged_chapters=flagged_count,
+        repetition_threshold=threshold,
+        chapters=audits,
+    )
+
+
+@router.post("/threads/{thread_id}/txt-cleaner", response_model=CleanerToolResponse)
+def run_txt_cleaner(thread_id: int, db: Session = Depends(get_db)):
+    """Rule-based cleaner for chapter text garbage such as ads, web spam, and noisy lines."""
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    summary = CleanerTools.run_txt_cleaner(thread)
+    db.commit()
+
+    return CleanerToolResponse(
+        thread_id=thread_id,
+        tool="txt_cleaner",
+        chapters_scanned=summary.chapters_scanned,
+        chapters_deleted=summary.chapters_deleted,
+        chapters_updated=summary.chapters_updated,
+        lines_removed=summary.lines_removed,
+    )
+
+
+@router.post("/threads/{thread_id}/epub-cleaner", response_model=CleanerToolResponse)
+def run_epub_cleaner(thread_id: int, db: Session = Depends(get_db)):
+    """Rule-based cleaner for EPUB-imported false chapters such as TOC, ads, and micro-junk pages."""
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    summary = CleanerTools.run_epub_cleaner(thread)
+    for chapter in list(thread.chapters):
+        if chapter.id in summary.deleted_chapter_ids:
+            db.delete(chapter)
+
+    db.commit()
+
+    return CleanerToolResponse(
+        thread_id=thread_id,
+        tool="epub_cleaner",
+        chapters_scanned=summary.chapters_scanned,
+        chapters_deleted=summary.chapters_deleted,
+        chapters_updated=summary.chapters_updated,
+        lines_removed=summary.lines_removed,
+    )
+
+
+@router.post("/threads/{thread_id}/cleanup-preview", response_model=CleanupPreviewResponse)
+def preview_cleanup(thread_id: int, db: Session = Depends(get_db)):
+    """Generate a cleanup preview without mutating the database."""
+    import io
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+        
+    # We will run both epub and txt cleaners for maximum cleanup in preview
+    epub_summary = CleanerTools.run_epub_cleaner(thread)
+    txt_summary = CleanerTools.run_txt_cleaner(thread)
+    
+    # Compile the text
+    out = io.StringIO()
+    out.write(f"TITLE: {thread.title}\\n")
+    out.write("-" * 40 + "\\n\\n")
+    
+    # We must skip deleted chapters (which are marked in epub_summary.deleted_chapter_ids)
+    deleted_ids = set(epub_summary.deleted_chapter_ids)
+    
+    # Sort remaining chapters by order
+    valid_chapters = [c for c in thread.chapters if c.id not in deleted_ids]
+    valid_chapters.sort(key=lambda c: c.order)
+    
+    for i, ch in enumerate(valid_chapters):
+        ch_title = ch.title_original or f"Chapter {i+1}"
+        ch_content = ch.content_original or ""
+        out.write(f"=== {ch_title} ===\\n\\n")
+        out.write(ch_content + "\\n\\n")
+        out.write("-" * 20 + "\\n\\n")
+        
+    cleaned_text = out.getvalue()
+    out.close()
+    
+    # CRITICAL: Rollback so we don't save to DB!
+    db.rollback()
+    
+    return CleanupPreviewResponse(
+        chapters_scanned=epub_summary.chapters_scanned,
+        chapters_deleted=epub_summary.chapters_deleted,
+        chapters_updated=txt_summary.chapters_updated + epub_summary.chapters_updated,
+        lines_removed=txt_summary.lines_removed + epub_summary.lines_removed,
+        deleted_chapter_ids=epub_summary.deleted_chapter_ids,
+        cleaned_text=cleaned_text
+    )
+
+
+@router.post("/threads/{thread_id}/cleanup-apply", response_model=CleanerToolResponse)
+def apply_cleanup(thread_id: int, db: Session = Depends(get_db)):
+    """Apply the cleanup destructively."""
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+        
+    epub_summary = CleanerTools.run_epub_cleaner(thread)
+    txt_summary = CleanerTools.run_txt_cleaner(thread)
+    
+    for chapter in list(thread.chapters):
+        if chapter.id in epub_summary.deleted_chapter_ids:
+            db.delete(chapter)
+            
+    db.commit()
+    
+    return CleanerToolResponse(
+        thread_id=thread_id,
+        tool="full_cleanup",
+        chapters_scanned=epub_summary.chapters_scanned,
+        chapters_deleted=epub_summary.chapters_deleted,
+        chapters_updated=txt_summary.chapters_updated + epub_summary.chapters_updated,
+        lines_removed=txt_summary.lines_removed + epub_summary.lines_removed,
+    )
+
+
 class ThreadCoverUpdate(BaseModel):
     cover_image: Optional[str] = None
 
@@ -330,7 +546,7 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
         raise HTTPException(404, "Chapter not found")
         
     from services.context_engine import ContextEngine
-    chapter.content_translated = ContextEngine.strip_translator_notes(body.translated_text)
+    chapter.content_translated = ContextEngine.clean_final_translation(body.translated_text, always_hide_thoughts=True)
     db.commit()
     return {"status": "saved"}
 

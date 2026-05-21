@@ -98,7 +98,7 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     selected_model = resolve_active_model(gs, req.model)
 
     provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model)
-    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang)
+    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang, req.text)
     max_tokens = get_chapter_translation_max_tokens(gs)
 
     lorebook_count = 0
@@ -119,10 +119,10 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
             ContextEngine.auto_save_glossary(db, req.thread_id, translation)
 
         always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
-        clean_translation = translation
-        if always_hide_thoughts:
-            clean_translation = ContextEngine.strip_thinking_blocks(clean_translation)
-        clean_translation = ContextEngine.strip_translator_notes(clean_translation)
+        clean_translation = ContextEngine.clean_final_translation(
+            translation,
+            always_hide_thoughts=bool(always_hide_thoughts)
+        )
 
         return TranslateResponse(
             translation=clean_translation,

@@ -221,6 +221,22 @@ Long chapter translation now uses a configurable guardrail instead of a single h
 * **Scope:** Applies to manual chapter translate, re-translate, streaming chapter translate, background prefetch, and batch-per-chapter translation. It does not apply to title polish, glossary extraction, or metadata scraping.
 * **Intent:** Reduce hallucination drift and wasted token burn on long chapter translations while preserving an uncapped escape hatch for power users with unusually large chapters.
 
+### G. Markdown Formatting Support (ADR-038)
+Basic Markdown formatting is supported natively in both the interactive Reader UI and the exported EPUBs.
+
+* **Supported Markdown:** Bold (`**text**`) and Italic (`*text*`).
+* **Implementation:** Lightweight regex-based parsing without heavy external AST dependencies.
+* **Reader UI:** `renderMarkdown` utility dynamically transforms strings into React elements (`<strong>`, `<em>`) inside the text component.
+* **EPUB Export:** `clean_html_content` injects `<strong>` and `<em>` tags directly into the EPUB HTML structure after necessary `< >` escaping.
+
+### H. Mobile-Friendly Notifications & Confirmations (ADR-039)
+The application avoids native `alert()` and `confirm()` dialogs to maintain a seamless, app-like experience (especially on mobile/PWA).
+
+* **Passive Notifications:** `sonner` is used globally for toast notifications (`toast.success()`, `toast.error()`). The `<Toaster />` is mounted at the root in `App.tsx`.
+* **Destructive Confirmations:** A custom hook `useConfirm()` (backed by Radix UI `AlertDialog`) allows imperative, awaitable confirmations.
+  * *Usage:* `const isConfirmed = await confirm({ title: 'Delete?', description: 'Are you sure?', variant: 'destructive' });`
+  * This prevents the need for local `isOpen` state management in every component that requires user confirmation.
+
 ---
 
 ## 🧪 5. Sandbox Quality Control & Verification
@@ -242,20 +258,17 @@ Here are the immediate strategic features you are tasked to build next:
 Recent completed platform work before these roadmap items:
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
+- ADR-038: lightweight Markdown formatting support for Reader and EPUB builder
+- ADR-039: mobile-friendly notification and dialog system replacing native alerts
+- ADR-040: context capacity expansion (1000 terms) and character relationship visualizer
 
-### 1. AI Character Relationship Clustering & Visualizer
-* **Goal:** Detect key narrative figures, track character interactions via chapter occurrences, and draw a dynamic interactive relationship network diagram inside the Lorebook page.
-* **Files to Extend:**
-  * `backend/services/context_engine.py` (Add a graph-node entity extractor).
-  * `src/pages/ContextLibraryPage.tsx` (Implement a SVG network graph visualizer using D3 or canvas).
-
-### 2. GGUF Model Cache & Local Model Store
+### 1. GGUF Model Cache & Local Model Store
 * **Goal:** Allow users to download and change LLM translation models directly from the reader panel (storing local paths).
 * **Files to Extend:**
   * `backend/routers/context.py` (Add model list schemas to GlobalSettingsUpdate).
   * `src/pages/SettingsPage.tsx` (Add model download dashboards).
 
-### 3. Dynamic Reader Drawer Layout Options
+### 2. Dynamic Reader Drawer Layout Options
 * **Goal:** Complete customized styles including custom user fonts uploads, adjustable paragraph gaps, line-height limits, and custom column layouts.
 * **Files to Extend:**
   * `src/pages/ReaderPage.tsx` (Incorporate variables into the settings sliding drawer).

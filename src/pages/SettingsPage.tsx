@@ -132,7 +132,7 @@ export default function SettingsPage() {
   const [prefetchMode, setPrefetchMode] = useState(() => localStorage.getItem('prefetch_mode') || 'soft');
   const [polishMode, setPolishMode] = useState(() => localStorage.getItem('polish_mode') || 'soft');
   const [polishSoftLimit, setPolishSoftLimit] = useState(() => parseInt(localStorage.getItem('polish_soft_limit') || '100'));
-  const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '50'));
+  const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '150'));
   const [chapterTokenCapEnabled, setChapterTokenCapEnabled] = useState(() => localStorage.getItem('chapter_token_cap_enabled') !== '0');
   const [chapterTokenCap, setChapterTokenCap] = useState<number>(() => parseInt(localStorage.getItem('chapter_token_cap') || '22000'));
   const [isSaving, setIsSaving] = useState(false);
@@ -800,14 +800,17 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
-                {[20, 50, 70, 100, 150].map((limit) => {
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-3 pt-2">
+                {[20, 50, 100, 200, 300, 500, 750, 1000].map((limit) => {
                   const tokenEstimates: Record<number, string> = {
-                    20: "~500 tokens",
-                    50: "~1,250 tokens",
-                    70: "~1,750 tokens",
-                    100: "~2,500 tokens",
-                    150: "~3,750 tokens"
+                    20: "~0.5k tokens",
+                    50: "~1.2k tokens",
+                    100: "~2.5k tokens",
+                    200: "~5.0k tokens",
+                    300: "~7.5k tokens",
+                    500: "~12k tokens",
+                    750: "~18k tokens",
+                    1000: "~25k tokens",
                   };
                   const active = maxContextTerms === limit;
                   return (

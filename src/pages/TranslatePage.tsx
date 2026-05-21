@@ -1,11 +1,12 @@
-/* eslint-disable react-hooks/set-state-in-effect */
+﻿/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2 } from 'lucide-react';
+import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2, Eraser } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { getApiUrl } from '@/lib/api';
+import { toast } from 'sonner';
 
 interface BookCardProps {
   id?: number;
@@ -80,6 +81,7 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string>('new');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const txtCleanerInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -135,7 +137,7 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
         onOpenThread?.(data.thread_id);
       }
     } catch {
-      alert('Operation failed.');
+      toast.error('Operation failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -155,10 +157,47 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
         const data = await res.json();
         onOpenThread?.(data.thread_id);
       } else {
-        alert('Failed to upload EPUB.');
+        toast.error('Failed to upload EPUB.');
       }
     } catch {
-      alert('Upload failed.');
+      toast.error('Upload failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleTxtCleanerUpload = async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    setIsProcessing(true);
+
+    try {
+      const res = await fetch(getApiUrl('/api/tools/txt-cleaner-file'), {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) throw new Error('Failed to clean TXT');
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const rfc5987 = disposition.match(/filename\*=utf-8''([^;]+)/i);
+      const plain = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = rfc5987
+        ? decodeURIComponent(rfc5987[1])
+        : plain
+        ? plain[1]
+        : `${file.name.replace(/\.txt$/i, "")}_cleaned.txt`;
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('TXT Cleaner failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -173,6 +212,9 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
           </h1>
           <p className="text-[var(--muted-foreground)] text-lg">
             Paste a URL, upload an EPUB, or enter text to start.
+          </p>
+          <p className="text-[var(--muted-foreground)] text-sm mt-2">
+            Need quick cleanup only? Upload `.txt` and download cleaned file.
           </p>
         </header>
 
@@ -201,6 +243,16 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
                     if (file) handleEpubUpload(file);
                   }}
                 />
+                <input
+                  ref={txtCleanerInputRef}
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (file) handleTxtCleanerUpload(file);
+                  }}
+                />
                 <Button 
                   variant="ghost" 
                   size="icon" 
@@ -209,6 +261,15 @@ export default function TranslatePage({ onOpenThread }: TranslatePageProps) {
                   title="Upload EPUB"
                 >
                   <UploadCloud size={20} />
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  onClick={() => txtCleanerInputRef.current?.click()}
+                  title="TXT Cleaner"
+                >
+                  <Eraser size={20} />
                 </Button>
                 <Button 
                   variant="ghost" 

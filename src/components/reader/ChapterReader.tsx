@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
+import { renderMarkdown } from '@/lib/utils';
 import type { ThreadDetail, ChapterContent } from './types';
 
 function cleanThoughts(text: string | null | undefined): string {
@@ -341,7 +342,9 @@ export default function ChapterReader({
               ) : (
                 <>
                   <div className="whitespace-pre-wrap">
-                    {chapterContent?.content_original || 'No original content found.'}
+                    {chapterContent?.content_original
+                      ? renderMarkdown(chapterContent.content_original)
+                      : 'No original content found.'}
                   </div>
                   <div className="py-12 flex flex-col items-center justify-center gap-6 text-center mt-8">
                     <div className="flex items-center gap-4 w-full max-w-xs px-6 opacity-60">
@@ -440,7 +443,7 @@ export default function ChapterReader({
               ) : translatedText ? (
                 <>
                   <div className="whitespace-pre-wrap">
-                    {alwaysHideThoughts ? cleanThoughts(translatedText) : translatedText}
+                    {renderMarkdown(alwaysHideThoughts ? cleanThoughts(translatedText) : translatedText)}
                   </div>
                   <div className="py-12 flex flex-col items-center justify-center gap-6 text-center mt-8">
                     <div className="flex items-center gap-4 w-full max-w-xs px-6 opacity-60">

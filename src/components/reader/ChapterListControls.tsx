@@ -88,8 +88,15 @@ export default function ChapterListControls({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [showPolishPopover]);
 
-  const somePolished = thread.chapters.some(ch => ch.title_translated);
-  const allPolished = thread.chapters.every(ch => ch.title_translated);
+  const isPolished = (title: string | null | undefined) => {
+    if (!title) return false;
+    const containsChinese = /[\u4e00-\u9fff]/.test(title);
+    if (containsChinese && targetLanguage.toLowerCase() !== 'chinese') return false;
+    return true;
+  };
+
+  const somePolished = thread.chapters.some(ch => isPolished(ch.title_translated));
+  const allPolished = thread.chapters.every(ch => isPolished(ch.title_translated));
 
   return (
     <div className="max-w-5xl mx-auto px-6 mt-8">

@@ -24,6 +24,11 @@ export default function ChapterGrid({
   goToChapter,
   handleSingleTitlePolish,
 }: ChapterGridProps) {
+  const isPolished = (title: string | null | undefined) => {
+    if (!title) return false;
+    return !/[\u4e00-\u9fff]/.test(title);
+  };
+
   const filteredChapters = thread.chapters
     .map((ch, originalIndex) => ({ ...ch, originalIndex }))
     .filter(ch => {
@@ -75,7 +80,7 @@ export default function ChapterGrid({
             <div className="flex items-start justify-between gap-2 mb-3">
               <span className={cn(
                 "text-sm font-extrabold transition-all line-clamp-2",
-                ch.title_translated ? "text-[var(--foreground)] group-hover:text-[var(--primary)]" : "text-[var(--muted-foreground)] italic opacity-85 group-hover:text-[var(--foreground)]"
+                isPolished(ch.title_translated) ? "text-[var(--foreground)] group-hover:text-[var(--primary)]" : "text-[var(--muted-foreground)] italic opacity-85 group-hover:text-[var(--foreground)]"
               )}>
                 {ch.title_translated || ch.title_original || `Chapter ${ch.order + 1}`}
               </span>
@@ -102,7 +107,7 @@ export default function ChapterGrid({
                   </div>
                 )}
                 
-                {ch.title_translated ? (
+                {isPolished(ch.title_translated) ? (
                   <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
                     Polished
@@ -113,7 +118,7 @@ export default function ChapterGrid({
                     disabled={isTranslatingTitles}
                     className="text-[9px] font-bold text-[var(--muted-foreground)] hover:text-[var(--primary)] px-2 py-0.5 rounded-md border border-[var(--border)] bg-transparent hover:bg-[var(--secondary)] transition-all flex items-center gap-1 cursor-pointer"
                   >
-                    <Sparkles className="w-2.5 h-2.5" />
+                    <Sparkles className="w-2.5 h-2.5 text-amber-500" />
                     Polish
                   </button>
                 )}

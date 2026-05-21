@@ -56,7 +56,112 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
                 
         return False
 
+    async def scrape_candidates(self, query: str, search_by: str = "original", include_cover: bool = True) -> List[ScrapedNovelMetadata]:
+        import asyncio
+        query_strip = query.strip()
+        
+        # Direct URL check
+        if "novelupdates.com/series/" in query_strip:
+            res = await self._scrape_detail_page(query_strip, query_strip, include_cover)
+            return [res] if res.success else []
+            
+        candidates = []
+        
+        # Try Yahoo Search first
+        try:
+            async with AsyncSession() as client:
+                search_query = f"{query_strip} site:novelupdates.com"
+                encoded_query = urllib.parse.quote(search_query)
+                yahoo_url = f"https://search.yahoo.com/search?p={encoded_query}"
+                
+                print(f"🔍 [NovelUpdates] Searching Yahoo Search: {yahoo_url}")
+                resp = await client.get(yahoo_url, headers=self.headers, impersonate="chrome110", timeout=12.0, verify=False)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    links = soup.find_all('a')
+                    for link in links:
+                        href = link.get('href', '')
+                        target_url = None
+                        if "novelupdates.com/series/" in href:
+                            target_url = href
+                        elif "r.search.yahoo.com" in href and "RU=" in href:
+                            try:
+                                decoded = urllib.parse.unquote(href.split("RU=", 1)[1].split("/RK=", 1)[0])
+                                if "novelupdates.com/series/" in decoded:
+                                    target_url = decoded
+                            except Exception:
+                                pass
+                        
+                        if target_url and "/series/" in target_url:
+                            clean_url = target_url.split("?")[0].split("&")[0].split("/RS=")[0]
+                            if clean_url not in candidates:
+                                candidates.append(clean_url)
+        except Exception as e:
+            print(f"⚠️ [NovelUpdates] Yahoo Search failed or timed out: {e}")
+
+        # Fallback to direct Novel Updates search
+        if not candidates:
+            try:
+                encoded_title = urllib.parse.quote(query_strip)
+                search_url = f"https://www.novelupdates.com/?s={encoded_title}"
+                print(f"🔍 [NovelUpdates] Falling back to direct Novel Updates Search: {search_url}")
+                async with AsyncSession() as client:
+                    resp = await client.get(search_url, headers=self.headers, impersonate="chrome110", timeout=12.0)
+                    if resp.status_code == 200:
+                        final_url = str(resp.url)
+                        if "/series/" in final_url:
+                            candidates.append(final_url.split("?")[0])
+                        else:
+                            soup = BeautifulSoup(resp.text, 'html.parser')
+                            search_results = soup.select(".search_title a")
+                            if not search_results:
+                                search_results = soup.select(".w-blog-entry-title a")
+                            if not search_results:
+                                search_results = [a for a in soup.find_all('a') if a.get('href') and "/series/" in a.get('href')]
+                            
+                            for sr in search_results:
+                                href = sr.get('href', '').split("?")[0]
+                                if href and href not in candidates:
+                                    candidates.append(href)
+            except Exception as e:
+                print(f"⚠️ [NovelUpdates] Direct search failed: {e}")
+
+        if not candidates:
+            return []
+
+        print(f"📋 [NovelUpdates] Found {len(candidates)} candidates. Scraping concurrently...")
+        
+        async def scrape_one(url: str) -> Optional[ScrapedNovelMetadata]:
+            try:
+                async with AsyncSession() as client:
+                    resp = await client.get(url, headers=self.headers, impersonate="chrome110", timeout=10.0)
+                    if resp.status_code == 200:
+                        return await self._parse_html(resp.text, url, query_strip, include_cover)
+            except Exception as ex:
+                print(f"   ⚠️ Error scraping candidate {url}: {ex}")
+            return None
+
+        # Fetch up to 5 candidates concurrently
+        tasks = [scrape_one(url) for url in candidates[:5]]
+        scraped_results = await asyncio.gather(*tasks)
+        
+        # Filter None/unsuccessful
+        results = [r for r in scraped_results if r and r.success]
+        
+        # Rank by match score (verified matches first)
+        def get_match_score(r: ScrapedNovelMetadata) -> int:
+            official = r.title
+            q_clean = self._clean_for_match(query_strip)
+            off_clean = self._clean_for_match(official)
+            if q_clean and off_clean and (q_clean in off_clean or off_clean in q_clean):
+                return 2
+            return 0
+            
+        results.sort(key=get_match_score, reverse=True)
+        return results
+
     async def scrape_metadata(self, query: str, search_by: str = "original", include_cover: bool = True) -> ScrapedNovelMetadata:
+
         query_strip = query.strip()
         
         # Direct URL check

@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Loader2, Save, Settings, 
-  ArrowLeft, Download, Layout, Sparkles
+  ArrowLeft, Download, Layout, Sparkles, Eraser, Wand2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import ExportModal from '@/components/ExportModal';
 import BulkTranslateModal from '@/components/BulkTranslateModal';
+import { toast } from 'sonner';
+import { useConfirm } from '@/hooks/use-confirm';
 
 // Subcomponents and types
 import SettingsOverlay from '@/components/reader/SettingsOverlay';
@@ -65,6 +67,7 @@ function readReaderSession(threadId: number): ReaderSessionState | null {
 }
 
 export default function ReaderPage({ threadId, onBack, onReadingChapterChange }: ReaderPageProps) {
+  const { confirm } = useConfirm();
   const initialReaderSession = readReaderSession(threadId);
   const [thread, setThread] = useState<ThreadDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -146,15 +149,24 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
   const lastFetchedIdRef = useRef<number | null>(null);
   const initialReaderSessionRef = useRef<ReaderSessionState | null>(initialReaderSession);
 
-  const fetchThread = useCallback(async () => {
+  const fetchThread = useCallback(async (opts?: { silent?: boolean }) => {
+    const CACHE_KEY = `readomni_thread_cache_${threadId}`;
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+    // On silent refresh (polling), skip if tab is hidden
+    if (opts?.silent && document.hidden) return;
+
     try {
       const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
       if (!res.ok) throw new Error('Network response not ok');
       const data: ThreadDetail = await res.json();
       setThread(data);
-      if (data.last_read_id) {
-        setLastReadId(data.last_read_id);
-      }
+      if (data.last_read_id) setLastReadId(data.last_read_id);
+
+      // Cache to sessionStorage for fast restore after mobile screen-off reload
+      try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+      } catch { /* quota exceeded — ignore */ }
 
       const storedSession = initialReaderSessionRef.current;
       if (storedSession?.selectedChapterId) {
@@ -244,51 +256,67 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     }
   };
 
-  // Initial Load
+  // Initial Load — parallel fetch with sessionStorage fast-restore
   useEffect(() => {
+    const CACHE_KEY = `readomni_thread_cache_${threadId}`;
+    const CACHE_TTL = 5 * 60 * 1000;
+
     const init = async () => {
-      setLoading(true);
-      await fetchThread();
-      
-      // Fetch global settings (ADR-008 Sync)
+      // Instant restore from cache while real fetch runs in background
       try {
-        const gsRes = await fetch(getApiUrl('/api/global-context'));
-        if (!gsRes.ok) throw new Error('Network response not ok');
-        const gsData = await gsRes.json();
-        setPrefetchEnabled(gsData.prefetch_enabled === 1);
-        setPrefetchCount(gsData.prefetch_count || 2);
-        setPrefetchMode(gsData.prefetch_mode || 'soft');
-        setPolishMode(gsData.polish_mode || 'soft');
-        setPolishSoftLimit(gsData.polish_soft_limit || 100);
-        setAlwaysHideThoughts(gsData.always_hide_thoughts !== 0);
-        setGlobalSettings({
-          lm_url: gsData.lm_url,
-          lm_model: gsData.lm_model,
-          target_language: gsData.target_language
-        });
-      } catch (err) {
-        console.error("Failed to fetch global settings:", err);
+        const raw = sessionStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const { data, ts } = JSON.parse(raw) as { data: ThreadDetail; ts: number };
+          if (Date.now() - ts < CACHE_TTL) {
+            setThread(data);
+            if (data.last_read_id) setLastReadId(data.last_read_id);
+            const storedSession = initialReaderSessionRef.current;
+            if (storedSession?.selectedChapterId) {
+              const restoredIdx = data.chapters.findIndex(c => c.id === storedSession.selectedChapterId);
+              if (restoredIdx !== -1) {
+                setSelectedChapterIdx(restoredIdx);
+                setShowChapterList(storedSession.showChapterList);
+              }
+              initialReaderSessionRef.current = null;
+            }
+            setLoading(false);
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Parallel: fetch thread + global settings simultaneously
+      const [, gsData] = await Promise.allSettled([
+        fetchThread(),
+        fetch(getApiUrl('/api/global-context')).then(r => r.ok ? r.json() : null)
+      ]);
+
+      if (gsData.status === 'fulfilled' && gsData.value) {
+        const gs = gsData.value;
+        setPrefetchEnabled(gs.prefetch_enabled === 1);
+        setPrefetchCount(gs.prefetch_count || 2);
+        setPrefetchMode(gs.prefetch_mode || 'soft');
+        setPolishMode(gs.polish_mode || 'soft');
+        setPolishSoftLimit(gs.polish_soft_limit || 100);
+        setAlwaysHideThoughts(gs.always_hide_thoughts !== 0);
+        setGlobalSettings({ lm_url: gs.lm_url, lm_model: gs.lm_model, target_language: gs.target_language });
       }
-      
+
       setLoading(false);
     };
     init();
-  }, [fetchThread]);
+  }, [fetchThread, threadId]);
 
-  // Polling for background updates (ADR-013)
+  // Polling for background updates (ADR-013) — paused when tab is hidden
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    // Only poll if prefetch is enabled OR if there are processing chapters
     const hasProcessing = thread?.chapters?.some(c => c.translation_status === 'processing') || false;
-    
+
     if (prefetchEnabled || hasProcessing) {
       interval = setInterval(() => {
-        fetchThread();
+        fetchThread({ silent: true }); // skip if tab hidden
       }, 5000);
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    return () => { if (interval) clearInterval(interval); };
   }, [prefetchEnabled, fetchThread, thread?.chapters]);
 
   const handleTranslateChapter = useCallback(async (
@@ -437,9 +465,15 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
   // Infinite Polish - All
   const handleTranslateTitles = async (isRepolish = false) => {
     if (!thread || isTranslatingTitles) return;
-    
-    if (isRepolish && !window.confirm('All existing polished titles will be overwritten by AI. Continue?')) {
-      return;
+
+    if (isRepolish) {
+      const isConfirmed = await confirm({
+        title: 'Repolish Titles',
+        description: 'All existing polished titles will be overwritten by AI. Continue?',
+        confirmText: 'Overwrite',
+        variant: 'destructive'
+      });
+      if (!isConfirmed) return;
     }
 
     setIsTranslatingTitles(true);
@@ -448,13 +482,14 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
       const autoStart = getAutoStartNum();
       const startNum = autoDetectStart ? autoStart : (manualStartNum || 1);
       const url = getApiUrl(`/api/threads/${threadId}/translate-titles?target_lang=${targetLang}${isRepolish ? '&repolish=true' : ''}&start_number=${startNum}&volume_mode=${volumeMode}&auto_detect_volume=${autoDetectVolume}&start_volume=${manualStartVolume}&volume_boundaries=${encodeURIComponent(volumeBoundaries)}&volume_boundary_type=${volumeBoundaryType}&chapters_per_volume=${chaptersPerVolume}`);
-      
+
       const res = await fetch(url, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       await fetchThread();
+      toast.success('Titles polished successfully.');
     } catch (err) {
       console.error('Title translation failed:', err);
-      alert('Title translation failed.');
+      toast.error('Title translation failed.');
     } finally {
       setIsTranslatingTitles(false);
     }
@@ -511,6 +546,25 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
       await fetchThread();
     } catch (err) {
       console.error('Failed to save:', err);
+    }
+  };
+
+  const runCleanerTool = async (tool: 'txt-cleaner' | 'epub-cleaner') => {
+    const label = tool === 'txt-cleaner' ? 'TXT Cleaner' : 'EPUB Cleaner';
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}/${tool}`), { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `${label} failed`);
+      await fetchThread();
+
+      const message = `${label} finished. Scanned: ${data.chapters_scanned}, Updated: ${data.chapters_updated}, Deleted: ${data.chapters_deleted}, Removed lines: ${data.lines_removed}`;
+      if (data.chapters_updated > 0 || data.chapters_deleted > 0) {
+        toast.success(message);
+      } else {
+        toast.info(message);
+      }
+    } catch (e: any) {
+      toast.error(`${label} failed: ${e.message || 'Unknown error'}`);
     }
   };
 
@@ -579,6 +633,28 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {showChapterList && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => runCleanerTool('txt-cleaner')}
+                className="rounded-xl border-[var(--border)]"
+                title="TXT Cleaner"
+              >
+                <Eraser className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => runCleanerTool('epub-cleaner')}
+                className="rounded-xl border-[var(--border)]"
+                title="EPUB Cleaner"
+              >
+                <Wand2 className="w-4 h-4" />
+              </Button>
+            </>
+          )}
           {!showChapterList && (
             <Button variant="outline" size="sm" onClick={handleSaveTranslation} className="rounded-xl border-[var(--border)] flex gap-1.5 px-2.5 sm:px-3" title="Save Translation">
               <Save className="w-4 h-4" />
@@ -760,6 +836,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
         threadId={threadId}
         threadTitle={thread.title}
         threadAuthor={thread.author || undefined}
+        currentCover={thread.cover_image || null}
         chapters={thread.chapters}
       />
 

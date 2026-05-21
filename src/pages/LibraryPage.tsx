@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe } from 'lucide-react';
+import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,8 @@ import MenuItem from '@mui/material/MenuItem';
 import IconButton from '@mui/material/IconButton';
 import EditCoverModal, { getTitleGradient } from '@/components/EditCoverModal';
 import ScrapeNUModal from '@/components/ScrapeNUModal';
-
+import { useConfirm } from '@/hooks/use-confirm';
+import { toast } from 'sonner';
 
 interface ThreadItem {
   id: number;
@@ -32,6 +33,32 @@ interface ThreadItem {
   synopsis?: string | null;
 }
 
+interface HallucinationMatch {
+  token: string;
+  count: number;
+  start_index: number;
+  end_index: number;
+  snippet: string;
+}
+
+interface ChapterHallucinationAudit {
+  chapter_id: number;
+  chapter_order: number;
+  chapter_title?: string | null;
+  status: 'clean' | 'flagged' | 'no_translation';
+  has_repetition: boolean;
+  match_count: number;
+  repetition_matches: HallucinationMatch[];
+}
+
+interface ThreadHallucinationAudit {
+  thread_id: number;
+  checked_chapters: number;
+  flagged_chapters: number;
+  repetition_threshold: number;
+  chapters: ChapterHallucinationAudit[];
+}
+
 interface LibraryPageProps {
   onOpenThread?: (threadId: number) => void;
 }
@@ -42,14 +69,20 @@ const LibraryBookCard = ({
   onDelete, 
   onBatchTranslate,
   onEditCover,
-  onScrapeNU
+  onScrapeNU,
+  onCheckHallucinate,
+  onRunTxtCleaner,
+  onRunEpubCleaner
 }: { 
   thread: ThreadItem, 
   onOpen: () => void, 
   onDelete: () => void,
   onBatchTranslate: () => void,
   onEditCover: () => void,
-  onScrapeNU: () => void
+  onScrapeNU: () => void,
+  onCheckHallucinate: () => void,
+  onRunTxtCleaner: () => void,
+  onRunEpubCleaner: () => void
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -169,6 +202,18 @@ const LibraryBookCard = ({
                 <Globe size={16} className="text-[var(--primary)]" />
                 Scrape from NU
               </MenuItem>
+              <MenuItem onClick={() => { onCheckHallucinate(); handleClose(); }}>
+                <ScanSearch size={16} className="text-[var(--primary)]" />
+                Check Hallucinate
+              </MenuItem>
+              <MenuItem onClick={() => { onRunTxtCleaner(); handleClose(); }}>
+                <Eraser size={16} className="text-[var(--primary)]" />
+                TXT Cleaner
+              </MenuItem>
+              <MenuItem onClick={() => { onRunEpubCleaner(); handleClose(); }}>
+                <Wand2 size={16} className="text-[var(--primary)]" />
+                EPUB Cleaner
+              </MenuItem>
               <MenuItem onClick={() => { onDelete(); handleClose(); }} sx={{ color: '#ef4444' }}>
                 <Trash2 size={16} />
                 Delete Book
@@ -236,6 +281,11 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
   const [selectedScrapeThread, setSelectedScrapeThread] = useState<ThreadItem | null>(null);
   const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
+  const [auditThread, setAuditThread] = useState<ThreadItem | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResult, setAuditResult] = useState<ThreadHallucinationAudit | null>(null);
+  const [auditError, setAuditError] = useState('');
+  const { confirm } = useConfirm();
 
   const handleSaveCover = async (coverValue: string | null) => {
     if (!selectedCoverThread) return;
@@ -271,12 +321,21 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   }, [fetchThreads]);
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this book? All translations will be lost.')) return;
+    const isConfirmed = await confirm({
+      title: 'Delete Book?',
+      description: 'Are you sure you want to delete this book? All translations will be lost permanently.',
+      confirmText: 'Delete',
+      variant: 'destructive'
+    });
+
+    if (!isConfirmed) return;
+
     try {
       await fetch(getApiUrl(`/api/threads/${id}`), { method: 'DELETE' });
       fetchThreads();
+      toast.success('Book deleted successfully');
     } catch {
-      console.error('Failed to delete thread');
+      toast.error('Failed to delete book');
     }
   };
 
@@ -311,6 +370,44 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       fetchThreads();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleCheckHallucinate = async (thread: ThreadItem) => {
+    setAuditThread(thread);
+    setAuditLoading(true);
+    setAuditResult(null);
+    setAuditError('');
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/hallucination-check`));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to audit thread');
+      setAuditResult(data);
+    } catch (e: any) {
+      setAuditError(e.message || 'Failed to audit thread');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const runCleanerTool = async (thread: ThreadItem, tool: 'txt-cleaner' | 'epub-cleaner') => {
+    const label = tool === 'txt-cleaner' ? 'TXT Cleaner' : 'EPUB Cleaner';
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/${tool}`), { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `${label} failed`);
+      await fetchThreads();
+
+      const message = `${label} finished. Scanned: ${data.chapters_scanned}, Updated: ${data.chapters_updated}, Deleted: ${data.chapters_deleted}, Removed lines: ${data.lines_removed}`;
+
+      if (data.chapters_updated > 0 || data.chapters_deleted > 0) {
+        toast.success(message);
+      } else {
+        toast.info(message);
+      }
+    } catch (e: any) {
+      toast.error(`${label} failed: ${e.message || 'Unknown error'}`);
     }
   };
 
@@ -461,6 +558,9 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
               setSelectedScrapeThread(thread);
               setIsScrapeModalOpen(true);
             }}
+            onCheckHallucinate={() => handleCheckHallucinate(thread)}
+            onRunTxtCleaner={() => runCleanerTool(thread, 'txt-cleaner')}
+            onRunEpubCleaner={() => runCleanerTool(thread, 'epub-cleaner')}
           />
         ))}
 
@@ -516,6 +616,116 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
           threadOriginalTitle={selectedScrapeThread.original_title || null}
           onScrapeSuccess={fetchThreads}
         />
+      )}
+
+      {auditThread && (
+        <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--card)] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-[var(--border)]">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-[var(--foreground)]">Hallucination Audit</h2>
+                <p className="text-sm text-[var(--muted-foreground)] mt-1">{auditThread.title}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setAuditThread(null);
+                  setAuditResult(null);
+                  setAuditError('');
+                }}
+                className="p-2 rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(85vh-96px)] space-y-5">
+              {auditLoading && (
+                <div className="py-16 text-center">
+                  <Loader2 size={28} className="animate-spin mx-auto text-[var(--primary)] mb-4" />
+                  <p className="text-sm text-[var(--muted-foreground)]">Scanning repeated-word hallucination across thread chapters...</p>
+                </div>
+              )}
+
+              {!auditLoading && auditError && (
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+                  {auditError}
+                </div>
+              )}
+
+              {!auditLoading && auditResult && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--secondary)]/40 p-4">
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted-foreground)] font-black">Checked</div>
+                      <div className="text-3xl font-black mt-2">{auditResult.checked_chapters}</div>
+                    </div>
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--secondary)]/40 p-4">
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted-foreground)] font-black">Flagged</div>
+                      <div className="text-3xl font-black mt-2 text-amber-400">{auditResult.flagged_chapters}</div>
+                    </div>
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--secondary)]/40 p-4">
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted-foreground)] font-black">Threshold</div>
+                      <div className="text-3xl font-black mt-2">{auditResult.repetition_threshold}x</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {auditResult.chapters.map(chapter => (
+                      <div key={chapter.chapter_id} className="rounded-2xl border border-[var(--border)] bg-[var(--background)]/70 p-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                          <div>
+                            <h3 className="font-bold text-[var(--foreground)]">
+                              Ch {chapter.chapter_order}: {chapter.chapter_title || 'Untitled'}
+                            </h3>
+                            <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                              {chapter.status === 'no_translation'
+                                ? 'No translated text to audit.'
+                                : chapter.has_repetition
+                                  ? `${chapter.match_count} repetition pattern detected.`
+                                  : 'No repeated-word hallucination found.'}
+                            </p>
+                          </div>
+                          <div className="shrink-0">
+                            {chapter.status === 'flagged' && (
+                              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-black uppercase tracking-wider">
+                                <AlertTriangle size={14} /> Flagged
+                              </span>
+                            )}
+                            {chapter.status === 'clean' && (
+                              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-xs font-black uppercase tracking-wider">
+                                <CheckCircle2 size={14} /> Clean
+                              </span>
+                            )}
+                            {chapter.status === 'no_translation' && (
+                              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-500/10 text-slate-300 border border-slate-500/20 text-xs font-black uppercase tracking-wider">
+                                <FileText size={14} /> Empty
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {chapter.repetition_matches.length > 0 && (
+                          <div className="mt-4 space-y-3">
+                            {chapter.repetition_matches.map((match, index) => (
+                              <div key={`${chapter.chapter_id}-${index}`} className="rounded-xl border border-amber-500/15 bg-amber-500/5 p-3">
+                                <div className="text-xs font-black text-amber-300 uppercase tracking-wider">
+                                  "{match.token}" repeated {match.count}x
+                                </div>
+                                <div className="mt-2 text-xs text-[var(--muted-foreground)] whitespace-pre-wrap break-words">
+                                  {match.snippet}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -4,7 +4,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import IconButton from '@mui/material/IconButton';
-import { Search, Sparkles, Check, AlertCircle, X, Globe, Info } from 'lucide-react';
+import { Search, Sparkles, Check, AlertCircle, X, Globe, Info, ArrowLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import { getTitleGradient } from './EditCoverModal';
@@ -22,12 +22,14 @@ interface ScrapedMetadata {
   success?: boolean;
   title: string;
   original_title: string;
+  author?: string | null;
   cover_image?: string | null;
   status?: string | null;
   status_coo?: string | null;
   genres?: string | null;
   tags?: string | null;
   synopsis?: string | null;
+  detail_url?: string | null;
 }
 
 export default function ScrapeNUModal({
@@ -41,7 +43,10 @@ export default function ScrapeNUModal({
   const [originalTitleInput, setOriginalTitleInput] = useState('');
   const [includeCover, setIncludeCover] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<ScrapedMetadata[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<ScrapedMetadata | null>(null);
   const [successData, setSuccessData] = useState<ScrapedMetadata | null>(null);
   const [source, setSource] = useState<'novelupdates' | 'sfacg'>('novelupdates');
   const [searchBy, setSearchBy] = useState<'original' | 'translated'>('original');
@@ -52,6 +57,9 @@ export default function ScrapeNUModal({
       setTimeout(() => {
         setErrorMsg(null);
         setSuccessData(null);
+        setCandidates([]);
+        setSelectedCandidate(null);
+        setIsSaving(false);
         setIncludeCover(true);
         
         // Auto-detect SFACG source from original title or title
@@ -70,18 +78,20 @@ export default function ScrapeNUModal({
     }
   }, [isOpen, threadTitle, threadOriginalTitle]);
 
-  const handleScrape = async () => {
+  const handleSearchCandidates = async () => {
     if (!originalTitleInput.trim()) {
-      setErrorMsg(source === 'sfacg' ? 'SFACG URL or Novel ID cannot be empty.' : 'Original title cannot be empty.');
+      setErrorMsg(source === 'sfacg' ? 'SFACG URL or Novel ID cannot be empty.' : 'Original title or URL cannot be empty.');
       return;
     }
 
     setIsLoading(true);
     setErrorMsg(null);
     setSuccessData(null);
+    setCandidates([]);
+    setSelectedCandidate(null);
 
     try {
-      const response = await fetch(getApiUrl(`/api/threads/${threadId}/scrape_metadata`), {
+      const response = await fetch(getApiUrl(`/api/threads/${threadId}/scrape_candidates`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -100,17 +110,61 @@ export default function ScrapeNUModal({
       }
 
       const data = await response.json();
-      if (data.success) {
-        setSuccessData(data);
-        onScrapeSuccess(); // Trigger refresh on parent library
+      if (data.success && data.candidates && data.candidates.length > 0) {
+        setCandidates(data.candidates);
+        setSelectedCandidate(data.candidates[0]); // Auto-select the first candidate by default
       } else {
-        throw new Error('Failed to parse metadata from Novel Updates.');
+        throw new Error(`No matching candidates found on ${source === 'sfacg' ? 'SFACG' : 'Novel Updates'}.`);
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'An error occurred while connecting to the scraper.';
       setErrorMsg(errMsg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedCandidate) {
+      setErrorMsg('Please select a candidate first.');
+      return;
+    }
+
+    setIsSaving(true);
+    setErrorMsg(null);
+
+    try {
+      const response = await fetch(getApiUrl(`/api/threads/${threadId}/save_metadata`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: selectedCandidate.title,
+          original_title: selectedCandidate.original_title,
+          author: selectedCandidate.author,
+          genres: selectedCandidate.genres,
+          tags: selectedCandidate.tags,
+          synopsis: selectedCandidate.synopsis,
+          status: selectedCandidate.status,
+          status_coo: selectedCandidate.status_coo,
+          cover_image: includeCover ? selectedCandidate.cover_image : null,
+          detail_url: selectedCandidate.detail_url
+        })
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Failed to save metadata (status ${response.status})`);
+      }
+
+      setSuccessData(selectedCandidate);
+      onScrapeSuccess(); // Trigger refresh on parent library
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'An error occurred while saving the metadata.';
+      setErrorMsg(errMsg);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -124,11 +178,13 @@ export default function ScrapeNUModal({
     return text.substring(0, 2).toUpperCase();
   };
 
+  const showSelection = candidates.length > 0 && !successData;
+
   return (
     <Dialog
       open={isOpen}
-      onClose={isLoading ? undefined : onClose}
-      maxWidth={successData ? "md" : "sm"}
+      onClose={isLoading || isSaving ? undefined : onClose}
+      maxWidth={successData || showSelection ? "md" : "sm"}
       fullWidth
       slotProps={{
         paper: {
@@ -154,7 +210,7 @@ export default function ScrapeNUModal({
             <p className="text-[10px] text-[var(--muted-foreground)]">Enrich tags, genres, synopsis & cover image via Novel Updates or SFACG</p>
           </div>
         </div>
-        {!isLoading && (
+        {!isLoading && !isSaving && (
           <IconButton 
             onClick={onClose} 
             size="small" 
@@ -167,7 +223,7 @@ export default function ScrapeNUModal({
 
       {/* Main Content Area */}
       <DialogContent className="p-6">
-        {isLoading ? (
+        {isLoading || isSaving ? (
           // BEAUTIFUL SCANNING LOADING STATE
           <div className="flex flex-col items-center justify-center py-12 gap-6 select-none">
             <div className="relative w-20 h-20">
@@ -183,10 +239,12 @@ export default function ScrapeNUModal({
             
             <div className="text-center max-w-[320px] flex flex-col gap-1.5">
               <span className="text-xs font-black tracking-wider text-[var(--foreground)] flex items-center justify-center gap-1.5">
-                AI CLEANSING & SCRAPING <Sparkles size={12} className="text-[var(--primary)] animate-bounce" />
+                {isSaving ? 'APPLYING METADATA...' : 'AI CLEANSING & SCRAPING...'} <Sparkles size={12} className="text-[var(--primary)] animate-bounce" />
               </span>
               <p className="text-[11px] text-[var(--muted-foreground)] leading-relaxed">
-                Using local AI model to isolate the core title and scanning Novel Updates pages... This may take up to 15 seconds.
+                {isSaving 
+                  ? 'Saving chosen metadata fields and downloading cover images if applicable...'
+                  : 'Using local AI model to isolate the core title and scanning sources... This may take up to 15 seconds.'}
               </p>
             </div>
             
@@ -258,6 +316,11 @@ export default function ScrapeNUModal({
                 <h4 className="text-base font-black tracking-tight text-[var(--foreground)] leading-tight mt-0.5">
                   {successData.title}
                 </h4>
+                {successData.author && (
+                  <p className="text-xs text-[var(--muted-foreground)] mt-1 font-semibold">
+                    Author: {successData.author}
+                  </p>
+                )}
                 <p className="text-[10px] text-[var(--primary)] font-bold mt-1 flex items-center gap-1">
                   <Sparkles size={10} /> AI Cleaned Original Title: {successData.original_title}
                 </p>
@@ -300,7 +363,7 @@ export default function ScrapeNUModal({
               {successData.synopsis && (
                 <div className="flex-1 flex flex-col min-h-[100px]">
                   <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--muted-foreground)] block mb-1">Synopsis</span>
-                  <div className="flex-1 p-3 rounded-xl bg-[var(--secondary)]/40 border border-[var(--border)] overflow-y-auto text-[11px] leading-relaxed text-[var(--muted-foreground)] max-h-[160px] custom-scrollbar italic">
+                  <div className="flex-1 p-3 rounded-xl bg-[var(--secondary)]/40 border border-[var(--border)] overflow-y-auto text-[11px] leading-relaxed text-[var(--muted-foreground)] max-h-[160px] custom-scrollbar italic whitespace-pre-line">
                     {successData.synopsis}
                   </div>
                 </div>
@@ -311,6 +374,184 @@ export default function ScrapeNUModal({
                 <Check size={12} className="shrink-0" />
                 <span>Successfully synced all metadata and updated the local SQLite database!</span>
               </div>
+            </div>
+          </div>
+        ) : showSelection ? (
+          // BEAUTIFUL CANDIDATE SELECTION LAYOUT
+          <div className="flex flex-col md:flex-row gap-6 h-[440px]">
+            {/* Left Column - Scrollable Candidate Cards */}
+            <div className="w-full md:w-[280px] shrink-0 flex flex-col gap-2 overflow-hidden h-full">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted-foreground)] block">
+                Matching Candidates ({candidates.length})
+              </span>
+              <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 custom-scrollbar">
+                {candidates.map((cand, idx) => {
+                  const isSelected = selectedCandidate?.detail_url === cand.detail_url;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => setSelectedCandidate(cand)}
+                      className={`p-3 rounded-xl border transition-all duration-200 cursor-pointer flex gap-3 items-center ${
+                        isSelected
+                          ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-md'
+                          : 'bg-[var(--secondary)]/40 border-[var(--border)] hover:bg-[var(--secondary)]/70'
+                      }`}
+                    >
+                      {/* Mini Cover Thumbnail */}
+                      <div className="w-10 h-14 shrink-0 rounded-md overflow-hidden bg-[var(--secondary)] border border-[var(--border)] relative">
+                        {cand.cover_image ? (
+                          <img
+                            src={cand.cover_image}
+                            alt="Cover thumbnail"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div 
+                            className="w-full h-full flex items-center justify-center text-[10px] font-bold text-white"
+                            style={{ background: getTitleGradient(cand.title) }}
+                          >
+                            {getInitials(cand.title)}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Info snippet */}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-bold truncate text-[var(--foreground)] leading-tight">
+                          {cand.title}
+                        </h4>
+                        {cand.author && (
+                          <p className="text-[10px] text-[var(--muted-foreground)] truncate mt-0.5">
+                            by {cand.author}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {idx === 0 && (
+                            <span className="text-[8px] font-black px-1 py-0.5 rounded bg-[var(--primary)]/20 text-[var(--primary)] uppercase tracking-wider">
+                              Recommended
+                            </span>
+                          )}
+                          {cand.status && (
+                            <span className="text-[8px] font-semibold px-1 py-0.5 rounded bg-[var(--secondary)] text-[var(--muted-foreground)] border border-[var(--border)]">
+                              {cand.status.includes('Yes') || cand.status.includes('Completed') ? 'Complete' : 'Ongoing'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right Column - Highlighted Candidate Metadata Details */}
+            <div className="flex-1 flex flex-col border border-[var(--border)] rounded-xl bg-[var(--secondary)]/20 overflow-hidden h-full">
+              {selectedCandidate ? (
+                <div className="flex-1 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+                  {/* Title + Cover Header */}
+                  <div className="flex gap-4 items-start">
+                    <div className="w-[70px] aspect-[3/4] rounded-lg overflow-hidden border border-[var(--border)] bg-[var(--secondary)] shrink-0 shadow-md">
+                      {selectedCandidate.cover_image ? (
+                        <img
+                          src={selectedCandidate.cover_image}
+                          alt="Cover"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div 
+                          className="w-full h-full flex items-center justify-center text-xs font-black text-white"
+                          style={{ background: getTitleGradient(selectedCandidate.title) }}
+                        >
+                          {getInitials(selectedCandidate.title)}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-black leading-tight text-[var(--foreground)] break-words">
+                        {selectedCandidate.title}
+                      </h4>
+                      {selectedCandidate.author && (
+                        <p className="text-xs text-[var(--muted-foreground)] mt-0.5 font-semibold">
+                          Author: {selectedCandidate.author}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-[var(--primary)] font-bold mt-1 flex items-center gap-1">
+                        <Sparkles size={10} /> Clean Original Title: {selectedCandidate.original_title}
+                      </p>
+                      {selectedCandidate.detail_url && (
+                        <a
+                          href={selectedCandidate.detail_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-[var(--primary)] hover:underline mt-1.5 inline-flex items-center gap-1 font-bold"
+                        >
+                          Open page link <ExternalLink size={10} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status panels */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedCandidate.status && (
+                      <div className="p-2 rounded-lg bg-[var(--secondary)] border border-[var(--border)] text-[10px]">
+                        <span className="text-[var(--muted-foreground)] font-semibold block">Status:</span>
+                        <span className="font-bold text-[var(--primary)]">{selectedCandidate.status}</span>
+                      </div>
+                    )}
+                    {selectedCandidate.status_coo && (
+                      <div className="p-2 rounded-lg bg-[var(--secondary)] border border-[var(--border)] text-[10px]">
+                        <span className="text-[var(--muted-foreground)] font-semibold block">Status in COO:</span>
+                        <span className="font-bold text-[var(--foreground)] line-clamp-1">{selectedCandidate.status_coo}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Genres */}
+                  {selectedCandidate.genres && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--muted-foreground)] block mb-1">Genres</span>
+                      <div className="flex flex-wrap gap-1">
+                        {selectedCandidate.genres.split(',').map((g: string, idx: number) => (
+                          <span key={idx} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] border border-[var(--primary)]/20">
+                            {g.trim()}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tags */}
+                  {selectedCandidate.tags && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--muted-foreground)] block mb-1">Tags</span>
+                      <div className="flex flex-wrap gap-1 max-h-[80px] overflow-y-auto pr-1 custom-scrollbar">
+                        {selectedCandidate.tags.split(',').map((t: string, idx: number) => (
+                          <span key={idx} className="text-[8px] font-semibold px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--muted-foreground)] border border-[var(--border)]">
+                            {t.trim()}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Synopsis */}
+                  {selectedCandidate.synopsis && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--muted-foreground)] block mb-1">Synopsis</span>
+                      <div className="p-3 rounded-lg bg-[var(--secondary)]/40 border border-[var(--border)] text-[10.5px] leading-relaxed text-[var(--muted-foreground)] italic whitespace-pre-line">
+                        {selectedCandidate.synopsis}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted-foreground)] p-6 select-none">
+                  <Info size={20} className="mb-1 opacity-50" />
+                  <p className="text-xs">Choose a candidate from the left list to inspect details.</p>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -397,11 +638,15 @@ export default function ScrapeNUModal({
                     <>
                       Novel Updates maps records based on the <strong>original language title</strong> (Chinese characters). 
                       To ensure correct results, please enter or confirm the Chinese title below. We will use local AI to extract clean title characters.
+                      <br/>
+                      <strong className="text-[var(--foreground)]">Pro tip:</strong> You can also paste a direct Novel Updates link (e.g. <code>https://www.novelupdates.com/series/...</code>) below to load it instantly.
                     </>
                   ) : (
                     <>
                       Searching Novel Updates using the <strong>translated/English title</strong>.
                       This is helpful if the Chinese characters are messy or unavailable.
+                      <br/>
+                      <strong className="text-[var(--foreground)]">Pro tip:</strong> You can also paste a direct Novel Updates link (e.g. <code>https://www.novelupdates.com/series/...</code>) below to load it instantly.
                     </>
                   )
                 ) : (
@@ -417,7 +662,7 @@ export default function ScrapeNUModal({
             <div className="flex flex-col gap-1.5">
               <label htmlFor="original-title-input" className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
                 {source === 'novelupdates' 
-                  ? (searchBy === 'original' ? 'Chinese Original Title or Raw Title' : 'English / Translated Title')
+                  ? 'Novel Title or Direct Novel Updates URL'
                   : 'SFACG Book URL or Novel ID'
                 }
               </label>
@@ -431,7 +676,7 @@ export default function ScrapeNUModal({
                     setErrorMsg(null);
                   }}
                   placeholder={source === 'novelupdates'
-                    ? (searchBy === 'original' ? 'e.g. 我怎么可能是圣女？' : 'e.g. How Could I Be a Saint?')
+                    ? 'e.g. 我怎么可能是圣女？ or paste https://www.novelupdates.com/series/... link'
                     : 'e.g. https://book.sfacg.com/Novel/529683/ or 529683'
                   }
                   className="w-full bg-[var(--secondary)] border border-[var(--border)] focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)] rounded-xl py-2 px-3.5 pr-10 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/60 outline-none transition-all duration-200"
@@ -477,6 +722,32 @@ export default function ScrapeNUModal({
             <Check size={14} />
             Done
           </Button>
+        ) : showSelection ? (
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setCandidates([])}
+              className="text-xs h-9 font-semibold border-[var(--border)] rounded-lg mr-auto flex items-center gap-1"
+            >
+              <ArrowLeft size={12} />
+              Back
+            </Button>
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="text-xs h-9 font-semibold border-[var(--border)] rounded-lg"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveMetadata}
+              disabled={!selectedCandidate}
+              className="text-xs h-9 font-bold bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 flex items-center gap-1.5 rounded-lg px-6"
+            >
+              <Check size={14} />
+              Apply Metadata
+            </Button>
+          </>
         ) : (
           <>
             <Button
@@ -488,12 +759,12 @@ export default function ScrapeNUModal({
               Cancel
             </Button>
             <Button
-              onClick={handleScrape}
+              onClick={handleSearchCandidates}
               disabled={isLoading || !originalTitleInput.trim()}
               className="text-xs h-9 font-bold bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 flex items-center gap-1.5 rounded-lg px-4"
             >
               <Search size={14} />
-              Clean & Scrape
+              Search Candidates
             </Button>
           </>
         )}
@@ -522,3 +793,4 @@ export default function ScrapeNUModal({
     </Dialog>
   );
 }
+

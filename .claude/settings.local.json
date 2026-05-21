@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/ROG/.claude/**)",
+      "Read(//c/Users/ROG/.claude/skills/**)",
+      "Bash(cp *)",
+      "Bash(mkdir -p 'C:\\\\Users\\\\ROG\\\\.claude\\\\skills\\\\ui-ux-pro-max')",
+      "Bash(cp 'C:\\\\Users\\\\ROG\\\\.gemini\\\\antigravity\\\\knowledge\\\\ui-ux-pro-max\\\\artifacts\\\\skill.json' 'C:\\\\Users\\\\ROG\\\\.claude\\\\skills\\\\ui-ux-pro-max\\\\')",
+      "Bash(mkdir -p \"C:\\\\Users\\\\ROG\\\\.claude\\\\skills\")",
+      "Bash(cp -r 'C:\\\\Users\\\\ROG\\\\.gemini\\\\antigravity\\\\knowledge\\\\agent-skills\\\\artifacts\\\\.claude\\\\skills*' 'C:\\\\Users\\\\ROG\\\\.claude\\\\skills\" 2>/dev/null || true *)",
+      "Bash(cp -r 'C:\\\\Users\\\\ROG\\\\.gemini\\\\antigravity\\\\knowledge\\\\humanizer-skill\\\\artifacts*' 'C:\\\\Users\\\\ROG\\\\.claude\\\\skills\" 2>/dev/null || true *)",
+      "Bash(cp -r \"C:\\\\Users\\\\ROG\\\\.gemini\\\\antigravity\\\\knowledge\\\\ui-ux-pro-max\\\\artifacts\"\\\\* \"C:\\\\Users\\\\ROG\\\\.claude\\\\skills\\\\\" 2>/dev/null || true)",
+      "Bash(py *)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  },
+  "skillOverrides": {
+    "setup-pre-commit": "off"
+  }
+}

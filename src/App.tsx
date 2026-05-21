@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Toaster } from 'sonner';
+import { ConfirmProvider } from './hooks/use-confirm';
 import Layout from './components/Layout';
 import TranslatePage from './pages/TranslatePage';
 import LibraryPage from './pages/LibraryPage';
@@ -78,7 +80,7 @@ export default function App() {
 
   if (openThreadId !== null) {
     return (
-      <>
+      <ConfirmProvider>
         <ReaderPage
           threadId={openThreadId}
           onBack={() => {
@@ -88,12 +90,13 @@ export default function App() {
           onReadingChapterChange={setIsReadingChapter}
         />
         {!isReadingChapter && <BulkStatusCenter />}
-      </>
+        <Toaster theme="system" position="bottom-center" richColors closeButton />
+      </ConfirmProvider>
     );
   }
 
   return (
-    <>
+    <ConfirmProvider>
       <Layout
         activeTab={activeTab}
         onTabChange={(tab) => {
@@ -112,7 +115,8 @@ export default function App() {
         }}
       </Layout>
       <BulkStatusCenter />
-    </>
+      <Toaster theme="system" position="bottom-center" richColors closeButton />
+    </ConfirmProvider>
   );
 }
 

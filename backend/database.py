@@ -42,7 +42,7 @@ class GlobalSetting(Base):
     prefetch_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
     polish_mode: Mapped[str] = mapped_column(String(20), default="soft") # soft or hard
     polish_soft_limit: Mapped[int] = mapped_column(default=100) # 50-150 titles
-    max_context_terms: Mapped[int] = mapped_column(default=50) # 20, 50, 70, 100, 150
+    max_context_terms: Mapped[int] = mapped_column(default=150) # 20, 50, 100, 200, 300, 500, 750, 1000
     extract_chapter_count: Mapped[int] = mapped_column(default=25)
     extract_sample_size: Mapped[int] = mapped_column(default=1000)
     always_hide_thoughts: Mapped[int] = mapped_column(default=1) # 0 = disabled, 1 = enabled
@@ -80,6 +80,7 @@ class Thread(Base):
     chapters: Mapped[List["Chapter"]] = relationship(back_populates="thread", cascade="all, delete")
     lorebook: Mapped[List["LorebookEntry"]] = relationship(back_populates="thread", cascade="all, delete")
     bookmarks: Mapped[List["UserBookmark"]] = relationship(back_populates="thread", cascade="all, delete")
+    relationships: Mapped[List["CharacterRelationship"]] = relationship(back_populates="thread", cascade="all, delete")
 
 
 class Chapter(Base):
@@ -127,6 +128,21 @@ class UserBookmark(Base):
     thread: Mapped["Thread"] = relationship(back_populates="bookmarks")
 
 
+class CharacterRelationship(Base):
+    """Menyimpan koneksi antar karakter (misal dari Lorebook) dalam satu thread."""
+    __tablename__ = "character_relationships"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    source_term: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_term: Mapped[str] = mapped_column(String(200), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(100)) # e.g., "Friend", "Enemy", "Master"
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+    thread: Mapped["Thread"] = relationship(back_populates="relationships")
+
+
 class LorebookEntry(Base):
     """Term/nama yang harus dijaga konsistensinya."""
     __tablename__ = "lorebook_entries"
@@ -163,7 +179,9 @@ def init_db():
     columns_lb = [c['name'] for c in inspector.get_columns('lorebook_entries')]
     columns_th = [c['name'] for c in inspector.get_columns('threads')]
     columns_ub = [c['name'] for c in inspector.get_columns('user_bookmarks')]
-    
+
+    # Ensure character_relationships table exists (it gets created by create_all, but just to be safe with migrations)
+
     with engine.connect() as conn:
         if 'author' not in columns_th:
             print("[MIGRASI] Menambahkan kolom 'author' ke dalam tabel threads...")

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   X, Download, Image as ImageIcon, Book, 
-  Check, Loader2, FileText
+  Check, Loader2, FileText, Eraser
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -22,11 +22,12 @@ interface ExportModalProps {
   threadId: number;
   threadTitle: string;
   threadAuthor?: string;
+  currentCover?: string | null;
   chapters: Chapter[];
 }
 
-export default function ExportModal({ isOpen, onClose, threadId, threadTitle, threadAuthor, chapters }: ExportModalProps) {
-  const [format, setFormat] = useState<'epub' | 'txt'>('epub');
+export default function ExportModal({ isOpen, onClose, threadId, threadTitle, threadAuthor, currentCover, chapters }: ExportModalProps) {
+  const [format, setFormat] = useState<'epub' | 'txt' | 'cleanup'>('epub');
   const [title, setTitle] = useState(threadTitle);
   const [author, setAuthor] = useState(threadAuthor || 'SMONE');
   const [cover, setCover] = useState<string | null>(null);
@@ -36,6 +37,16 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
     chapters.filter(c => c.has_translation).map(c => c.id)
   );
   const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setTitle(threadTitle);
+    setAuthor(threadAuthor || 'SMONE');
+    setCover(currentCover || null);
+    setCoverSource(currentCover && currentCover.startsWith('http') ? 'url' : 'file');
+    setCoverUrl(currentCover && currentCover.startsWith('http') ? currentCover : '');
+    setSelectedIds(chapters.filter(c => c.has_translation).map(c => c.id));
+  }, [isOpen, threadTitle, threadAuthor, currentCover, chapters]);
 
   if (!isOpen) return null;
 
@@ -64,6 +75,37 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
 
     setIsExporting(true);
     try {
+      if (format === 'cleanup') {
+        const res = await fetch(getApiUrl(`/api/threads/${threadId}/cleanup-preview`), {
+          method: 'POST',
+        });
+        if (!res.ok) throw new Error('Cleanup preview failed');
+        const data = await res.json();
+        
+        const blob = new Blob([data.cleaned_text], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^\\w\\s]/gi, '_')}_cleaned.txt`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+
+        const apply = window.confirm(`Cleanup preview generated and downloaded!\\n\\nStats:\\n- Chapters Scanned: ${data.chapters_scanned}\\n- Chapters Deleted: ${data.chapters_deleted}\\n- Chapters Updated: ${data.chapters_updated}\\n- Lines Removed: ${data.lines_removed}\\n\\nDo you want to APPLY these changes destructively to the database?`);
+        
+        if (apply) {
+          const applyRes = await fetch(getApiUrl(`/api/threads/${threadId}/cleanup-apply`), {
+            method: 'POST',
+          });
+          if (!applyRes.ok) throw new Error('Apply failed');
+          alert('Cleanup successfully applied to thread!');
+          window.location.reload();
+        }
+        
+        onClose();
+        return;
+      }
+
       const res = await fetch(getApiUrl(`/api/threads/${threadId}/export`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,18 +132,18 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
       onClose();
     } catch (err) {
       console.error(err);
-      alert('Failed to export. Please try again.');
+      alert('Failed to export or cleanup. Please try again.');
     } finally {
       setIsExporting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <Card className="w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border-[var(--border)] bg-[var(--card)] flex flex-col md:flex-row">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+      <Card className="w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-4xl overflow-hidden shadow-2xl border-0 sm:border-[var(--border)] bg-[var(--card)] flex flex-col md:flex-row rounded-none sm:rounded-xl">
         
         {/* Left: Metadata & Settings */}
-        <div className="w-full md:w-1/2 p-6 border-r border-[var(--border)] space-y-6 overflow-y-auto">
+        <div className="w-full md:w-1/2 p-4 sm:p-6 md:border-r border-[var(--border)] space-y-5 overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-black flex items-center gap-2">
               <Download className="w-5 h-5 text-[var(--primary)]" />
@@ -115,7 +157,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Book Format</label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button 
                   onClick={() => setFormat('epub')}
                   className={cn(
@@ -135,6 +177,16 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
                 >
                   <FileText className="w-4 h-4" />
                   <span className="text-xs font-bold">TEXT</span>
+                </button>
+                <button 
+                  onClick={() => setFormat('cleanup')}
+                  className={cn(
+                    "flex items-center justify-center gap-2 p-3 rounded-xl border transition-all",
+                    format === 'cleanup' ? "bg-[var(--primary)]/10 border-[var(--primary)] text-[var(--primary)] shadow-sm" : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
+                  )}
+                >
+                  <Eraser className="w-4 h-4" />
+                  <span className="text-xs font-bold">CLEAN</span>
                 </button>
               </div>
             </div>
@@ -193,7 +245,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
               </div>
 
               {coverSource === 'file' ? (
-                <div className="relative group aspect-[3/4] max-w-[150px] mx-auto rounded-2xl border-2 border-dashed border-[var(--border)] overflow-hidden hover:border-[var(--primary)]/50 transition-all">
+                <div className="relative group aspect-[3/4] max-w-[140px] sm:max-w-[150px] mx-auto rounded-2xl border-2 border-dashed border-[var(--border)] overflow-hidden hover:border-[var(--primary)]/50 transition-all">
                   {cover ? (
                     <>
                       <img src={cover} alt="Cover Preview" className="w-full h-full object-cover" />
@@ -240,7 +292,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
         </div>
 
         {/* Right: Chapter Selection */}
-        <div className="w-full md:w-1/2 p-6 flex flex-col overflow-hidden">
+        <div className="w-full md:w-1/2 p-4 sm:p-6 flex flex-col overflow-hidden min-h-0">
           <div className="flex items-center justify-between mb-4">
             <div className="space-y-0.5">
               <label className="text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-widest">Select Chapters</label>
@@ -266,7 +318,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1.5 pr-2 custom-scrollbar">
+          <div className="flex-1 min-h-[240px] md:min-h-0 overflow-y-auto space-y-1.5 pr-1 sm:pr-2 custom-scrollbar">
             {chapters.map((ch) => (
               <div 
                 key={ch.id}
@@ -297,7 +349,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
             ))}
           </div>
 
-          <div className="pt-6 mt-auto flex items-center justify-between border-t border-[var(--border)] bg-[var(--card)]">
+          <div className="pt-4 sm:pt-6 mt-auto flex items-center justify-between border-t border-[var(--border)] bg-[var(--card)] sticky bottom-0">
             <Button variant="ghost" onClick={onClose} className="hidden md:flex rounded-xl">Cancel</Button>
             <Button 
               onClick={handleExport} 
@@ -312,7 +364,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  Export {format.toUpperCase()}
+                  {format === 'cleanup' ? 'Preview Cleanup' : `Export ${format.toUpperCase()}`}
                 </>
               )}
             </Button>
