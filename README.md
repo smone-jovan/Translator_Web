@@ -1,7 +1,7 @@
 # 🌌 ReadOmni AI (Self-Hosted Novel Reader & Translator)
 > **A premium, privacy-first web novel reader and batch translator powered by local AI.**
 
-[![Project Status](https://img.shields.io/badge/status-Phase%2015%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
+[![Project Status](https://img.shields.io/badge/status-Phase%2016%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
 [![Tech Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20FastAPI%20%7C%20Tailwind%20v4-blue?style=for-the-badge)](#-tech-stack)
 [![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio%20%7C%20Gemini%20%7C%20OpenAI-orange?style=for-the-badge&logo=openai)](https://lmstudio.ai/)
 [![Database](https://img.shields.io/badge/Database-SQLite%20(WAL%20Mode)-lightgrey?style=for-the-badge&logo=sqlite)](backend/models.py)
@@ -35,6 +35,7 @@
 *   **Terminology Auto-Discovery:** Parses "Translator Notes" and LLM suggestions at the end of chapters to auto-save new glossary terms directly.
 *   **Metadata & Synopsis Auto-Translating (ADR-020):** Auto-cleans original descriptions, automatically isolates raw titles from nested bracket/siku tags, and translates summaries from Chinese to target language.
 *   **Volume-Aware Zero-Padding Formatting (ADR-024):** Zero-padded serial title formatting supporting standard, volume-level, and custom dynamic increments (e.g. `V1-001. Title`).
+*   **Target Language Enforcement in Extraction (ADR-041):** All AI extraction passes (thread context, glossary, relationships) now explicitly inject the user's `target_language` setting into system prompts, ensuring Lorebook notes and summaries are always written in the configured output language instead of defaulting to the source language.
 
 ### 📚 4. Library & Premium Book Export
 *   **Progressive Bookmarking & Frame-Accurate Scroll Sync (ADR-032):** Automatically saves the user's exact scroll position percentage (on both mobile and desktop) in the background with a 2s client-side debounce, restoring their reading position instantly upon chapter load.
@@ -42,6 +43,10 @@
 *   **Premium Reader UX Refinements (ADR-033):** Mobile-first floating toolbars, morphing radial SVG scroll-to-top buttons, elegant "End of Chapter" premium dividers, and in-chapter bottom controls create a reading experience rivaling Apple Books.
 *   **Batch Reliability & Global Progress UX (ADR-034):** Background translation progress now remains visible across the whole app, provider-aware model routing prevents stale model mismatches, and empty/blocked results are surfaced honestly instead of silently succeeding.
 *   **Configurable Chapter Token Safety Cap (ADR-035):** Global per-chapter token guardrail with `7K`, `15K`, `22K`, and `30K` presets plus uncapped mode to reduce hallucination drift and wasted token burn on long chapter translations.
+*   **Hallucination Audit & Garbled Output Cleanup (ADR-036):** Automated detection and cleanup of common LLM hallucination patterns and garbled output artifacts in translated chapter content.
+*   **Thread-Level TXT Cleaning & Book Builder Cleanup Preview (ADR-037):** Per-thread TXT export cleaning pipeline with a live preview modal so users can inspect cleaned content before committing to file export.
+*   **Markdown Formatting Support (ADR-038):** Bold (`**text**`) and italic (`*text*`) Markdown is parsed and rendered natively in the Reader UI and exported correctly as `<strong>`/`<em>` tags in EPUB output.
+*   **Mobile-Friendly Notifications & Confirmations (ADR-039):** Replaced all native `alert()`/`confirm()` dialogs with `sonner` toasts and a custom `useConfirm()` hook backed by Radix UI `AlertDialog` for a seamless PWA experience.
 *   **EPUB & TXT Compiler:** Compile translated chapters into beautifully formatted files with:
     *   *Custom Cover Upload:* Embed cover images directly from your system.
     *   *Curation & Metadata:* Custom author and book title details.
@@ -49,7 +54,11 @@
 *   **SFACG Scraper & Advanced Search (ADR-022):** Direct integration with stealth parsing strategies to fetch chapters, metadata, and tables of contents from SFACG.
 *   **Scraped Author Metadata Integration (ADR-025):** Fully aggregates extracted authorship records into centralized book details.
 
-### ⚙️ 5. Server-Side Configuration Sync & Volume Boundaries
+### 🔎 5. Context Library & Relationship Visualization
+*   **Context Capacity Expansion (ADR-040):** Increased Lorebook term limit up to 1000 terms with granular limit presets (20, 50, 100, 200, 300, 500, 750, 1000). Auto-extracted terms now record their source term in notes for full transparency.
+*   **Character Relationship Graph (ADR-040):** Interactive physics-based network graph powered by `react-force-graph-2d` that visualizes character connections (Master/Disciple, Factions, Enemies, etc.) extracted automatically by the AI.
+
+### ⚙️ 6. Server-Side Configuration Sync & Volume Boundaries
 *   **Unified Multi-Device Sync:** Transitioned from volatile browser `localStorage` to SQLite-backed `global_settings` table, synchronizing settings instantly between desktop and mobile devices on the same network.
 *   **Swappable Cloud AI Providers & Adapters (ADR-029):** Seamlessly transition between local offline models (LM Studio) and cloud APIs (OpenAI & Google Gemini) with dynamic card-based selector configuration, secure API key synchronization, and direct streaming outputs. Supports premium free-tier options like `gemini-3.1-flash-lite` and `gemma-4-31b`.
 *   **Intelligent Model Mapping & Safety Guards (ADR-030):** Automatically normalizes frontend model names (e.g. `gemma-4-31b`) to strict API endpoints (e.g. `gemma-4-31b-it`). Implements robust parsing for Gemini content/safety filters to explicitly notify users if a web novel chapter violates LLM safety guidelines instead of crashing.
@@ -58,7 +67,7 @@
 *   **Chapter Token Safety Controls:** Global toggle plus presets (`7K`, `15K`, `22K`, `30K`) let users trade safety vs. uninterrupted long-form output. Default is `22K`; turning it off removes the cap entirely.
 *   **Stateful Volume Transition & Prologue Boundary Guards (ADR-027):** Uses isolated state tags (`volume_just_incremented`) and native prologue parsers to block sequential numeric resets from double-incrementing volume sequences.
 
-### 🛡️ 6. Stability & GPU Guardrails
+### 🛡️ 7. Stability & GPU Guardrails
 *   **Throttling Mitigation:** Title translations chunked into blocks of 50 with a `1.0s` delay to prevent local LLM server timeout or freeze.
 *   **300s Heavy-Duty Timeout:** Elevated HTTP connections to support complex deep-context translations without abrupt closures.
 *   **AbortController Integration:** Automatically cancels past streaming threads when rapidly skipping through chapters to avoid VRAM clashing.
@@ -153,7 +162,7 @@ For detailed insights into the technical architecture, read our official guides:
 *   [docs/SDLC.md](docs/SDLC.md) — The 10-phase software development lifecycle documentation.
 *   [docs/implementation_plan.md](docs/implementation_plan.md) — Exact task definitions and acceptance criteria from Task 1 to 24.
 *   [docs/Handoff.md](docs/Handoff.md) — The main developer handoff guide and future roadmap suggestions.
-*   [docs/decisions/](docs/decisions/) — Directory containing all 35 Architectural Decision Records (ADRs), including the latest global progress and chapter token safety decisions.
+*   [docs/decisions/](docs/decisions/) — Directory containing all **41 Architectural Decision Records (ADRs)**, from initial background persistence through the latest target language enforcement fix.
 
 ---
 
@@ -161,6 +170,7 @@ For detailed insights into the technical architecture, read our official guides:
 
 *   **Broken/Inverted Themes (White/Sepia looking dark):** If the light themes (White, Sepia) appear as dark grey or muddy brown, you have a browser extension or setting actively forcing dark mode. **You must disable "Dark Reader" or Opera GX's "Force Dark Pages" feature for this site.** These extensions forcefully override custom design tokens at the renderer level.
 *   **Constant Page Reloading (Vite):** If the browser keeps refreshing while a novel is being fetched or translated, ensure `vite.config.ts` has the `server.watch.ignored` paths set to ignore the `backend/` directory and `.db` files.
+*   **Lorebook Notes in Wrong Language:** If extracted terms have notes in Chinese after extraction, ensure your `target_language` setting is configured correctly in Settings before running AI extraction. Re-run the extraction pass to refresh notes in the correct language (ADR-041).
 
 ---
 
