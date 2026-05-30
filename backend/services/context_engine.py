@@ -210,33 +210,47 @@ If no new terms, skip.
     def strip_translator_notes(text: str) -> str:
         """
         Bersihkan bagian 'Translator Notes' atau 'Notes' dari teks terjemahan cerita.
-        Ini memastikan catatan hanya diproses oleh AI dan tidak ditampilkan ke pembaca.
+        HANYA strip jika section ini ada di akhir teks (bagian terakhir), bukan di tengah.
+        Ini mencegah hapus konten cerita yang kebetulan mengandung kata 'Notes'.
         """
         if not text:
             return ""
         import re
-        # Pola pencarian header catatan penerjemah yang fleksibel terhadap format Markdown (seperti **, *, ###, dsb.)
+        # Pola pencarian header catatan penerjemah
         header_pattern = re.compile(
             r"(\n\s*[-—*_]*\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*###\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*Notes?[:\s])", 
             re.IGNORECASE
         )
-        match = header_pattern.search(text)
-        if match:
-            cleaned = text[:match.start()].strip()
-            # Bersihkan sisa-sisa formatting markdown di ujung teks (seperti **, *, ---, ___, #, dsb.)
-            while True:
-                prev_len = len(cleaned)
-                cleaned = cleaned.rstrip(" \t\n\r*•-—#_")
-                if len(cleaned) == prev_len:
-                    break
-            return cleaned
-        return text
+        
+        # Cari semua match, ambil yang TERAKHIR (kemungkinan besar di akhir chapter)
+        matches = list(header_pattern.finditer(text))
+        if not matches:
+            return text
+        
+        last_match = matches[-1]
+        
+        # HANYA strip jika match ada di 30% terakhir teks (artinya memang di akhir chapter)
+        match_position = last_match.start() / max(len(text), 1)
+        if match_position < 0.7:
+            # Match di tengah teks — kemungkinan bagian cerita, jangan strip
+            return text
+        
+        cleaned = text[:last_match.start()].strip()
+        # Bersihkan sisa-sisa formatting markdown di ujung teks
+        while True:
+            prev_len = len(cleaned)
+            cleaned = cleaned.rstrip(" \t\n\r*•-—#_")
+            if len(cleaned) == prev_len:
+                break
+        return cleaned
 
     @staticmethod
     def strip_thinking_blocks(text: str) -> str:
         """
         Strip <think>...</think> and <thought>...</thought> blocks from the text.
-        If a block is currently unclosed, strip from the opening tag to the end.
+        For complete blocks: remove the entire block.
+        For unclosed blocks: strip from opening tag to the next double-newline (paragraph break),
+        NOT to the end of text — the translation content after the thinking block must be preserved.
         """
         if not text:
             return ""
@@ -245,14 +259,36 @@ If no new terms, skip.
         text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"<thought\b[^>]*>.*?</thought>", "", text, flags=re.DOTALL | re.IGNORECASE)
         
-        # Handle unclosed tags: strip everything after an unclosed tag
+        # Handle unclosed tags: strip only the thinking section (up to paragraph break), not entire text
         think_idx = text.lower().find("<think")
         if think_idx != -1 and "</think" not in text.lower()[think_idx:]:
-            text = text[:think_idx]
+            # Find the next double-newline after the unclosed tag (end of thinking section)
+            after_tag = text[think_idx:]
+            para_break = after_tag.find("\n\n")
+            if para_break != -1:
+                # Strip from tag to end of thinking section, keep everything after
+                text = text[:think_idx] + after_tag[para_break + 2:]
+            else:
+                # No paragraph break found — strip just the tag line
+                tag_end = after_tag.find("\n")
+                if tag_end != -1:
+                    text = text[:think_idx] + after_tag[tag_end + 1:]
+                else:
+                    # Tag is at the very end — just remove it
+                    text = text[:think_idx]
             
         thought_idx = text.lower().find("<thought")
         if thought_idx != -1 and "</thought" not in text.lower()[thought_idx:]:
-            text = text[:thought_idx]
+            after_tag = text[thought_idx:]
+            para_break = after_tag.find("\n\n")
+            if para_break != -1:
+                text = text[:thought_idx] + after_tag[para_break + 2:]
+            else:
+                tag_end = after_tag.find("\n")
+                if tag_end != -1:
+                    text = text[:thought_idx] + after_tag[tag_end + 1:]
+                else:
+                    text = text[:thought_idx]
             
         return text
 

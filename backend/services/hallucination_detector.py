@@ -3,7 +3,8 @@ from dataclasses import dataclass
 
 
 WORD_RE = re.compile(r"[A-Za-z0-9\u00C0-\u024F\u4E00-\u9FFF]+")
-SUSPICIOUS_CHAR_RE = re.compile(r"[①-⑳⑴-⑼⓪⒈-⒛#%$@&]")
+# Only truly suspicious characters — NOT #, %, $ (common in legitimate text)
+SUSPICIOUS_CHAR_RE = re.compile(r"[①-⑳⑴-⑼⓪⒈-⒛@&]")
 LATIN_RE = re.compile(r"[A-Za-z]")
 CJK_RE = re.compile(r"[\u4E00-\u9FFF]")
 
@@ -66,10 +67,23 @@ class HallucinationDetector:
                 cleaned_lines.append(line)
                 continue
 
+            # CONSERVATIVE: only strip lines that are CLEARLY garbage
+            # Must be short, mostly symbols, and have no real words
+            if len(stripped) > 80:
+                cleaned_lines.append(line)
+                continue
+
+            # If line has any Latin or CJK words, it's probably legitimate
+            has_real_words = bool(LATIN_RE.search(stripped)) or bool(CJK_RE.search(stripped))
+            if has_real_words:
+                cleaned_lines.append(line)
+                continue
+
             tokens = stripped.split()
             suspicious_tokens = sum(1 for token in tokens if HallucinationDetector._is_suspicious_token(token))
             suspicious_ratio = suspicious_tokens / max(len(tokens), 1)
-            if suspicious_tokens >= 3 and suspicious_ratio >= 0.35 and len(stripped) <= 160:
+            # Require 5+ suspicious tokens AND 50%+ ratio (very conservative)
+            if suspicious_tokens >= 5 and suspicious_ratio >= 0.50:
                 continue
 
             cleaned_lines.append(line)

@@ -33,8 +33,7 @@ class AIProviderFactory:
             gs = db_session.execute(gs_stmt).scalar_one_or_none()
             
             provider = gs.llm_provider if gs else "lm_studio"
-            from services.ai.secrets import load_secrets
-            secrets = load_secrets()
+            from services.ai.secrets import get_active_api_key
             
             # If the user explicitly passed a custom base_url, respect it
             if base_url:
@@ -74,7 +73,7 @@ class AIProviderFactory:
                     resolved_model = "gemini-3.1-pro-preview"
                 
                 print(f"[DEBUG] get_provider -> provider is gemini. Input model: '{model}', resolved_model: '{resolved_model}', database gemini_model: '{gs.gemini_model if gs else 'N/A'}'")
-                resolved_key = api_key or secrets.get("gemini_api_key") or ""
+                resolved_key = api_key or get_active_api_key("gemini", gs)
                 # Prevent sending Gemini cloud requests to local URL
                 resolved_url = "https://generativelanguage.googleapis.com/v1beta/openai"
                 if base_url and ("googleapis.com" in base_url or "gemini" in base_url.lower()):
@@ -91,7 +90,7 @@ class AIProviderFactory:
                 if not any(x in resolved_model.lower() for x in ["gpt", "o1", "o3", "openai"]):
                     resolved_model = "gpt-4o"
                 
-                resolved_key = api_key or secrets.get("openai_api_key") or "sk-dummy"
+                resolved_key = api_key or get_active_api_key("openai", gs) or "sk-dummy"
                 resolved_url = gs.openai_url if (gs and gs.openai_url) else "https://api.openai.com/v1"
                 if base_url and ("api.openai.com" in base_url or "openai" in base_url.lower()):
                     resolved_url = base_url

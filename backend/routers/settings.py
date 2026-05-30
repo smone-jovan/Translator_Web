@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+import json
 from database import get_db, GlobalSetting
 from services.ai.secrets import load_secrets, save_secrets
 
@@ -34,6 +35,11 @@ class GlobalSettingsUpdate(BaseModel):
     gemini_model: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    # Multiple API keys
+    openai_api_keys: list[str] | None = None
+    openai_active_key_index: int | None = None
+    gemini_api_keys: list[str] | None = None
+    gemini_active_key_index: int | None = None
 
 @router.get("/global-context")
 def get_global_context(db: Session = Depends(get_db)):
@@ -67,7 +73,12 @@ def get_global_context(db: Session = Depends(get_db)):
         "openai_model": gs.openai_model if gs else "gpt-4o",
         "gemini_model": gs.gemini_model if gs else "gemini-2.5-flash",
         "openai_api_key": secrets.get("openai_api_key", ""),
-        "gemini_api_key": secrets.get("gemini_api_key", "")
+        "gemini_api_key": secrets.get("gemini_api_key", ""),
+        # Multiple API keys
+        "openai_api_keys": json.loads(gs.openai_api_keys) if gs and gs.openai_api_keys else [],
+        "openai_active_key_index": gs.openai_active_key_index if gs else 0,
+        "gemini_api_keys": json.loads(gs.gemini_api_keys) if gs and gs.gemini_api_keys else [],
+        "gemini_active_key_index": gs.gemini_active_key_index if gs else 0,
     }
 
 @router.post("/global-context")
@@ -114,6 +125,16 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     # Save secret keys safely to .env
     if req.openai_api_key is not None or req.gemini_api_key is not None:
         save_secrets(openai_api_key=req.openai_api_key, gemini_api_key=req.gemini_api_key)
+    
+    # Save multiple API keys
+    if req.openai_api_keys is not None:
+        gs.openai_api_keys = json.dumps(req.openai_api_keys)
+    if req.openai_active_key_index is not None:
+        gs.openai_active_key_index = req.openai_active_key_index
+    if req.gemini_api_keys is not None:
+        gs.gemini_api_keys = json.dumps(req.gemini_api_keys)
+    if req.gemini_active_key_index is not None:
+        gs.gemini_active_key_index = req.gemini_active_key_index
     
     db.commit()
     return {"status": "ok"}

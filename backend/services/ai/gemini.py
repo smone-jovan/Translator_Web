@@ -20,6 +20,9 @@ class GeminiAdapter(BaseAIProviderAdapter):
             "temperature": temperature,
             "stream": False
         }
+        # Disable thinking mode for models that support it (saves tokens)
+        if any(m in self.model.lower() for m in ["gemini-2.5", "gemini-3-flash", "gemini-3-pro"]):
+            payload["thinking"] = {"type": "disabled"}
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         headers = {
@@ -55,6 +58,9 @@ class GeminiAdapter(BaseAIProviderAdapter):
             "temperature": temperature,
             "stream": True
         }
+        # Disable thinking mode for models that support it (saves tokens)
+        if any(m in self.model.lower() for m in ["gemini-2.5", "gemini-3-flash", "gemini-3-pro"]):
+            payload["thinking"] = {"type": "disabled"}
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         headers = {

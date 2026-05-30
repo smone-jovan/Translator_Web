@@ -57,6 +57,11 @@ class GlobalSetting(Base):
     gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
     openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
+    # Multiple API keys (JSON arrays) for key rotation on rate limits
+    openai_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
+    openai_active_key_index: Mapped[int] = mapped_column(default=0)
+    gemini_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
+    gemini_active_key_index: Mapped[int] = mapped_column(default=0)
 
 
 class Thread(Base):
@@ -293,6 +298,26 @@ def init_db():
         if 'gemini_api_key' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'gemini_api_key' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN gemini_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+
+        if 'openai_api_keys' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openai_api_keys' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openai_api_keys TEXT DEFAULT '[]'"))
+            conn.commit()
+
+        if 'openai_active_key_index' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openai_active_key_index' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openai_active_key_index INTEGER DEFAULT 0"))
+            conn.commit()
+
+        if 'gemini_api_keys' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'gemini_api_keys' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN gemini_api_keys TEXT DEFAULT '[]'"))
+            conn.commit()
+
+        if 'gemini_active_key_index' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'gemini_active_key_index' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN gemini_active_key_index INTEGER DEFAULT 0"))
             conn.commit()
             
         if 'always_hide_thoughts' not in columns_gs:
