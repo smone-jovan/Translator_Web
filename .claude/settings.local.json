@@ -14,7 +14,8 @@
       "Bash(npm run *)",
       "Bash(npm install *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   },
   "skillOverrides": {

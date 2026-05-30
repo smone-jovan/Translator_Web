@@ -46,7 +46,7 @@ interface BulkTranslateModalProps {
   threadId: number;
   threadTitle: string;
   chapters: Chapter[];
-  onStartBatch: (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => void;
+  onStartBatch: (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast') => void;
 }
 
 export default function BulkTranslateModal({ 
@@ -63,6 +63,9 @@ export default function BulkTranslateModal({
   const [hasInitialized, setHasInitialized] = useState(false);
   const [targetLang, setTargetLang] = useState<'Indonesian' | 'English'>(
     () => (localStorage.getItem('target_language') as 'Indonesian' | 'English') || 'Indonesian'
+  );
+  const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(
+    () => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality'
   );
 
   // Update selected IDs in Easy Mode
@@ -134,7 +137,7 @@ export default function BulkTranslateModal({
     }
     setIsStarting(true);
     try {
-      await onStartBatch(selectedIds, aiExtract, loadMode, targetLang, overwrite);
+      await onStartBatch(selectedIds, aiExtract, loadMode, targetLang, overwrite, translationMode);
       onClose();
     } finally {
       setIsStarting(false);
@@ -450,6 +453,53 @@ export default function BulkTranslateModal({
           </Box>
         </Box>
 
+        {/* Current Model Info */}
+        <Box sx={{ mb: 3, p: 2, background: 'rgba(0,0,0,0.2)', borderRadius: '16px', border: '1px solid var(--border)' }}>
+          <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontWeight: 600, display: 'block', mb: 1 }}>
+            Active Model
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{ 
+              width: 32, height: 32, borderRadius: '10px', 
+              background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '14px', fontWeight: 900, color: 'var(--primary-foreground)'
+            }}>
+              {(() => {
+                const provider = localStorage.getItem('llm_provider') || 'lm_studio';
+                if (provider === 'gemini') return 'G';
+                if (provider === 'openai') return 'O';
+                return 'L';
+              })()}
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {localStorage.getItem('gemini_model') || localStorage.getItem('lm_model') || 'Unknown Model'}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontSize: '0.7rem' }}>
+                {(() => {
+                  const provider = localStorage.getItem('llm_provider') || 'lm_studio';
+                  const model = localStorage.getItem('gemini_model') || '';
+                  if (provider === 'gemini') {
+                    const rpmMap: Record<string, number> = {
+                      'gemini-3.1-flash-lite': 15,
+                      'gemini-2.5-flash-lite': 10,
+                      'gemini-2.5-flash': 5,
+                      'gemini-3-flash': 5,
+                      'gemini-3.5-flash': 5,
+                      'gemma-4-31b': 15,
+                      'gemma-4-26b': 15,
+                    };
+                    const rpm = rpmMap[model] || 0;
+                    return `Gemini • ${rpm} RPM${rpm > 0 ? ' (free)' : ''}`;
+                  }
+                  if (provider === 'openai') return 'OpenAI Cloud';
+                  return 'LM Studio (Local)';
+                })()}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+
         {/* Safety Engine Settings */}
         <Box sx={{ mb: 3 }}>
           <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900, mb: 1.5 }}>
@@ -511,6 +561,70 @@ export default function BulkTranslateModal({
             {loadMode === 'soft' 
               ? '🛡️ Sequential Mode: Translates chapters one by one. Fully safe for GPUs with low VRAM.' 
               : '⚡ Parallel Mode: Forces high-concurrency translation segment pipelines. Extremely fast, but may crash on limited VRAM.'}
+          </Typography>
+        </Box>
+
+        {/* Translation Quality Mode */}
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900, mb: 1.5 }}>
+            <Translate sx={{ fontSize: 16 }} /> Translation Quality
+          </Typography>
+
+          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+            <ToggleButtonGroup
+              value={translationMode}
+              exclusive
+              onChange={(_, val) => val && setTranslationMode(val)}
+              sx={{
+                background: 'rgba(0,0,0,0.3)',
+                p: 0.5,
+                borderRadius: '16px',
+                border: '1px solid rgba(255,255,255,0.05)',
+                width: '100%',
+                '& .MuiToggleButton-root': {
+                  color: 'var(--muted-foreground)',
+                  border: 'none',
+                  flexGrow: 1,
+                  py: 1,
+                  borderRadius: '12px',
+                  fontSize: '0.75rem',
+                  fontWeight: 900,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 1,
+                }
+              }}
+            >
+              <ToggleButton value="quality" sx={{
+                '&.Mui-selected': {
+                  background: 'rgba(156, 39, 176, 0.15) !important',
+                  color: '#ce93d8 !important',
+                  border: '1px solid var(--border)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  '&:hover': { background: 'rgba(156, 39, 176, 0.25) !important' }
+                }
+              }}>
+                <AutoAwesome sx={{ fontSize: 16 }} /> QUALITY
+              </ToggleButton>
+              <ToggleButton value="fast" sx={{
+                '&.Mui-selected': {
+                  background: 'rgba(255, 152, 0, 0.15) !important',
+                  color: '#ffb74d !important',
+                  border: '1px solid var(--border)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  '&:hover': { background: 'rgba(255, 152, 0, 0.25) !important' }
+                }
+              }}>
+                <Bolt sx={{ fontSize: 16 }} /> FAST
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
+          <Typography variant="caption" sx={{ display: 'block', opacity: 0.6, fontStyle: 'italic', textAlign: 'center', px: 1, color: 'var(--muted-foreground)', minHeight: 32 }}>
+            {translationMode === 'quality'
+              ? '✨ Quality: Full glossary (30 terms), style guide injection, higher token cap. Best for Gemini.'
+              : '⚡ Fast: Minimal glossary (10 terms), no style guide, 10K token cap. Best for LM Studio.'}
           </Typography>
         </Box>
 

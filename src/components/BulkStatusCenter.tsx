@@ -61,6 +61,10 @@ export default function BulkStatusCenter() {
               if (prev.active && prev.total > 0) {
                 // Mark as fully completed for presentation
                 setShowFinished(true);
+                // Dispatch event so LibraryPage/ReaderPage can silently refresh
+                window.dispatchEvent(new CustomEvent('batch-completed', {
+                  detail: { thread_id: prev.thread_id }
+                }));
                 return {
                   ...prev,
                   active: false,

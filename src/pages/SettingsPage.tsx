@@ -9,16 +9,21 @@ import { cn } from '@/lib/utils';
 import { getApiUrl } from '@/lib/api';
 
 const POPULAR_OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-mini'];
-const POPULAR_GEMINI_MODELS = [
-  'gemini-3.1-flash-lite',
-  'gemma-4-31b',
-  'gemini-3-flash',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro'
+
+// Text-out models only, with free tier info (RPD > 0 = free available)
+const GEMINI_MODELS = [
+  { id: 'gemini-3.1-flash-lite', free: true, rpm: 15, rpd: 500 },
+  { id: 'gemini-2.5-flash-lite', free: true, rpm: 10, rpd: 20 },
+  { id: 'gemini-2.5-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemini-3-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemini-3.5-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemma-4-31b', free: true, rpm: 15, rpd: 1500 },
+  { id: 'gemma-4-26b', free: true, rpm: 15, rpd: 1500 },
+  { id: 'gemini-2.5-pro', free: false, rpm: 0, rpd: 0 },
+  { id: 'gemini-3.1-pro', free: false, rpm: 0, rpd: 0 },
 ];
+
+const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map(m => m.id);
 const CHAPTER_TOKEN_CAP_OPTIONS = [7000, 15000, 22000, 30000] as const;
 
 interface ModelInfo {
@@ -135,6 +140,7 @@ export default function SettingsPage() {
   const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '150'));
   const [chapterTokenCapEnabled, setChapterTokenCapEnabled] = useState(() => localStorage.getItem('chapter_token_cap_enabled') !== '0');
   const [chapterTokenCap, setChapterTokenCap] = useState<number>(() => parseInt(localStorage.getItem('chapter_token_cap') || '22000'));
+  const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(() => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality');
   const [isSaving, setIsSaving] = useState(false);
 
   // Cloud & swappable LLM states (ADR-029)
@@ -223,6 +229,10 @@ export default function SettingsPage() {
       if (data.chapter_token_cap !== undefined) {
         setChapterTokenCap(data.chapter_token_cap);
         localStorage.setItem('chapter_token_cap', data.chapter_token_cap.toString());
+      }
+      if (data.translation_mode) {
+        setTranslationMode(data.translation_mode);
+        localStorage.setItem('translation_mode', data.translation_mode);
       }
     } catch {
       console.error('Failed to fetch server settings');
@@ -359,6 +369,12 @@ export default function SettingsPage() {
     setChapterTokenCap(cap);
     localStorage.setItem('chapter_token_cap', cap.toString());
     saveSettingsToServer({ chapter_token_cap: cap });
+  };
+
+  const handleTranslationModeChange = (mode: 'quality' | 'fast') => {
+    setTranslationMode(mode);
+    localStorage.setItem('translation_mode', mode);
+    saveSettingsToServer({ translation_mode: mode });
   };
 
   return (
@@ -613,7 +629,7 @@ export default function SettingsPage() {
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Gemini Model</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Gemini Model (Text-out only)</label>
                     <select
                       value={POPULAR_GEMINI_MODELS.includes(geminiModel) ? geminiModel : "custom"}
                       onChange={e => {
@@ -625,8 +641,10 @@ export default function SettingsPage() {
                       }}
                       className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                     >
-                      {POPULAR_GEMINI_MODELS.map(m => (
-                        <option key={m} value={m}>{m}</option>
+                      {GEMINI_MODELS.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.id} {m.free ? '(free)' : ''} [{m.rpm} RPM]
+                        </option>
                       ))}
                       <option value="custom">Custom (Type below)...</option>
                     </select>
@@ -648,7 +666,7 @@ export default function SettingsPage() {
                   )}
 
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                    Rekomendasi: `gemini-2.5-flash` adalah model terbaik (sangat cepat, tangguh, dan gratis/berbiaya rendah).
+                    Rekomendasi: `gemini-3.1-flash-lite` (free, 15 RPM, 500 RPD) untuk batch. `gemini-2.5-flash` untuk kualitas lebih tinggi.
                   </p>
                 </div>
               </div>
@@ -715,6 +733,75 @@ export default function SettingsPage() {
                     <option value="translated">Translated Only</option>
                     <option value="original">Original Only</option>
                   </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Translation Quality Mode */}
+            <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-4">
+              <div className="flex flex-col gap-4 pb-8 border-b border-[var(--border)]">
+                <div>
+                  <h3 className="font-bold flex items-center gap-2 text-[var(--foreground)]">
+                    <Sparkles size={16} className="text-[var(--primary)]" />
+                    Default Translation Quality
+                  </h3>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Quality mode uses full glossary (30 terms), style guide injection, and higher token caps. Fast mode uses minimal glossary (10 terms) and 10K token cap for local LLMs.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleTranslationModeChange('quality')}
+                    className={cn(
+                      "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
+                      translationMode === 'quality'
+                        ? "border-purple-500 bg-purple-500/10 shadow-md"
+                        : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
+                    )}
+                  >
+                    <Sparkles size={20} className={translationMode === 'quality' ? "text-purple-500" : "text-[var(--muted-foreground)]"} />
+                    <span className={cn(
+                      "text-sm font-black mt-2 transition-colors",
+                      translationMode === 'quality' ? "text-purple-500" : "text-[var(--foreground)]"
+                    )}>
+                      Quality
+                    </span>
+                    <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
+                      Full context, style guide, 30 glossary terms
+                    </span>
+                    {translationMode === 'quality' && (
+                      <div className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white rounded-full p-0.5 shadow-sm">
+                        <CheckCircle2 size={12} />
+                      </div>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => handleTranslationModeChange('fast')}
+                    className={cn(
+                      "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
+                      translationMode === 'fast'
+                        ? "border-orange-500 bg-orange-500/10 shadow-md"
+                        : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
+                    )}
+                  >
+                    <Wifi size={20} className={translationMode === 'fast' ? "text-orange-500" : "text-[var(--muted-foreground)]"} />
+                    <span className={cn(
+                      "text-sm font-black mt-2 transition-colors",
+                      translationMode === 'fast' ? "text-orange-500" : "text-[var(--foreground)]"
+                    )}>
+                      Fast
+                    </span>
+                    <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
+                      Minimal context, 10K cap, best for LM Studio
+                    </span>
+                    {translationMode === 'fast' && (
+                      <div className="absolute -top-1.5 -right-1.5 bg-orange-500 text-white rounded-full p-0.5 shadow-sm">
+                        <CheckCircle2 size={12} />
+                      </div>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>

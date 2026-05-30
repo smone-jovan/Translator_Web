@@ -33,8 +33,6 @@ AD_LINE_PATTERNS = [
     r"qq群",
     r"加群",
     r"网址",
-    r"www\.",
-    r"https?://",
 ]
 
 TOC_PATTERNS = [
@@ -76,7 +74,7 @@ class CleanerSummary:
 
 class CleanerTools:
     @staticmethod
-    def clean_text_block(text: str | None) -> tuple[str, int]:
+    def clean_text_block(text: str | None, is_translated: bool = False) -> tuple[str, int]:
         if not text:
             return "", 0
 
@@ -95,7 +93,8 @@ class CleanerTools:
             cleaned_lines.append(raw_line)
 
         cleaned = "\n".join(cleaned_lines)
-        cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
+        if is_translated:
+            cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
         return cleaned, removed
 
@@ -123,7 +122,7 @@ class CleanerTools:
             cleaned_original_title = CleanerTools.clean_title(original_title)
             cleaned_translated_title = CleanerTools.clean_title(translated_title)
             cleaned_original_body, removed_original = CleanerTools.clean_text_block(original_body)
-            cleaned_translated_body, removed_translated = CleanerTools.clean_text_block(translated_body)
+            cleaned_translated_body, removed_translated = CleanerTools.clean_text_block(translated_body, is_translated=True)
 
             if cleaned_original_title != original_title:
                 chapter.title_original = cleaned_original_title
@@ -312,7 +311,10 @@ class CleanerTools:
         if any(re.search(pattern, lowered) for pattern in AD_LINE_PATTERNS):
             return True
 
-        if len(re.findall(r"https?://|www\.|\.com|\.net|\.org|\.me|\.gg", lowered)) >= 1:
+        # Only match actual full URLs (with protocol or www), not bare domain mentions
+        if re.search(r"https?://\S{4,}", lowered):
+            return True
+        if re.search(r"www\.\S{4,}", lowered):
             return True
 
         return False

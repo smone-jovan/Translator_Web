@@ -48,6 +48,7 @@ class GlobalSetting(Base):
     always_hide_thoughts: Mapped[int] = mapped_column(default=1) # 0 = disabled, 1 = enabled
     chapter_token_cap_enabled: Mapped[int] = mapped_column(default=1) # 0 = disabled, 1 = enabled
     chapter_token_cap: Mapped[int] = mapped_column(default=22000)
+    translation_mode: Mapped[str] = mapped_column(String(20), default="quality")  # "quality" or "fast"
     
     # Cloud & Provider settings (ADR-029)
     llm_provider: Mapped[str] = mapped_column(String(50), default="lm_studio")
@@ -75,6 +76,7 @@ class Thread(Base):
     status_coo: Mapped[Optional[str]] = mapped_column(String(200))
     synopsis: Mapped[Optional[str]] = mapped_column(Text)
     thread_context: Mapped[Optional[str]] = mapped_column(Text)
+    style_guide: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     chapters: Mapped[List["Chapter"]] = relationship(back_populates="thread", cascade="all, delete")
@@ -222,6 +224,11 @@ def init_db():
             print("[MIGRASI] Menambahkan kolom 'synopsis' ke dalam tabel threads...")
             conn.execute(text("ALTER TABLE threads ADD COLUMN synopsis TEXT"))
             conn.commit()
+
+        if 'style_guide' not in columns_th:
+            print("[MIGRASI] Menambahkan kolom 'style_guide' ke dalam tabel threads...")
+            conn.execute(text("ALTER TABLE threads ADD COLUMN style_guide TEXT"))
+            conn.commit()
             
         if 'prefetch_count' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'prefetch_count' ke dalam tabel global_settings...")
@@ -301,6 +308,11 @@ def init_db():
         if 'chapter_token_cap' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'chapter_token_cap' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN chapter_token_cap INTEGER DEFAULT 22000"))
+            conn.commit()
+
+        if 'translation_mode' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'translation_mode' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN translation_mode VARCHAR(20) DEFAULT 'quality'"))
             conn.commit()
             
         if 'is_locked' not in columns_lb:

@@ -40,6 +40,8 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
 
   useEffect(() => {
     if (!isOpen) return;
+    // Sync props to local state when modal opens — intentional reset pattern
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(threadTitle);
     setAuthor(threadAuthor || 'SMONE');
     setCover(currentCover || null);

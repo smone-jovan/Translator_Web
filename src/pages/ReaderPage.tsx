@@ -151,7 +151,6 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
 
   const fetchThread = useCallback(async (opts?: { silent?: boolean }) => {
     const CACHE_KEY = `readomni_thread_cache_${threadId}`;
-    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
     // On silent refresh (polling), skip if tab is hidden
     if (opts?.silent && document.hidden) return;
@@ -563,8 +562,9 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
       } else {
         toast.info(message);
       }
-    } catch (e: any) {
-      toast.error(`${label} failed: ${e.message || 'Unknown error'}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      toast.error(`${label} failed: ${msg}`);
     }
   };
 
@@ -606,6 +606,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
           setAlwaysHideThoughts={setAlwaysHideThoughts}
           onClose={() => setShowSettings(false)}
           mobileMode={!showChapterList}
+          threadId={threadId}
         />
       )}
 

@@ -15,6 +15,7 @@ class BatchTranslateRequest(BaseModel):
     ai_extract: bool = True
     target_lang: Optional[str] = "Indonesian"
     overwrite: bool = True
+    translation_mode: str = "quality"  # "quality" or "fast"
 
 
 @router.post("/threads/{thread_id}/batch-translate")
@@ -39,6 +40,7 @@ async def batch_translate(
     lm_url = resolve_active_base_url(gs)
     model = resolve_active_model(gs)
     target_lang = req.target_lang or (gs.target_language if gs else "Indonesian")
+    translation_mode = req.translation_mode or (gs.translation_mode if gs else "quality")
 
     # 3. Start sequential queue
     await BackgroundTranslator.start_batch(
@@ -48,7 +50,8 @@ async def batch_translate(
         model=model,
         lm_url=lm_url,
         force_extract=req.ai_extract,
-        force_overwrite=req.overwrite
+        force_overwrite=req.overwrite,
+        translation_mode=translation_mode
     )
 
     return {

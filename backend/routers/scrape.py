@@ -12,7 +12,7 @@ from pydantic import BaseModel
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from database import get_db, Thread, Chapter, GlobalSetting
 from services.scrapers.engine import MetadataScraperEngine
@@ -33,6 +33,7 @@ class ScrapeResponse(BaseModel):
 
 class ImportURLRequest(BaseModel):
     url: str
+    thread_id: Optional[int] = None  # If provided, add chapter to existing thread
 
 
 class ScrapeMetadataRequest(BaseModel):
@@ -176,7 +177,7 @@ async def scrape_url(req: ScrapeRequest):
 
 @router.post("/threads/import-url")
 async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
-    """Scrape a URL and create a new Thread/Chapter for it."""
+    """Scrape a URL and create a new Thread/Chapter, or add a chapter to an existing thread."""
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
@@ -195,27 +196,49 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     if not markdown:
         raise HTTPException(422, "No content extracted from URL.")
 
-    # Create Thread
-    thread = Thread(
-        title=title,
-        original_title=title,
-        source_type="url",
-        source_url=req.url
-    )
-    db.add(thread)
-    db.flush() # Get ID
+    if req.thread_id:
+        # Add chapter to existing thread
+        thread = db.execute(select(Thread).where(Thread.id == req.thread_id)).scalar_one_or_none()
+        if not thread:
+            raise HTTPException(404, "Thread not found")
 
-    # Create first chapter
-    chapter = Chapter(
-        thread_id=thread.id,
-        order=0,
-        title_original=title, # Often URL is just one chapter
-        content_original=markdown
-    )
-    db.add(chapter)
-    db.commit()
+        # Get the next order number
+        max_order = db.execute(
+            select(func.max(Chapter.order)).where(Chapter.thread_id == thread.id)
+        ).scalar() or 0
 
-    return {"thread_id": thread.id, "chapter_id": chapter.id}
+        chapter = Chapter(
+            thread_id=thread.id,
+            order=max_order + 1,
+            title_original=title,
+            content_original=markdown
+        )
+        db.add(chapter)
+        db.commit()
+
+        return {"thread_id": thread.id, "chapter_id": chapter.id}
+    else:
+        # Create new Thread
+        thread = Thread(
+            title=title,
+            original_title=title,
+            source_type="url",
+            source_url=req.url
+        )
+        db.add(thread)
+        db.flush()  # Get ID
+
+        # Create first chapter
+        chapter = Chapter(
+            thread_id=thread.id,
+            order=0,
+            title_original=title,
+            content_original=markdown
+        )
+        db.add(chapter)
+        db.commit()
+
+        return {"thread_id": thread.id, "chapter_id": chapter.id}
 
 
 @router.post("/threads/{thread_id}/scrape_metadata")

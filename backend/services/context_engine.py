@@ -9,10 +9,19 @@ class ContextEngine:
     """
 
     @staticmethod
-    def build_translation_prompt(db: Session, thread_id: int | None, target_lang: str, original_text: str | None = None) -> str:
+    def build_translation_prompt(
+        db: Session,
+        thread_id: int | None,
+        target_lang: str,
+        original_text: str | None = None,
+        translation_mode: str = "quality"
+    ) -> str:
         # Atur bahasa target (Indo atau Inggris)
         is_indo = target_lang.lower() == "indonesian"
         lang_name = "Indonesian" if is_indo else "English"
+
+        # Mode-aware settings
+        is_quality = translation_mode == "quality"
         
         # Ini core instruksi buat AI-nya. Isinya aturan etika translasi yang diminta user.
         guidelines = f"""Role:
@@ -84,8 +93,15 @@ If no new terms, skip.
             if thread and thread.thread_context:
                 full_prompt += f"\n[Thread-Specific Context]:\n{thread.thread_context}\n"
 
-            # Ambil max_context_terms limit dari setting global
-            limit = gs.max_context_terms if gs else 50
+            # Style guide injection (Quality mode only)
+            if is_quality and thread and thread.style_guide:
+                full_prompt += f"\n[Style Guide for This Novel]:\n{thread.style_guide}\n"
+
+            # Mode-aware glossary limit:
+            # - Quality: follow global max_context_terms setting (user controls depth)
+            # - Fast: locked at 10 (protect local LLMs from context bloat)
+            global_limit = gs.max_context_terms if gs else 50
+            limit = global_limit if is_quality else min(10, global_limit)
             
             # Ambil istilah aktif (non-archived) yang paling sering dipakai atau yang terbaru biar AI gak overload
             from sqlalchemy import desc

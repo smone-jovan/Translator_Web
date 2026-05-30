@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser } from 'lucide-react';
+import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser, RotateCcw } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -72,7 +72,8 @@ const LibraryBookCard = ({
   onScrapeNU,
   onCheckHallucinate,
   onRunTxtCleaner,
-  onRunEpubCleaner
+  onRunEpubCleaner,
+  onDeleteTranslations
 }: { 
   thread: ThreadItem, 
   onOpen: () => void, 
@@ -82,7 +83,8 @@ const LibraryBookCard = ({
   onScrapeNU: () => void,
   onCheckHallucinate: () => void,
   onRunTxtCleaner: () => void,
-  onRunEpubCleaner: () => void
+  onRunEpubCleaner: () => void,
+  onDeleteTranslations: () => void
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -214,6 +216,10 @@ const LibraryBookCard = ({
                 <Wand2 size={16} className="text-[var(--primary)]" />
                 EPUB Cleaner
               </MenuItem>
+              <MenuItem onClick={() => { onDeleteTranslations(); handleClose(); }} sx={{ color: '#f59e0b' }}>
+                <RotateCcw size={16} />
+                Delete All Translations
+              </MenuItem>
               <MenuItem onClick={() => { onDelete(); handleClose(); }} sx={{ color: '#ef4444' }}>
                 <Trash2 size={16} />
                 Delete Book
@@ -320,6 +326,18 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     fetchThreads();
   }, [fetchThreads]);
 
+  // Silently refresh when batch translation completes
+  useEffect(() => {
+    const handleBatchCompleted = () => {
+      fetch(getApiUrl('/api/threads'))
+        .then(res => res.json())
+        .then(data => setThreads(data))
+        .catch(() => {});
+    };
+    window.addEventListener('batch-completed', handleBatchCompleted);
+    return () => window.removeEventListener('batch-completed', handleBatchCompleted);
+  }, []);
+
   const handleDelete = async (id: number) => {
     const isConfirmed = await confirm({
       title: 'Delete Book?',
@@ -339,6 +357,28 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
+  const handleDeleteTranslations = async (thread: ThreadItem) => {
+    const isConfirmed = await confirm({
+      title: 'Delete All Translations?',
+      description: `This will clear all translated content for "${thread.title}". Original text will be preserved. This cannot be undone.`,
+      confirmText: 'Delete Translations',
+      variant: 'destructive'
+    });
+
+    if (!isConfirmed) return;
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/translations`), { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed');
+      fetchThreads();
+      toast.success(`Translations cleared for ${data.chapters_affected} chapters`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to delete translations';
+      toast.error(msg);
+    }
+  };
+
   const handleOpenBatchModal = async (thread: ThreadItem) => {
     try {
       const res = await fetch(getApiUrl(`/api/threads/${thread.id}`));
@@ -350,7 +390,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast' = 'quality') => {
     if (!selectedBatchThread) return;
     
     try {
@@ -361,7 +401,8 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             chapter_ids: chapterIds, 
             ai_extract: aiExtract,
             overwrite: overwrite,
-            target_lang: targetLang
+            target_lang: targetLang,
+            translation_mode: translationMode
         })
       });
       
@@ -561,6 +602,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             onCheckHallucinate={() => handleCheckHallucinate(thread)}
             onRunTxtCleaner={() => runCleanerTool(thread, 'txt-cleaner')}
             onRunEpubCleaner={() => runCleanerTool(thread, 'epub-cleaner')}
+            onDeleteTranslations={() => handleDeleteTranslations(thread)}
           />
         ))}
 

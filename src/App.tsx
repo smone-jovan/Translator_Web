@@ -107,7 +107,19 @@ export default function App() {
       >
         {(activeTab) => {
           switch (activeTab) {
-            case 'translate': return <TranslatePage onOpenThread={openReaderFromLibrary} />;
+            case 'translate': return <TranslatePage
+              onOpenThread={openReaderFromLibrary}
+              onNavigateToSettings={() => {
+                setActiveTab('settings');
+                setIsReadingChapter(false);
+                setOpenThreadId(null);
+              }}
+              onNavigateToLibrary={() => {
+                setActiveTab('library');
+                setIsReadingChapter(false);
+                setOpenThreadId(null);
+              }}
+            />;
             case 'library': return <LibraryPage onOpenThread={openReaderFromLibrary} />;
             case 'context': return <ContextLibraryPage />;
             case 'settings': return <SettingsPage />;

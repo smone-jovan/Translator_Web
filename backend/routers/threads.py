@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from typing import List, Optional
 
-from database import get_db, Thread, Chapter, GlobalSetting, UserBookmark
+from database import get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark
 from services.cleaner_tools import CleanerTools
 from services.hallucination_detector import HallucinationDetector
 
@@ -53,6 +53,7 @@ class ThreadItemOut(BaseModel):
 
 
 class ThreadDetail(ThreadItemOut):
+    style_guide: Optional[str] = None
     chapters: List[ChapterOut]
 
 
@@ -361,42 +362,80 @@ def preview_cleanup(thread_id: int, db: Session = Depends(get_db)):
     thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
-        
-    # We will run both epub and txt cleaners for maximum cleanup in preview
-    epub_summary = CleanerTools.run_epub_cleaner(thread)
-    txt_summary = CleanerTools.run_txt_cleaner(thread)
-    
-    # Compile the text
+
+    # Work with copies of chapter data to avoid mutating ORM objects
+    chapters_sorted = sorted(thread.chapters, key=lambda c: c.order)
+    chapter_copies = []
+    for ch in chapters_sorted:
+        chapter_copies.append({
+            "id": ch.id,
+            "order": ch.order,
+            "title_original": ch.title_original or "",
+            "content_original": ch.content_original or "",
+        })
+
+    # Run EPUB cleaner logic on copies (identify false chapters, merge bodies)
+    deleted_ids: set[int] = set()
+    kept: list[dict] = []
+    total_lines_removed = 0
+    chapters_updated = 0
+
+    for index, ch in enumerate(chapter_copies):
+        title = ch["title_original"].strip()
+        body = ch["content_original"].strip()
+        cleaned_title = CleanerTools.clean_title(title) or title
+        cleaned_body, removed_lines = CleanerTools.clean_text_block(body)
+        total_lines_removed += removed_lines
+
+        prev = kept[-1] if kept else None
+        next_ch = chapter_copies[index + 1] if index + 1 < len(chapter_copies) else None
+
+        if CleanerTools._should_merge_into_previous(cleaned_title, cleaned_body, prev, next_ch):
+            if kept and cleaned_body:
+                prev_copy = kept[-1]
+                prev_body = prev_copy["content_original"].strip()
+                merged = CleanerTools._merge_chapter_bodies(prev_body, cleaned_body)
+                if merged != prev_copy["content_original"]:
+                    prev_copy["content_original"] = merged
+                    chapters_updated += 1
+            deleted_ids.add(ch["id"])
+            continue
+        kept.append({**ch, "title_original": cleaned_title, "content_original": cleaned_body})
+
+    # Run TXT cleaner on remaining (kept) chapters
+    for ch in kept:
+        orig_title = ch["title_original"]
+        orig_body = ch["content_original"]
+        cleaned_t = CleanerTools.clean_title(orig_title) or orig_title
+        cleaned_b, removed = CleanerTools.clean_text_block(orig_body)
+        total_lines_removed += removed
+        if cleaned_t != orig_title or cleaned_b != orig_body:
+            chapters_updated += 1
+        ch["title_original"] = cleaned_t
+        ch["content_original"] = cleaned_b
+
+    # Re-order
+    for new_order, ch in enumerate(kept):
+        ch["order"] = new_order
+
+    # Compile preview text
     out = io.StringIO()
-    out.write(f"TITLE: {thread.title}\\n")
-    out.write("-" * 40 + "\\n\\n")
-    
-    # We must skip deleted chapters (which are marked in epub_summary.deleted_chapter_ids)
-    deleted_ids = set(epub_summary.deleted_chapter_ids)
-    
-    # Sort remaining chapters by order
-    valid_chapters = [c for c in thread.chapters if c.id not in deleted_ids]
-    valid_chapters.sort(key=lambda c: c.order)
-    
-    for i, ch in enumerate(valid_chapters):
-        ch_title = ch.title_original or f"Chapter {i+1}"
-        ch_content = ch.content_original or ""
-        out.write(f"=== {ch_title} ===\\n\\n")
-        out.write(ch_content + "\\n\\n")
-        out.write("-" * 20 + "\\n\\n")
-        
+    out.write(f"TITLE: {thread.title}\n")
+    out.write("-" * 40 + "\n\n")
+    for i, ch in enumerate(kept):
+        ch_title = ch["title_original"] or f"Chapter {i + 1}"
+        out.write(f"=== {ch_title} ===\n\n")
+        out.write(ch["content_original"] + "\n\n")
+        out.write("-" * 20 + "\n\n")
     cleaned_text = out.getvalue()
     out.close()
-    
-    # CRITICAL: Rollback so we don't save to DB!
-    db.rollback()
-    
+
     return CleanupPreviewResponse(
-        chapters_scanned=epub_summary.chapters_scanned,
-        chapters_deleted=epub_summary.chapters_deleted,
-        chapters_updated=txt_summary.chapters_updated + epub_summary.chapters_updated,
-        lines_removed=txt_summary.lines_removed + epub_summary.lines_removed,
-        deleted_chapter_ids=epub_summary.deleted_chapter_ids,
+        chapters_scanned=len(chapter_copies),
+        chapters_deleted=len(deleted_ids),
+        chapters_updated=chapters_updated,
+        lines_removed=total_lines_removed,
+        deleted_chapter_ids=list(deleted_ids),
         cleaned_text=cleaned_text
     )
 
@@ -442,6 +481,23 @@ def update_thread_cover(thread_id: int, payload: ThreadCoverUpdate, db: Session 
     thread.cover_image = payload.cover_image
     db.commit()
     return {"status": "success", "cover_image": thread.cover_image}
+
+
+class StyleGuideUpdate(BaseModel):
+    style_guide: Optional[str] = None
+
+
+@router.put("/threads/{thread_id}/style-guide")
+def update_style_guide(thread_id: int, payload: StyleGuideUpdate, db: Session = Depends(get_db)):
+    """Update style guide for a thread."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    thread.style_guide = payload.style_guide
+    db.commit()
+    return {"status": "success", "style_guide": thread.style_guide}
 
 
 @router.get("/threads/{thread_id}/chapters/{chapter_id}", response_model=ChapterContent)
@@ -518,6 +574,29 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
             ) for s in chapter.segments
         ]
     )
+
+
+@router.delete("/threads/{thread_id}/translations")
+def delete_all_translations(thread_id: int, db: Session = Depends(get_db)):
+    """Delete all translated content for a thread. Original text is preserved."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    affected = 0
+    for chapter in thread.chapters:
+        has_translation = chapter.content_translated or chapter.title_translated or chapter.translation_status == "done"
+        if has_translation:
+            chapter.content_translated = None
+            chapter.title_translated = None
+            chapter.translation_status = "idle"
+            affected += 1
+        for seg in list(chapter.segments):
+            db.delete(seg)
+
+    db.commit()
+    return {"chapters_affected": affected}
 
 
 @router.delete("/threads/{thread_id}")

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 
 interface Relationship {
@@ -7,6 +7,20 @@ interface Relationship {
   target_term: string;
   relationship_type: string;
   notes?: string;
+}
+
+interface GraphNode {
+  id: string;
+  group: number;
+  val: number;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  label: string;
+  notes?: string;
+  color: string;
 }
 
 interface RelationshipGraphProps {
@@ -31,7 +45,7 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
 
   const graphData = useMemo(() => {
     const nodesMap = new Map<string, { id: string; group: number; val: number }>();
-    const links: any[] = [];
+    const links: GraphLink[] = [];
 
     relationships.forEach(rel => {
       // Create nodes if they don't exist
@@ -79,16 +93,15 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
           height={dimensions.height}
           graphData={graphData}
           nodeLabel="id"
-          nodeColor={(node: any) => node.group === 1 ? '#3b82f6' : '#10b981'}
+          nodeColor={(node: GraphNode) => node.group === 1 ? '#3b82f6' : '#10b981'}
           nodeRelSize={6}
           linkColor="color"
           linkDirectionalArrowLength={3.5}
           linkDirectionalArrowRelPos={1}
-          linkLabel={(link: any) => `${link.label}${link.notes ? `\n\nNotes: ${link.notes}` : ''}`}
+          linkLabel={(link: GraphLink) => `${link.label}${link.notes ? `\n\nNotes: ${link.notes}` : ''}`}
           linkCurvature={0.2}
-          onNodeClick={(node: any, event) => {
-            // Keep it simple for now
-            console.log(node);
+          onNodeClick={(node: GraphNode) => {
+            console.log(node.id);
           }}
         />
       )}

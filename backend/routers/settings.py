@@ -25,6 +25,7 @@ class GlobalSettingsUpdate(BaseModel):
     always_hide_thoughts: int | None = None
     chapter_token_cap_enabled: int | None = None
     chapter_token_cap: int | None = None
+    translation_mode: str | None = None
     
     # Cloud LLM & API Keys Settings (ADR-029)
     llm_provider: str | None = None
@@ -58,6 +59,7 @@ def get_global_context(db: Session = Depends(get_db)):
         "always_hide_thoughts": gs.always_hide_thoughts if gs else 1,
         "chapter_token_cap_enabled": gs.chapter_token_cap_enabled if gs else 1,
         "chapter_token_cap": gs.chapter_token_cap if gs else 22000,
+        "translation_mode": gs.translation_mode if gs else "quality",
         
         # New Settings Fields
         "llm_provider": gs.llm_provider if gs else "lm_studio",
@@ -101,6 +103,7 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.always_hide_thoughts is not None: gs.always_hide_thoughts = req.always_hide_thoughts
     if req.chapter_token_cap_enabled is not None: gs.chapter_token_cap_enabled = req.chapter_token_cap_enabled
     if req.chapter_token_cap is not None: gs.chapter_token_cap = req.chapter_token_cap
+    if req.translation_mode is not None: gs.translation_mode = req.translation_mode
     
     # Cloud LLM & API Keys Settings (ADR-029)
     if req.llm_provider is not None: gs.llm_provider = req.llm_provider

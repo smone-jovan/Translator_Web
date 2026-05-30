@@ -100,6 +100,17 @@ export default function ContextLibraryPage() {
       .catch(e => console.error('Failed to fetch global context', e));
   }, []);
 
+  const fetchRelationships = async () => {
+    if (!selectedThreadId) return;
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/relationships`));
+      const data = await res.json();
+      setRelationships(data);
+    } catch (e) {
+      console.error('Failed to fetch relationships', e);
+    }
+  };
+
   // Thread selection load
   useEffect(() => {
     if (!selectedThreadId) {
@@ -125,18 +136,7 @@ export default function ContextLibraryPage() {
       .catch(e => console.error('Failed to fetch thread context', e));
 
     fetchRelationships();
-  }, [selectedThreadId]);
-
-  const fetchRelationships = async () => {
-    if (!selectedThreadId) return;
-    try {
-      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/relationships`));
-      const data = await res.json();
-      setRelationships(data);
-    } catch (e) {
-      console.error('Failed to fetch relationships', e);
-    }
-  };
+  }, [selectedThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scanRelationships = async () => {
     if (!selectedThreadId) return;

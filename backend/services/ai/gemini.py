@@ -1,7 +1,7 @@
 import httpx
 import json
 from typing import List, Dict, AsyncGenerator
-from services.ai.base import BaseAIProviderAdapter
+from services.ai.base import BaseAIProviderAdapter, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
 
 class GeminiAdapter(BaseAIProviderAdapter):
     """
@@ -74,9 +74,19 @@ class GeminiAdapter(BaseAIProviderAdapter):
                                 break
                             try:
                                 data = json.loads(line[6:])
-                                content = data["choices"][0]["delta"].get("content", "")
+                                choice = data["choices"][0]
+                                content = choice["delta"].get("content", "")
                                 if content:
                                     yield content
+                                # Detect truncation (finish_reason="length" means max_tokens was hit)
+                                finish_reason = choice.get("finish_reason")
+                                if finish_reason == "length":
+                                    yield TRUNCATED_MARKER
+                                    return
+                                # Detect content filter / prohibited
+                                if finish_reason in PROHIBITED_FINISH_REASONS:
+                                    yield PROHIBITED_MARKER
+                                    return
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
         except Exception as e:

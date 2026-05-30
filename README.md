@@ -72,6 +72,16 @@
 *   **300s Heavy-Duty Timeout:** Elevated HTTP connections to support complex deep-context translations without abrupt closures.
 *   **AbortController Integration:** Automatically cancels past streaming threads when rapidly skipping through chapters to avoid VRAM clashing.
 *   **Isolated Test Driven Development (TDD) Suites (ADR-018):** Standardized regression defense suites bound to SQLite in-memory databases to safeguard structural changes.
+*   **Translation Auto-Continue (ADR-045):** Detects truncated translations (`finish_reason: "length"`) and automatically sends continuation prompts to complete long chapters. Handles prohibited content gracefully by resetting chapter status.
+*   **Batch Worker Reliability (ADR-048):** Automatic retry with exponential backoff (10s → 20s → 40s) for transient API errors (429/503). Prevents infinite loops on completed chapters.
+*   **Delete All Translations:** Bulk-clear all translated content for a thread while preserving original text and glossary.
+
+### 🎯 7. Quality/Fast Translation Mode (ADR-046)
+*   **Quality Mode:** Full glossary (follows `max_context_terms`), style guide injection, no token cap when safety cap is disabled. Best for Gemini cloud models.
+*   **Fast Mode:** Locked 10 glossary terms, no style guide, 10K token cap. Best for LM Studio local models.
+*   **Style Guide per Novel:** Define translation style, tone, and rules per thread. Injected into prompts in Quality mode.
+*   **Smart Safety Cap Interaction:** When safety cap is enabled, both modes respect it. When disabled, Quality runs uncapped while Fast stays at 10K.
+*   **Gemini Model Selector:** Text-out models only with RPM info and free tier labels (e.g., `gemini-3.1-flash-lite (free) [15 RPM]`).
 
 ---
 
@@ -162,7 +172,7 @@ For detailed insights into the technical architecture, read our official guides:
 *   [docs/SDLC.md](docs/SDLC.md) — The 10-phase software development lifecycle documentation.
 *   [docs/implementation_plan.md](docs/implementation_plan.md) — Exact task definitions and acceptance criteria from Task 1 to 24.
 *   [docs/Handoff.md](docs/Handoff.md) — The main developer handoff guide and future roadmap suggestions.
-*   [docs/decisions/](docs/decisions/) — Directory containing all **41 Architectural Decision Records (ADRs)**, from initial background persistence through the latest target language enforcement fix.
+*   [docs/decisions/](docs/decisions/) — Directory containing all 49 Architectural Decision Records (ADRs), including ADR-042 (UI Consolidation), ADR-046 (Auto-Continue), ADR-047 (Quality/Fast Mode), ADR-048 (Cleanup Hardening), and ADR-049 (Batch Reliability).
 
 ---
 

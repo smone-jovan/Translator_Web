@@ -1,7 +1,10 @@
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 interface SettingsOverlayProps {
   fontSize: number;
@@ -18,6 +21,7 @@ interface SettingsOverlayProps {
   setAlwaysHideThoughts: (val: boolean) => void;
   onClose: () => void;
   mobileMode?: boolean;
+  threadId?: number;
 }
 
 export default function SettingsOverlay({
@@ -35,7 +39,37 @@ export default function SettingsOverlay({
   setAlwaysHideThoughts,
   onClose,
   mobileMode = false,
+  threadId,
 }: SettingsOverlayProps) {
+  const [styleGuide, setStyleGuide] = useState('');
+  const [isSavingGuide, setIsSavingGuide] = useState(false);
+
+  useEffect(() => {
+    if (threadId) {
+      fetch(getApiUrl(`/api/threads/${threadId}`))
+        .then(res => res.json())
+        .then(data => setStyleGuide(data.style_guide || ''))
+        .catch(() => {});
+    }
+  }, [threadId]);
+
+  const saveStyleGuide = async () => {
+    if (!threadId) return;
+    setIsSavingGuide(true);
+    try {
+      await fetch(getApiUrl(`/api/threads/${threadId}/style-guide`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ style_guide: styleGuide || null })
+      });
+      toast.success('Style guide saved');
+    } catch {
+      toast.error('Failed to save style guide');
+    } finally {
+      setIsSavingGuide(false);
+    }
+  };
+
   const saveSetting = async (key: string, value: string | number) => {
     try {
       await fetch(getApiUrl('/api/settings'), {
@@ -213,6 +247,32 @@ export default function SettingsOverlay({
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Style Guide (per-thread) */}
+          {threadId && (
+            <div className="mt-4 pt-3 border-t border-[var(--border)]">
+              <label className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider block mb-2">
+                Style Guide (Quality Mode)
+              </label>
+              <p className="text-[10px] text-[var(--muted-foreground)] mb-2">
+                Define translation style, tone, and rules for this novel. Injected into prompts in Quality mode.
+              </p>
+              <Textarea
+                value={styleGuide}
+                onChange={(e) => setStyleGuide(e.target.value)}
+                placeholder="e.g., Use formal Indonesian for narration, casual for dialogue. Keep cultivation terms in pinyin. Translate system notifications in ALL CAPS."
+                className="min-h-[100px] text-xs bg-[var(--secondary)] border-[var(--border)] resize-none"
+              />
+              <Button
+                size="sm"
+                className="w-full text-xs h-8 mt-2 bg-[var(--primary)] text-[var(--primary-foreground)]"
+                onClick={saveStyleGuide}
+                disabled={isSavingGuide}
+              >
+                {isSavingGuide ? 'Saving...' : 'Save Style Guide'}
+              </Button>
             </div>
           )}
 
