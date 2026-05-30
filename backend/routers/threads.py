@@ -599,6 +599,32 @@ def delete_all_translations(thread_id: int, db: Session = Depends(get_db)):
     return {"chapters_affected": affected}
 
 
+@router.delete("/threads/{thread_id}/chapters/{chapter_id}")
+def delete_chapter(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
+    """Delete a single chapter from a thread."""
+    stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
+    chapter = db.execute(stmt).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+
+    deleted_order = chapter.order
+    db.delete(chapter)
+    db.flush()
+
+    # Re-order remaining chapters
+    remaining = db.execute(
+        select(Chapter)
+        .where(Chapter.thread_id == thread_id)
+        .where(Chapter.order > deleted_order)
+        .order_by(Chapter.order)
+    ).scalars().all()
+    for ch in remaining:
+        ch.order = ch.order - 1
+
+    db.commit()
+    return {"deleted": True, "chapter_id": chapter_id}
+
+
 @router.delete("/threads/{thread_id}")
 def delete_thread(thread_id: int, db: Session = Depends(get_db)):
     """Delete thread + all chapters + lorebook (cascade)."""

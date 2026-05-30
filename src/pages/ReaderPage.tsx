@@ -461,6 +461,31 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     }
   };
 
+  // Delete single chapter
+  const handleDeleteChapter = async (chapterId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const chapter = thread?.chapters.find(c => c.id === chapterId);
+    const chapterName = chapter?.title_translated || chapter?.title_original || `Chapter ${(chapter?.order ?? 0) + 1}`;
+    
+    const isConfirmed = await confirm({
+      title: 'Delete Chapter?',
+      description: `Are you sure you want to delete "${chapterName}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      variant: 'destructive'
+    });
+    if (!isConfirmed) return;
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${chapterId}`), { method: 'DELETE' });
+      if (res.ok) {
+        toast.success('Chapter deleted');
+        await fetchThread();
+      }
+    } catch {
+      toast.error('Failed to delete chapter');
+    }
+  };
+
   // Infinite Polish - All
   const handleTranslateTitles = async (isRepolish = false) => {
     if (!thread || isTranslatingTitles) return;
@@ -736,6 +761,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
               isTranslatingTitles={isTranslatingTitles}
               goToChapter={goToChapter}
               handleSingleTitlePolish={handleSingleTitlePolish}
+              handleDeleteChapter={handleDeleteChapter}
             />
           </div>
         ) : (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, Sparkles, SlidersHorizontal } from 'lucide-react';
+import { Loader2, Sparkles, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ThreadDetail } from './types';
 
@@ -12,6 +12,7 @@ interface ChapterGridProps {
   isTranslatingTitles: boolean;
   goToChapter: (idx: number) => void;
   handleSingleTitlePolish: (chapterId: number, e: React.MouseEvent) => Promise<void>;
+  handleDeleteChapter?: (chapterId: number, e: React.MouseEvent) => void;
 }
 
 export default function ChapterGrid({
@@ -23,6 +24,7 @@ export default function ChapterGrid({
   isTranslatingTitles,
   goToChapter,
   handleSingleTitlePolish,
+  handleDeleteChapter,
 }: ChapterGridProps) {
   const isPolished = (title: string | null | undefined) => {
     if (!title) return false;
@@ -120,6 +122,15 @@ export default function ChapterGrid({
                   >
                     <Sparkles className="w-2.5 h-2.5 text-amber-500" />
                     Polish
+                  </button>
+                )}
+                {handleDeleteChapter && (
+                  <button
+                    onClick={(e) => handleDeleteChapter(ch.id, e)}
+                    className="text-[9px] font-bold text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded-md border border-red-500/20 bg-transparent hover:bg-red-500/10 transition-all flex items-center gap-1 cursor-pointer"
+                    title="Delete chapter"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
                   </button>
                 )}
               </div>

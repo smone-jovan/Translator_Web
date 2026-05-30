@@ -380,6 +380,15 @@ async def translate_titles(
     # Sweep and apply volume/sequential formatting to ALL chapters in the thread that have translated titles
     for target_ch in all_chapters:
         if target_ch.title_translated:
+            # Skip TOC/metadata pages - don't polish their titles
+            content_preview = (target_ch.content_original or "").strip()
+            toc_indicators = ["简介", "目录", "第一章", "第二章", "第三章", "第四章", "第五章",
+                              "第六章", "第七章", "第八章", "第九章", "第十章"]
+            toc_count = sum(1 for indicator in toc_indicators if indicator in content_preview)
+            is_toc_page = len(content_preview) < 5000 and toc_count >= 5
+            if is_toc_page:
+                continue
+
             if volume_mode:
                 v_num, c_num = chapter_metrics.get(target_ch.id, (start_volume, 1))
                 formatted_title = clean_and_format_chapter_title(
