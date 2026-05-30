@@ -576,6 +576,35 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
     )
 
 
+@router.post("/threads/{thread_id}/fix-truncated")
+def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
+    """Detect and reset translations that were cut off mid-sentence."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    reset_count = 0
+    for chapter in thread.chapters:
+        trans = chapter.content_translated or ''
+        orig = chapter.content_original or ''
+
+        if not trans.strip() or len(orig) == 0:
+            continue
+
+        last = trans.rstrip()[-1:] if trans.strip() else ''
+        ends_properly = last in '.!??"」』~*-)\u2026'
+
+        if not ends_properly:
+            chapter.content_translated = None
+            chapter.title_translated = None
+            chapter.translation_status = "idle"
+            reset_count += 1
+
+    db.commit()
+    return {"reset": reset_count}
+
+
 @router.delete("/threads/{thread_id}/translations")
 def delete_all_translations(thread_id: int, db: Session = Depends(get_db)):
     """Delete all translated content for a thread. Original text is preserved."""

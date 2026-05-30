@@ -1,7 +1,7 @@
 # 🌌 ReadOmni AI (Self-Hosted Novel Reader & Translator)
 > **A premium, privacy-first web novel reader and batch translator powered by local AI.**
 
-[![Project Status](https://img.shields.io/badge/status-Phase%2016%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
+[![Project Status](https://img.shields.io/badge/status-Phase%2017%20Complete-success?style=for-the-badge&logo=github)](docs/Handoff.md)
 [![Tech Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20FastAPI%20%7C%20Tailwind%20v4-blue?style=for-the-badge)](#-tech-stack)
 [![AI Engine](https://img.shields.io/badge/AI%20Engine-LM%20Studio%20%7C%20Gemini%20%7C%20OpenAI-orange?style=for-the-badge&logo=openai)](https://lmstudio.ai/)
 [![Database](https://img.shields.io/badge/Database-SQLite%20(WAL%20Mode)-lightgrey?style=for-the-badge&logo=sqlite)](backend/models.py)
@@ -38,6 +38,8 @@
 *   **Target Language Enforcement in Extraction (ADR-041):** All AI extraction passes (thread context, glossary, relationships) now explicitly inject the user's `target_language` setting into system prompts, ensuring Lorebook notes and summaries are always written in the configured output language instead of defaulting to the source language.
 
 ### 📚 4. Library & Premium Book Export
+*   **Delete Chapter Button:** Remove individual chapters from a thread via a trash icon in the ChapterGrid. The endpoint `DELETE /api/threads/{id}/chapters/{id}` automatically re-orders remaining chapters to maintain sequential numbering.
+*   **TOC Page Detection & Skip:** Automatic detection of Table of Contents pages during translation and title polishing. Pages with 5+ chapter title indicators (第一章, 第二章, etc.) in under 5000 characters are skipped to prevent AI hallucination of fake chapter content.
 *   **Progressive Bookmarking & Frame-Accurate Scroll Sync (ADR-032):** Automatically saves the user's exact scroll position percentage (on both mobile and desktop) in the background with a 2s client-side debounce, restoring their reading position instantly upon chapter load.
 *   **"Continue Reading" History Banner:** The Library automatically tracks and displays your most recently read novel, allowing you to instantly jump back into the exact chapter and scroll percentage where you left off.
 *   **Premium Reader UX Refinements (ADR-033):** Mobile-first floating toolbars, morphing radial SVG scroll-to-top buttons, elegant "End of Chapter" premium dividers, and in-chapter bottom controls create a reading experience rivaling Apple Books.
@@ -62,6 +64,8 @@
 *   **Unified Multi-Device Sync:** Transitioned from volatile browser `localStorage` to SQLite-backed `global_settings` table, synchronizing settings instantly between desktop and mobile devices on the same network.
 *   **Swappable Cloud AI Providers & Adapters (ADR-029):** Seamlessly transition between local offline models (LM Studio) and cloud APIs (OpenAI & Google Gemini) with dynamic card-based selector configuration, secure API key synchronization, and direct streaming outputs. Supports premium free-tier options like `gemini-3.1-flash-lite` and `gemma-4-31b`.
 *   **Intelligent Model Mapping & Safety Guards (ADR-030):** Automatically normalizes frontend model names (e.g. `gemma-4-31b`) to strict API endpoints (e.g. `gemma-4-31b-it`). Implements robust parsing for Gemini content/safety filters to explicitly notify users if a web novel chapter violates LLM safety guidelines instead of crashing.
+*   **Gemini Thinking Mode Compatibility:** Automatically disables the `thinking` parameter for Gemini models that don't support it (`gemini-3.1-flash-lite`, `gemma-4-*`). Only enables thinking mode for compatible models (`gemini-2.5-*`, `gemini-3-flash`, `gemini-3-pro`) to prevent 400 API errors.
+*   **Multiple API Keys with Rotation:** Store multiple API keys per provider (Gemini, OpenAI) in the database with an active key index. Rotate keys via the settings endpoint to distribute load across free-tier quotas. Falls back to single `.env` key if no DB keys are configured.
 *   **Dynamic RPM Safety Guard (Throttling pacing):** Integrates an automated pacing mechanism in the Python background worker that dynamically adjusts request delays according to the selected model's strict RPM limits (e.g., 4.2s for Gemini 3.1 Flash Lite/Gemma, 12.2s for Gemini 2.5/3 Flash), making it 100% safe to run background batch translations on the Google AI Studio Free Tier without hitting 429 rate limit triggers.
 *   **Sequential Background Prefetching:** Configure a smart prefetching range slider (1-5 chapters ahead) to sequentially pre-translate the upcoming chapters in the background while you read.
 *   **Chapter Token Safety Controls:** Global toggle plus presets (`7K`, `15K`, `22K`, `30K`) let users trade safety vs. uninterrupted long-form output. Default is `22K`; turning it off removes the cap entirely.
@@ -92,7 +96,7 @@
 *   **Database:** SQLite with SQLAlchemy ORM (WAL mode enabled for robust read/write operations).
 *   **Scraping Engine:** Crawl4AI (LLM-friendly, stealth web scraping).
 *   **EPUB Core:** EbookLib & BeautifulSoup4 (Accurate file parsing & compilation).
-*   **AI Backend & Engines:** Multi-provider adapter system supporting local offline models (LM Studio at `http://localhost:1234`), cloud OpenAI models (GPT-4o/GPT-4o-mini), and cloud Google Gemini models (Gemini 3.1 Flash Lite, Gemma 4 31B, Gemini 3 Flash, Gemini 2.5 Flash, Gemini 1.5 Pro) with configurable per-chapter token safety caps.
+*   **AI Backend & Engines:** Multi-provider adapter system supporting local offline models (LM Studio at `http://localhost:1234`), cloud OpenAI models (GPT-4o/GPT-4o-mini), and cloud Google Gemini models (Gemini 3.1 Flash Lite, Gemma 4 31B, Gemini 3 Flash, Gemini 2.5 Flash, Gemini 1.5 Pro) with configurable per-chapter token safety caps, automatic thinking mode compatibility, and multiple API key rotation.
 
 ---
 
@@ -147,19 +151,37 @@ Open `http://localhost:5173` on your laptop, or use your laptop's local IP (e.g.
 │   │   ├── epub.py             # EPUB uploading and parsing
 │   │   ├── export.py           # Premium book compiler service
 │   │   ├── lorebook.py         # Thread-specific glossary CRUD
+│   │   ├── polish.py           # Title polishing & TOC skip logic
 │   │   ├── scrape.py           # URL crawling endpoints
-│   │   └── settings.py         # Server-side persistent settings sync
-│   └── services/
-│       ├── background_translator.py  # Prefetcher, title translating & batch engine
-│       ├── context_engine.py         # AI extraction, prompts, usage-tracking & lorebook injection
-│       └── epub_exporter.py          # EPUB builder and metadata packager
+│   │   ├── settings.py         # Server-side persistent settings sync
+│   │   └── threads.py          # Thread CRUD, chapter management & delete endpoints
+│   ├── services/
+│   │   ├── ai/
+│   │   │   ├── base.py         # Abstract AI provider interface
+│   │   │   ├── factory.py      # Provider factory & model routing
+│   │   │   ├── gemini.py       # Google Gemini adapter (thinking mode, safety filters)
+│   │   │   ├── lm_studio.py    # LM Studio local adapter
+│   │   │   ├── openai.py       # OpenAI adapter
+│   │   │   └── secrets.py      # API key management, rotation & .env persistence
+│   │   ├── background_translator.py  # Prefetcher, title translating, batch engine & TOC detection
+│   │   ├── cleaner_tools.py    # TXT/EPUB cleanup pipelines
+│   │   ├── context_engine.py   # AI extraction, prompts, usage-tracking & lorebook injection
+│   │   ├── epub_exporter.py    # EPUB builder and metadata packager
+│   │   └── hallucination_detector.py  # Garbled output detection & cleanup
+│   └── tests/
+│       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
+│       ├── test_routers/       # Router integration tests
+│       └── test_services/      # Service unit tests (AI factory, settings)
 ├── src/
-│   ├── components/             # Reusable UI controls (Sidebar, ChapterList, ExportModal, dsb.)
+│   ├── components/             # Reusable UI controls (Sidebar, ChapterList, ExportModal, etc.)
+│   │   ├── reader/             # Reader-specific components (ChapterGrid, SettingsOverlay)
+│   │   └── hooks/              # Custom React hooks (useConfirm)
 │   ├── pages/
 │   │   ├── ContextLibraryPage.tsx # Context Library & AI Glossary Extraction Workspace
 │   │   ├── LibraryPage.tsx     # Thread collection, Batch Translation Studio & Book Builder
 │   │   ├── ReaderPage.tsx      # Dual-pane immersive reading environment
-│   │   └── SettingsPage.tsx    # Persistent system configurations
+│   │   ├── SettingsPage.tsx    # Persistent system configurations & API key management
+│   │   └── TranslatePage.tsx   # Translation workspace with quality/fast mode toggle
 │   ├── index.css               # Central stylesheet & HSL CSS theme design system
 │   └── main.tsx                # React entry point
 └── docs/                       # Technical documentations & Architectural Decisions (ADRs)
@@ -169,10 +191,10 @@ Open `http://localhost:5173` on your laptop, or use your laptop's local IP (e.g.
 
 ## 📂 Documentation & ADRs
 For detailed insights into the technical architecture, read our official guides:
-*   [docs/SDLC.md](docs/SDLC.md) — The 10-phase software development lifecycle documentation.
+*   [docs/SDLC.md](docs/SDLC.md) — The software development lifecycle documentation.
 *   [docs/implementation_plan.md](docs/implementation_plan.md) — Exact task definitions and acceptance criteria from Task 1 to 24.
 *   [docs/Handoff.md](docs/Handoff.md) — The main developer handoff guide and future roadmap suggestions.
-*   [docs/decisions/](docs/decisions/) — Directory containing all 49 Architectural Decision Records (ADRs), including ADR-042 (UI Consolidation), ADR-046 (Auto-Continue), ADR-047 (Quality/Fast Mode), ADR-048 (Cleanup Hardening), and ADR-049 (Batch Reliability).
+*   [docs/decisions/](docs/decisions/) — Directory containing all 49 Architectural Decision Records (ADRs), including ADR-042 (UI Consolidation), ADR-043 (Centralized Settings State), ADR-044 (Component Decomposition), ADR-045 (Test Suite Expansion), ADR-046 (Auto-Continue), ADR-047 (Quality/Fast Mode), ADR-048 (Cleanup Hardening), and ADR-049 (Batch Worker Reliability).
 
 ---
 
@@ -181,6 +203,8 @@ For detailed insights into the technical architecture, read our official guides:
 *   **Broken/Inverted Themes (White/Sepia looking dark):** If the light themes (White, Sepia) appear as dark grey or muddy brown, you have a browser extension or setting actively forcing dark mode. **You must disable "Dark Reader" or Opera GX's "Force Dark Pages" feature for this site.** These extensions forcefully override custom design tokens at the renderer level.
 *   **Constant Page Reloading (Vite):** If the browser keeps refreshing while a novel is being fetched or translated, ensure `vite.config.ts` has the `server.watch.ignored` paths set to ignore the `backend/` directory and `.db` files.
 *   **Lorebook Notes in Wrong Language:** If extracted terms have notes in Chinese after extraction, ensure your `target_language` setting is configured correctly in Settings before running AI extraction. Re-run the extraction pass to refresh notes in the correct language (ADR-041).
+*   **Gemini 400 Error on Translation:** If Gemini returns a 400 error, you may be using a model that doesn't support thinking mode (`gemini-3.1-flash-lite`, `gemma-4-*`). The app automatically disables thinking mode for incompatible models, but if you see this error, check your model selection in Settings.
+*   **Table of Contents Pages Hallucinating:** If Chapter 0 or metadata pages contain fabricated content after translation, the TOC detection should automatically skip these pages. Pages with 5+ chapter title indicators in under 5000 characters are detected as TOC and kept as-is.
 
 ---
 

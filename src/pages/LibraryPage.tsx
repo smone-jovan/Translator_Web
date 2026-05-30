@@ -73,7 +73,8 @@ const LibraryBookCard = ({
   onCheckHallucinate,
   onRunTxtCleaner,
   onRunEpubCleaner,
-  onDeleteTranslations
+  onDeleteTranslations,
+  onFixTruncated
 }: { 
   thread: ThreadItem, 
   onOpen: () => void, 
@@ -84,7 +85,8 @@ const LibraryBookCard = ({
   onCheckHallucinate: () => void,
   onRunTxtCleaner: () => void,
   onRunEpubCleaner: () => void,
-  onDeleteTranslations: () => void
+  onDeleteTranslations: () => void,
+  onFixTruncated: () => void
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
@@ -219,6 +221,10 @@ const LibraryBookCard = ({
               <MenuItem onClick={() => { onDeleteTranslations(); handleClose(); }} sx={{ color: '#f59e0b' }}>
                 <RotateCcw size={16} />
                 Delete All Translations
+              </MenuItem>
+              <MenuItem onClick={() => { onFixTruncated(); handleClose(); }} sx={{ color: '#3b82f6' }}>
+                <Wand2 size={16} />
+                Fix Truncated
               </MenuItem>
               <MenuItem onClick={() => { onDelete(); handleClose(); }} sx={{ color: '#ef4444' }}>
                 <Trash2 size={16} />
@@ -375,6 +381,23 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       toast.success(`Translations cleared for ${data.chapters_affected} chapters`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to delete translations';
+      toast.error(msg);
+    }
+  };
+
+  const handleFixTruncated = async (thread: ThreadItem) => {
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/fix-truncated`), { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed');
+      fetchThreads();
+      if (data.reset > 0) {
+        toast.success(`Reset ${data.reset} truncated chapters. Run batch translate to re-translate.`);
+      } else {
+        toast.info('No truncated translations found');
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to fix truncated';
       toast.error(msg);
     }
   };
@@ -603,6 +626,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             onRunTxtCleaner={() => runCleanerTool(thread, 'txt-cleaner')}
             onRunEpubCleaner={() => runCleanerTool(thread, 'epub-cleaner')}
             onDeleteTranslations={() => handleDeleteTranslations(thread)}
+            onFixTruncated={() => handleFixTruncated(thread)}
           />
         ))}
 

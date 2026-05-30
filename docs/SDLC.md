@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
-> **Terakhir diperbarui:** 18 Mei 2026  
-> **Status Aktif:** ✅ Phase 14 — Batch Reliability & Global Progress UX (Complete)  
+> **Terakhir diperbarui:** 30 Mei 2026  
+> **Status Aktif:** ✅ Phase 17 — Quality/Fast Mode, Auto-Continue & Batch Reliability (Complete)  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -60,6 +60,9 @@
 | **Phase 12** | **Custom Book Cover Personalization** | ✅ Selesai |
 | **Phase 13** | **Infinite Polish & Scraped Author Integration** | ✅ Selesai |
 | **Phase 14** | **Batch Reliability & Global Progress UX** | ✅ Selesai |
+| **Phase 15** | **Configurable Chapter Token Safety Cap** | ✅ Selesai |
+| **Phase 16** | **Hallucination Audit, Context Expansion & Target Language Enforcement** | ✅ Selesai |
+| **Phase 17** | **Quality/Fast Mode, Auto-Continue, Cleanup Hardening & Batch Reliability** | ✅ Selesai |
 
 ## Phase 1: Foundation (COMPLETE)
 - **Goal**: Membangun fondasi arsitektur backend, skema basis data, dan design system frontend yang seragam.
@@ -134,11 +137,21 @@
 - **Implementation**: Tambah global toggle chapter token safety cap, preset `7K/15K/22K/30K`, default `22K`, mode uncapped saat toggle dimatikan, wiring backend `max_tokens` ke jalur translate chapter, update Settings UI, dan sinkronisasi ADR-035.
 - **Status**: Finished.
 
+## Phase 16: Hallucination Audit, Context Expansion & Target Language Enforcement (COMPLETE)
+- **Goal**: Mendeteksi dan membersihkan output LLM yang terdistorsi, memperluas kapasitas Lorebook, dan memastikan semua catatan AI ditulis dalam bahasa target.
+- **Implementation**: Automated hallucination pattern detection (ADR-036), thread-level TXT cleaning pipeline dengan preview modal (ADR-037), Markdown formatting support untuk bold/italic (ADR-038), penggantian native alert/confirm dengan sonner toasts dan Radix UI AlertDialog (ADR-039), ekspansi kapasitas Lorebook hingga 1000 entri dengan visualisasi graf hubungan karakter (ADR-040), dan injeksi `target_language` ke semua prompt ekstraksi AI (ADR-041).
+- **Status**: Finished.
+
+## Phase 17: Quality/Fast Mode, Auto-Continue, Cleanup Hardening & Batch Reliability (COMPLETE)
+- **Goal**: Mengoptimalkan konfigurasi terjemahan per provider, menangani truncation otomatis, mengeraskan logika cleanup, dan meningkatkan keandalan batch worker.
+- **Implementation**: Konsolidasi UI library (ADR-042), centralized settings state (ADR-043), dekomposisi komponen besar (ADR-044), ekspansi suite test formal (ADR-045), auto-continue pada truncation dengan deteksi `finish_reason` dan continuation loop (ADR-046), Quality/Fast translation mode toggle dengan parameter otomatis per provider (ADR-047), perbaikan cleanup logic untuk ad detection, hallucination stripper, dan preview endpoint (ADR-048), serta batch worker reliability dengan retry exponential backoff dan infinite loop prevention (ADR-049). Tambahan: delete chapter button, TOC page detection & skip, Gemini thinking mode compatibility, dan multiple API keys dengan rotation.
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing
 
-- **Automated Unit Tests**: Unit test suites `backend/scratch/test_context_engine.py` berjalan secara otomatis untuk memvalidasi parser catatan penerjemah, pembersihan markdown horizontal rule, dan aturan minimum panjang glosarium.
+- **Automated Unit Tests**: Unit test suites `backend/tests/` berjalan secara otomatis untuk memvalidasi AI provider factory, settings management, dan service logic menggunakan in-memory SQLite (`conftest.py`).
 - **API test:** Semua endpoint via FastAPI Swagger UI (`/docs`).
 - **UI test:** Chrome DevTools — viewport 375px (mobile), 1280px (desktop).
 - **Linter test**: Enforced `npm run lint` dan compiler verification untuk build 100% bersih.

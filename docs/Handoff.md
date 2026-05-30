@@ -12,7 +12,7 @@
 * **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
 * **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
 * **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
-* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps.
+* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, and Quality/Fast translation mode.
 
 ### 🔌 Sandbox Port Assignments
 * **Vite Frontend:** `http://localhost:5173` (Staged to allow LAN sharing `--host` to read on mobile devices).
@@ -27,35 +27,55 @@
 ├── backend/
 │   ├── database.py             # SQLite database setup, WAL mode, SQLAlchemy ORM models (all tables)
 │   ├── main.py                 # FastAPI app initialization, CORS middleware, router registration
+│   ├── models.py               # SQLAlchemy schema definitions (Threads, Chapters, Lorebook, Settings)
 │   ├── routers/
-│   │   ├── context.py          # Global context CRUD, /api/settings endpoint, AI term extraction
+│   │   ├── batch.py            # Batch translation endpoints (start, status, stop)
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
 │   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
+│   │   ├── polish.py           # Title polishing endpoints & TOC skip logic
 │   │   ├── scrape.py           # URL crawling interface using Crawl4AI
-│   │   ├── threads.py          # Thread/Chapter CRUD, title polish, batch translation, metadata scraping
-│   │   └── translate.py        # Single-chapter streaming translation endpoint
+│   │   ├── settings.py         # Server-side persistent settings sync & API key management
+│   │   └── threads.py          # Thread/Chapter CRUD, delete chapter, batch translation, metadata scraping
 │   ├── services/
-│   │   ├── ai_provider.py      # LM Studio dual-stack client (localhost/127.0.0.1 fallback)
-│   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker loops
-│   │   └── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
-│   └── scratch/                # Developer isolated testing playground and TDD specs
+│   │   ├── ai/
+│   │   │   ├── base.py         # Abstract AI provider interface (streaming, non-streaming)
+│   │   │   ├── factory.py      # Provider factory & model routing logic
+│   │   │   ├── gemini.py       # Google Gemini adapter (thinking mode, safety filters, content parsing)
+│   │   │   ├── lm_studio.py    # LM Studio local adapter (localhost/127.0.0.1 fallback)
+│   │   │   ├── openai.py       # OpenAI cloud adapter
+│   │   │   └── secrets.py      # API key management, multi-key rotation & .env persistence
+│   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker, TOC detection, auto-continue
+│   │   ├── cleaner_tools.py    # TXT/EPUB cleanup pipelines (ad detection, hallucination stripping)
+│   │   ├── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
+│   │   ├── epub_exporter.py    # EPUB builder and metadata packager
+│   │   └── hallucination_detector.py # Garbled output detection & cleanup patterns
+│   └── tests/
+│       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
+│       ├── test_routers/       # Router integration tests
+│       └── test_services/      # Service unit tests (AI factory, settings)
 ├── src/
 │   ├── components/             # Reusable UX controls
 │   │   ├── BottomNav.tsx       # Mobile bottom navigation bar
 │   │   ├── BulkStatusCenter.tsx # Live batch translation progress dashboard
-│   │   ├── BulkTranslateModal.tsx # Batch translation configuration modal (Easy & Advanced modes)
+│   │   ├── BulkTranslateModal.tsx # Batch translation configuration modal (Easy & Advanced modes, Quality/Fast toggle)
 │   │   ├── EditCoverModal.tsx  # Dynamic HTML5 canvas drawing and base64 compression modal
 │   │   ├── ExportModal.tsx     # Compilation controls, metadata forms, checklists
 │   │   ├── Layout.tsx          # App shell layout with sidebar + content area
+│   │   ├── RelationshipGraph.tsx # Interactive character relationship visualization (react-force-graph-2d)
 │   │   ├── ScrapeNUModal.tsx   # Novel Updates & SFACG metadata scraper interface
 │   │   ├── Sidebar.tsx         # Desktop sidebar navigation
+│   │   ├── reader/
+│   │   │   ├── ChapterGrid.tsx # Chapter grid with delete button & title polish actions
+│   │   │   └── SettingsOverlay.tsx # In-reader settings overlay
+│   │   ├── hooks/
+│   │   │   └── use-confirm.tsx # Custom confirmation dialog hook (Radix UI AlertDialog)
 │   │   └── ui/                 # shadcn/ui primitives (Button, Card, etc.)
 │   ├── pages/
 │   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes)
 │   │   ├── LibraryPage.tsx     # Rack bookshelf, reading history continue carousel, batch studios
 │   │   ├── ReaderPage.tsx      # Immersive reader dual-pane (Split-screen translation workspace)
-│   │   ├── SettingsPage.tsx    # Global variables dashboard (Themes, language, prefetch range)
+│   │   ├── SettingsPage.tsx    # Global variables dashboard (Themes, language, API keys, quality mode)
 │   │   └── TranslatePage.tsx   # Quick single-URL import and translate page
 │   ├── lib/                    # Utility functions (api.ts, utils.ts)
 │   ├── index.css               # Central design tokens, variable scopes, animations
