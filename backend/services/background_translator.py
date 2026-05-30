@@ -130,6 +130,20 @@ class BackgroundTranslator:
                 print(f"[SKIP] Chapter {chapter_id} already has a translation. Skipping.")
                 return True
 
+            # Skip table of contents / metadata pages (AI hallucinates when translating these)
+            content_preview = (chapter.content_original or "").strip()
+            toc_indicators = ["简介", "目录", "第一章", "第二章", "第三章", "第四章", "第五章",
+                              "第六章", "第七章", "第八章", "第九章", "第十章"]
+            toc_count = sum(1 for indicator in toc_indicators if indicator in content_preview)
+            # If content has many chapter titles listed (TOC pattern), skip
+            is_toc_page = len(content_preview) < 5000 and toc_count >= 5
+            if is_toc_page:
+                print(f"[SKIP] Chapter {chapter_id} appears to be a table of contents ({toc_count} chapter refs found). Skipping.")
+                chapter.translation_status = "done"
+                chapter.content_translated = chapter.content_original
+                db.commit()
+                return True
+
             # Resolve lm_url and model from GlobalSetting if not explicitly passed
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             if gs:
