@@ -12,7 +12,7 @@
 * **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
 * **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
 * **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
-* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, and Quality/Fast translation mode.
+* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, Quality/Fast translation mode, and auto-continue for truncated translations.
 
 ### 🔌 Sandbox Port Assignments
 * **Vite Frontend:** `http://localhost:5173` (Staged to allow LAN sharing `--host` to read on mobile devices).
@@ -30,26 +30,31 @@
 │   ├── models.py               # SQLAlchemy schema definitions (Threads, Chapters, Lorebook, Settings)
 │   ├── routers/
 │   │   ├── batch.py            # Batch translation endpoints (start, status, stop)
+│   │   ├── context.py          # Context extraction & glossary management
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
 │   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
 │   │   ├── polish.py           # Title polishing endpoints & TOC skip logic
+│   │   ├── relationships.py    # Character relationship graph extraction & D3 data
 │   │   ├── scrape.py           # URL crawling interface using Crawl4AI
 │   │   ├── settings.py         # Server-side persistent settings sync & API key management
-│   │   └── threads.py          # Thread/Chapter CRUD, delete chapter, batch translation, metadata scraping
+│   │   ├── threads.py          # Thread/Chapter CRUD, delete chapter, fix-truncated, batch translation, metadata scraping
+│   │   ├── tools.py            # Utility endpoints (hallucination check, TXT/EPUB cleaners, cleanup preview)
+│   │   └── translate.py        # Single chapter translation & streaming endpoints
 │   ├── services/
 │   │   ├── ai/
-│   │   │   ├── base.py         # Abstract AI provider interface (streaming, non-streaming)
-│   │   │   ├── factory.py      # Provider factory & model routing logic
-│   │   │   ├── gemini.py       # Google Gemini adapter (thinking mode, safety filters, content parsing)
+│   │   │   ├── base.py         # Abstract AI provider interface (streaming, non-streaming, truncation markers)
+│   │   │   ├── factory.py      # Provider factory & model routing logic (Gemini/OpenAI/LM Studio)
+│   │   │   ├── gemini.py       # Google Gemini adapter (thinking mode auto-disable, safety filters, content parsing)
 │   │   │   ├── lm_studio.py    # LM Studio local adapter (localhost/127.0.0.1 fallback)
 │   │   │   ├── openai.py       # OpenAI cloud adapter
-│   │   │   └── secrets.py      # API key management, multi-key rotation & .env persistence
+│   │   │   ├── settings.py     # Active model/URL resolution, token cap calculation
+│   │   │   └── secrets.py      # API key management, multi-key rotation, .env persistence, key rotation
 │   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker, TOC detection, auto-continue
 │   │   ├── cleaner_tools.py    # TXT/EPUB cleanup pipelines (ad detection, hallucination stripping)
 │   │   ├── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
 │   │   ├── epub_exporter.py    # EPUB builder and metadata packager
-│   │   └── hallucination_detector.py # Garbled output detection & cleanup patterns
+│   │   └── hallucination_detector.py # Garbled output detection, repeated word analysis, suspicious char patterns
 │   └── tests/
 │       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
 │       ├── test_routers/       # Router integration tests
@@ -67,6 +72,9 @@
 │   │   ├── Sidebar.tsx         # Desktop sidebar navigation
 │   │   ├── reader/
 │   │   │   ├── ChapterGrid.tsx # Chapter grid with delete button & title polish actions
+│   │   │   ├── ChapterReader.tsx # Chapter content display with markdown rendering
+│   │   │   ├── ChapterListControls.tsx # Chapter list toolbar (bulk translate, polish, export)
+│   │   │   ├── NovelHeader.tsx  # Novel title, cover, metadata display
 │   │   │   └── SettingsOverlay.tsx # In-reader settings overlay
 │   │   ├── hooks/
 │   │   │   └── use-confirm.tsx # Custom confirmation dialog hook (Radix UI AlertDialog)
@@ -81,7 +89,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-001 through ADR-035)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-049)
 ```
 
 ---
@@ -257,6 +265,12 @@ The application avoids native `alert()` and `confirm()` dialogs to maintain a se
   * *Usage:* `const isConfirmed = await confirm({ title: 'Delete?', description: 'Are you sure?', variant: 'destructive' });`
   * This prevents the need for local `isOpen` state management in every component that requires user confirmation.
 
+### I. Fix Truncated Translations & Delete Chapter (ADR-046 follow-up)
+Two quality-of-life endpoints for chapter management:
+
+* **Fix Truncated** (`POST /api/threads/{id}/fix-truncated`): Scans all translated chapters in a thread. If a translation doesn't end with proper punctuation (`.!??"」』~*-)...`), it resets that chapter's translation to `idle` so it can be re-translated. Returns `{ "reset": <count> }`.
+* **Delete Chapter** (`DELETE /api/threads/{id}/chapters/{chapter_id}`): Removes a single chapter and automatically re-orders remaining chapters to maintain sequential numbering. Available in the ChapterGrid UI via a delete button with confirmation dialog.
+
 ---
 
 ## 🧪 5. Sandbox Quality Control & Verification
@@ -268,6 +282,7 @@ Every code change must adhere to the highest standard of type checking and compi
 * **Isolated TDD Specs:** Run test suites using Python unit tests (e.g. in `backend/scratch/test_context_engine.py`) built around in-memory SQLite instances to verify parsing logic safely.
 * **WAL Mode Verification:** On startup, SQLite WAL mode is activated automatically via `database.py` event listener. Verify with `PRAGMA journal_mode` returning `wal`.
 * **Frontend Gate Status:** As of ADR-035 follow-up, `npm run typecheck` and `npm run lint` both pass again after the reader controls and global token safety settings work landed.
+* **Gemini Compatibility:** Thinking mode is automatically disabled for `gemini-2.5`, `gemini-3-flash`, and `gemini-3-pro` models to prevent 400 errors. Model normalization ensures popular models (gemma-4-31b, gemini-3-flash, etc.) resolve to their correct API identifiers.
 
 ---
 
@@ -278,9 +293,24 @@ Here are the immediate strategic features you are tasked to build next:
 Recent completed platform work before these roadmap items:
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
+- ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging
+- ADR-037: TXT/EPUB cleaner tool with cleanup preview and destructive apply workflows
 - ADR-038: lightweight Markdown formatting support for Reader and EPUB builder
 - ADR-039: mobile-friendly notification and dialog system replacing native alerts
 - ADR-040: context capacity expansion (1000 terms) and character relationship visualizer
+- ADR-041: target_lang enforcement in AI extraction to prevent wrong-language glossary terms
+- ADR-042: UI library consolidation and component deduplication
+- ADR-043: centralized settings state management across pages
+- ADR-044: large component decomposition for maintainability
+- ADR-045: formal test suite expansion with pytest fixtures
+- ADR-046: translation auto-continue — detects truncated output and automatically continues until complete
+- ADR-047: Quality/Fast translation mode — Quality mode for cloud (full glossary, style guide), Fast mode for local LLMs (10K token cap)
+- ADR-048: cleanup logic hardening — improved ad detection, false chapter filtering, merge safety
+- ADR-049: batch worker reliability — retry logic for rate limits (429/503), exponential backoff, empty stream defense
+- Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
+- Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
+- TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing
+- Gemini thinking mode auto-disable for incompatible models (gemini-2.5, gemini-3-flash, gemini-3-pro)
 
 ### 1. GGUF Model Cache & Local Model Store
 * **Goal:** Allow users to download and change LLM translation models directly from the reader panel (storing local paths).

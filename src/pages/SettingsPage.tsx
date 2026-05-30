@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getApiUrl } from '@/lib/api';
+import ApiKeyManager from '@/components/ApiKeyManager';
 
 const POPULAR_OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-mini'];
 
@@ -159,9 +160,6 @@ export default function SettingsPage() {
   const [geminiActiveKeyIndex, setGeminiActiveKeyIndex] = useState(0);
   const [openaiApiKeys, setOpenaiApiKeys] = useState<string[]>([]);
   const [openaiActiveKeyIndex, setOpenaiActiveKeyIndex] = useState(0);
-  const [newGeminiKey, setNewGeminiKey] = useState('');
-  const [newOpenaiKey, setNewOpenaiKey] = useState('');
-  
   // UI password toggles
   const [showOpenaiKey, setShowOpenaiKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -280,43 +278,29 @@ export default function SettingsPage() {
     }
   };
 
-  // Multiple key management helpers
-  const addGeminiKey = () => {
-    if (!newGeminiKey.trim()) return;
-    const updated = [...geminiApiKeys, newGeminiKey.trim()];
-    setGeminiApiKeys(updated);
-    setNewGeminiKey('');
-    saveSettingsToServer({ gemini_api_keys: updated });
-  };
-  const removeGeminiKey = (index: number) => {
-    const updated = geminiApiKeys.filter((_, i) => i !== index);
-    setGeminiApiKeys(updated);
-    const newIndex = geminiActiveKeyIndex >= updated.length ? Math.max(0, updated.length - 1) : geminiActiveKeyIndex;
-    setGeminiActiveKeyIndex(newIndex);
-    saveSettingsToServer({ gemini_api_keys: updated, gemini_active_key_index: newIndex });
-  };
-  const setActiveGeminiKey = (index: number) => {
-    setGeminiActiveKeyIndex(index);
-    saveSettingsToServer({ gemini_active_key_index: index });
+  // Generic key management helpers
+  const addKey = (provider: 'gemini' | 'openai', key: string) => {
+    const [keys, setKeys] = provider === 'gemini' ? [geminiApiKeys, setGeminiApiKeys] : [openaiApiKeys, setOpenaiApiKeys];
+    const updated = [...keys, key];
+    setKeys(updated);
+    saveSettingsToServer({ [`${provider}_api_keys`]: updated });
   };
 
-  const addOpenaiKey = () => {
-    if (!newOpenaiKey.trim()) return;
-    const updated = [...openaiApiKeys, newOpenaiKey.trim()];
-    setOpenaiApiKeys(updated);
-    setNewOpenaiKey('');
-    saveSettingsToServer({ openai_api_keys: updated });
+  const removeKey = (provider: 'gemini' | 'openai', index: number) => {
+    const [keys, setKeys, activeIndex, setActiveIndex] = provider === 'gemini'
+      ? [geminiApiKeys, setGeminiApiKeys, geminiActiveKeyIndex, setGeminiActiveKeyIndex]
+      : [openaiApiKeys, setOpenaiApiKeys, openaiActiveKeyIndex, setOpenaiActiveKeyIndex];
+    const updated = keys.filter((_, i) => i !== index);
+    setKeys(updated);
+    const newIndex = activeIndex >= updated.length ? Math.max(0, updated.length - 1) : activeIndex;
+    setActiveIndex(newIndex);
+    saveSettingsToServer({ [`${provider}_api_keys`]: updated, [`${provider}_active_key_index`]: newIndex });
   };
-  const removeOpenaiKey = (index: number) => {
-    const updated = openaiApiKeys.filter((_, i) => i !== index);
-    setOpenaiApiKeys(updated);
-    const newIndex = openaiActiveKeyIndex >= updated.length ? Math.max(0, updated.length - 1) : openaiActiveKeyIndex;
-    setOpenaiActiveKeyIndex(newIndex);
-    saveSettingsToServer({ openai_api_keys: updated, openai_active_key_index: newIndex });
-  };
-  const setActiveOpenaiKey = (index: number) => {
-    setOpenaiActiveKeyIndex(index);
-    saveSettingsToServer({ openai_active_key_index: index });
+
+  const setActiveKey = (provider: 'gemini' | 'openai', index: number) => {
+    const setActiveIndex = provider === 'gemini' ? setGeminiActiveKeyIndex : setOpenaiActiveKeyIndex;
+    setActiveIndex(index);
+    saveSettingsToServer({ [`${provider}_active_key_index`]: index });
   };
 
   // Persist local states
@@ -603,65 +587,14 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Multiple OpenAI Keys */}
-                  <div className="space-y-2 pt-2 border-t border-[var(--border)]">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
-                      Multiple Keys ({openaiApiKeys.length})
-                    </label>
-                    
-                    {openaiApiKeys.length > 0 && (
-                      <div className="space-y-1.5">
-                        {openaiApiKeys.map((key, i) => (
-                          <div key={i} className={cn(
-                            "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs",
-                            i === openaiActiveKeyIndex
-                              ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                              : "border-[var(--border)] bg-[var(--secondary)]"
-                          )}>
-                            <button
-                              onClick={() => setActiveOpenaiKey(i)}
-                              className={cn(
-                                "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0",
-                                i === openaiActiveKeyIndex
-                                  ? "border-[var(--primary)] bg-[var(--primary)]"
-                                  : "border-[var(--border)]"
-                              )}
-                            >
-                              {i === openaiActiveKeyIndex && <div className="w-2 h-2 rounded-full bg-white" />}
-                            </button>
-                            <span className="flex-1 font-mono truncate">
-                              {key.substring(0, 8)}...{key.substring(key.length - 4)}
-                            </span>
-                            <span className="text-[10px] text-[var(--muted-foreground)]">Key {i + 1}</span>
-                            <button
-                              onClick={() => removeOpenaiKey(i)}
-                              className="text-red-400 hover:text-red-300 ml-1"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={newOpenaiKey}
-                        onChange={e => setNewOpenaiKey(e.target.value)}
-                        placeholder="Tambah key baru..."
-                        className="flex-1 bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[var(--primary)]"
-                        onKeyDown={e => e.key === 'Enter' && addOpenaiKey()}
-                      />
-                      <button
-                        onClick={addOpenaiKey}
-                        disabled={!newOpenaiKey.trim()}
-                        className="px-3 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-lg text-xs font-bold disabled:opacity-50"
-                      >
-                        + Add
-                      </button>
-                    </div>
-                  </div>
+                  <ApiKeyManager
+                    label="Multiple Keys"
+                    keys={openaiApiKeys}
+                    activeIndex={openaiActiveKeyIndex}
+                    onAdd={(key) => addKey('openai', key)}
+                    onRemove={(i) => removeKey('openai', i)}
+                    onSetActive={(i) => setActiveKey('openai', i)}
+                  />
                 </div>
 
                 <div className="space-y-4">
@@ -746,68 +679,17 @@ export default function SettingsPage() {
                     </a>
                   </div>
 
-                  {/* Multiple Gemini Keys */}
-                  <div className="space-y-2 pt-2 border-t border-[var(--border)]">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
-                      Multiple Keys ({geminiApiKeys.length})
-                    </label>
-                    <p className="text-[10px] text-[var(--muted-foreground)]">
-                      Tambah beberapa key. Saat key utama kena rate limit, switch ke key berikutnya.
-                    </p>
-                    
-                    {geminiApiKeys.length > 0 && (
-                      <div className="space-y-1.5">
-                        {geminiApiKeys.map((key, i) => (
-                          <div key={i} className={cn(
-                            "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs",
-                            i === geminiActiveKeyIndex
-                              ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                              : "border-[var(--border)] bg-[var(--secondary)]"
-                          )}>
-                            <button
-                              onClick={() => setActiveGeminiKey(i)}
-                              className={cn(
-                                "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0",
-                                i === geminiActiveKeyIndex
-                                  ? "border-[var(--primary)] bg-[var(--primary)]"
-                                  : "border-[var(--border)]"
-                              )}
-                            >
-                              {i === geminiActiveKeyIndex && <div className="w-2 h-2 rounded-full bg-white" />}
-                            </button>
-                            <span className="flex-1 font-mono truncate">
-                              {key.substring(0, 8)}...{key.substring(key.length - 4)}
-                            </span>
-                            <span className="text-[10px] text-[var(--muted-foreground)]">Key {i + 1}</span>
-                            <button
-                              onClick={() => removeGeminiKey(i)}
-                              className="text-red-400 hover:text-red-300 ml-1"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <input
-                        type="password"
-                        value={newGeminiKey}
-                        onChange={e => setNewGeminiKey(e.target.value)}
-                        placeholder="Tambah key baru..."
-                        className="flex-1 bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[var(--primary)]"
-                        onKeyDown={e => e.key === 'Enter' && addGeminiKey()}
-                      />
-                      <button
-                        onClick={addGeminiKey}
-                        disabled={!newGeminiKey.trim()}
-                        className="px-3 py-2 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-lg text-xs font-bold disabled:opacity-50"
-                      >
-                        + Add
-                      </button>
-                    </div>
-                  </div>
+                  <p className="text-[10px] text-[var(--muted-foreground)]">
+                    Tambah beberapa key. Saat key utama kena rate limit, switch ke key berikutnya.
+                  </p>
+                  <ApiKeyManager
+                    label="Multiple Keys"
+                    keys={geminiApiKeys}
+                    activeIndex={geminiActiveKeyIndex}
+                    onAdd={(key) => addKey('gemini', key)}
+                    onRemove={(i) => removeKey('gemini', i)}
+                    onSetActive={(i) => setActiveKey('gemini', i)}
+                  />
                 </div>
 
                 <div className="space-y-4">

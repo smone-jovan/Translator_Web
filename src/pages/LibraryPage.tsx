@@ -63,31 +63,24 @@ interface LibraryPageProps {
   onOpenThread?: (threadId: number) => void;
 }
 
-const LibraryBookCard = ({ 
-  thread, 
-  onOpen, 
-  onDelete, 
-  onBatchTranslate,
-  onEditCover,
-  onScrapeNU,
-  onCheckHallucinate,
-  onRunTxtCleaner,
-  onRunEpubCleaner,
-  onDeleteTranslations,
-  onFixTruncated
-}: { 
-  thread: ThreadItem, 
-  onOpen: () => void, 
-  onDelete: () => void,
-  onBatchTranslate: () => void,
-  onEditCover: () => void,
-  onScrapeNU: () => void,
-  onCheckHallucinate: () => void,
-  onRunTxtCleaner: () => void,
-  onRunEpubCleaner: () => void,
-  onDeleteTranslations: () => void,
-  onFixTruncated: () => void
-}) => {
+interface LibraryBookCardProps {
+  thread: ThreadItem;
+  actions: {
+    onOpen: () => void;
+    onDelete: () => void;
+    onBatchTranslate: () => void;
+    onEditCover: () => void;
+    onScrapeNU: () => void;
+    onCheckHallucinate: () => void;
+    onRunTxtCleaner: () => void;
+    onRunEpubCleaner: () => void;
+    onDeleteTranslations: () => void;
+    onFixTruncated: () => void;
+  };
+}
+
+const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
+  const { onOpen, onDelete, onBatchTranslate, onEditCover, onScrapeNU, onCheckHallucinate, onRunTxtCleaner, onRunEpubCleaner, onDeleteTranslations, onFixTruncated } = actions;
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -611,22 +604,24 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
           <LibraryBookCard 
             key={thread.id} 
             thread={thread} 
-            onOpen={() => onOpenThread?.(thread.id)}
-            onDelete={() => handleDelete(thread.id)}
-            onBatchTranslate={() => handleOpenBatchModal(thread)}
-            onEditCover={() => {
-              setSelectedCoverThread(thread);
-              setIsCoverModalOpen(true);
+            actions={{
+              onOpen: () => onOpenThread?.(thread.id),
+              onDelete: () => handleDelete(thread.id),
+              onBatchTranslate: () => handleOpenBatchModal(thread),
+              onEditCover: () => {
+                setSelectedCoverThread(thread);
+                setIsCoverModalOpen(true);
+              },
+              onScrapeNU: () => {
+                setSelectedScrapeThread(thread);
+                setIsScrapeModalOpen(true);
+              },
+              onCheckHallucinate: () => handleCheckHallucinate(thread),
+              onRunTxtCleaner: () => runCleanerTool(thread, 'txt-cleaner'),
+              onRunEpubCleaner: () => runCleanerTool(thread, 'epub-cleaner'),
+              onDeleteTranslations: () => handleDeleteTranslations(thread),
+              onFixTruncated: () => handleFixTruncated(thread),
             }}
-            onScrapeNU={() => {
-              setSelectedScrapeThread(thread);
-              setIsScrapeModalOpen(true);
-            }}
-            onCheckHallucinate={() => handleCheckHallucinate(thread)}
-            onRunTxtCleaner={() => runCleanerTool(thread, 'txt-cleaner')}
-            onRunEpubCleaner={() => runCleanerTool(thread, 'epub-cleaner')}
-            onDeleteTranslations={() => handleDeleteTranslations(thread)}
-            onFixTruncated={() => handleFixTruncated(thread)}
           />
         ))}
 

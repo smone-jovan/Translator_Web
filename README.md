@@ -48,6 +48,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
 - **SFACG integration** — Direct metadata and chapter scraping from SFACG
 - **Cover editor** — Canvas-based cover compression (<100KB) with gradient fallbacks
 - **Delete chapters** — Remove individual chapters with automatic re-ordering
+- **Fix truncated** — Detect and reset translations cut off mid-sentence
 - **TOC detection** — Auto-skips Table of Contents pages to prevent AI hallucination
 
 ### Context & Intelligence
@@ -123,11 +124,12 @@ All configuration is available in the app's Settings page:
 | Setting | Description |
 |---------|-------------|
 | **AI Provider** | LM Studio / OpenAI / Gemini |
-| **Model** | Provider-specific model selection |
+| **Model** | Provider-specific model selection (Gemini: gemini-2.5-flash, gemini-3-flash, gemma-4-31b, etc.) |
 | **Target Language** | Indonesian / English |
-| **Translation Mode** | Quality (cloud) / Fast (local) |
+| **Translation Mode** | Quality (cloud, full glossary) / Fast (local, 10K cap) |
 | **Token Safety Cap** | 7K / 15K / 22K / 30K / Off |
 | **Glossary Limit** | 20-1000 terms per thread |
+| **API Keys** | Multiple keys per provider with auto-rotation |
 | **Prefetch** | 1-5 chapters ahead, soft/hard mode |
 | **Theme** | 6 glassmorphic presets |
 
@@ -140,7 +142,7 @@ Translator_Web/
 ├── backend/
 │   ├── main.py                 # FastAPI app entry
 │   ├── database.py             # SQLAlchemy models & auto-migration
-│   ├── routers/                # API endpoints (12 routers)
+│   ├── routers/                # API endpoints (14 routers)
 │   ├── services/
 │   │   ├── ai/                 # Provider adapters (Gemini, OpenAI, LM Studio)
 │   │   ├── background_translator.py  # Batch engine with auto-continue
@@ -152,7 +154,7 @@ Translator_Web/
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/
-    ├── decisions/              # 49 Architectural Decision Records
+    ├── decisions/              # 51 Architectural Decision Records
     ├── Handoff.md              # Developer onboarding guide
     └── SDLC.md                 # Development lifecycle docs
 ```
@@ -165,7 +167,7 @@ Translator_Web/
 |----------|-------------|
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
 | [SDLC](docs/SDLC.md) | Software development lifecycle |
-| [ADRs](docs/decisions/) | 49 architectural decision records |
+| [ADRs](docs/decisions/) | 51 architectural decision records |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
 ---
