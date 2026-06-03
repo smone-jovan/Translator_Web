@@ -64,6 +64,8 @@ def _is_retryable_error(error: Exception) -> bool:
         "timeout",
         "temporarily",
         "try again",
+        "empty content",       # Added to handle Gemini blank responses
+        "empty translation",   # Added to handle over-truncation
     ]
     return any(pattern in err_str for pattern in retryable_patterns)
 
@@ -262,7 +264,7 @@ class BackgroundTranslator:
                         messages = [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": content_original},
-                            {"role": "assistant", "content": full_content},
+                            {"role": "assistant", "content": f"... {tail}"},
                             {"role": "user", "content": "Your previous translation was cut off mid-sentence. Continue translating from exactly where you stopped. Do NOT repeat any already-translated text. Just continue the translation naturally."},
                         ]
 
@@ -320,10 +322,13 @@ class BackgroundTranslator:
                     # Handle prohibited/filtered response — skip this chapter entirely
                     if round_prohibited:
                         print(f"[PROHIBITED] Chapter {chapter_id} was blocked by AI content filter. Skipping.")
+                        if chapter_id in translation_queues:
+                            for q in translation_queues[chapter_id]:
+                                await q.put("[PROHIBITED]")
                         with SessionLocal() as db:
                             ch = db.get(Chapter, chapter_id)
                             if ch:
-                                ch.translation_status = "idle"
+                                ch.translation_status = "prohibited"
                                 ch.content_translated = None
                                 db.commit()
                         return False
@@ -534,12 +539,19 @@ class BackgroundTranslator:
                         delay = RETRY_BASE_DELAY * (2 ** (retry_count - 1))
                         print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/{MAX_RETRIES}). "
                               f"Re-queuing after {delay:.0f}s delay. Error: {e}")
-                        # Reset chapter status back to idle so it can be retried
+                        
+                        # Rotate API key if applicable, then reset chapter status
+                        from services.ai.secrets import rotate_api_key
                         with SessionLocal() as db:
+                            gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
+                            if gs_fresh and gs_fresh.llm_provider:
+                                # Rotate the key globally
+                                rotate_api_key(gs_fresh.llm_provider, gs_fresh)
+                            
                             ch = db.get(Chapter, ch_id)
                             if ch:
                                 ch.translation_status = "idle"
-                                db.commit()
+                            db.commit()
                         await asyncio.sleep(delay)
                         continue  # Don't increment completed — will retry
                     else:

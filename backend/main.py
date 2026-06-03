@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 
-from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships
+from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery
 
 
 @asynccontextmanager
@@ -60,3 +60,4 @@ app.include_router(polish.router)
 app.include_router(batch.router)
 app.include_router(tools.router)
 app.include_router(relationships.router)
+app.include_router(discovery.router)

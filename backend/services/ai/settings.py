@@ -40,6 +40,12 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
 def get_chapter_translation_max_tokens(gs: GlobalSetting | None = None) -> int | None:
     if not gs:
         return DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS
+    # Gemii models: no hard cap, but flash-lite has ~16K output limit
+    if gs.llm_provider == "gemini":
+        # gemini-3.1-flash-lite has a hard ~16K output token limit
+        if gs.gemini_model and "gemini-3.1-flash-lite" in gs.gemini_model.lower():
+            return 14000  # Leave buffer under 16K limit
+        return None
     if getattr(gs, "chapter_token_cap_enabled", 1) != 1:
         return None
     cap = getattr(gs, "chapter_token_cap", DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS) or DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS

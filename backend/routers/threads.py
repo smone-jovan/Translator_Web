@@ -597,7 +597,7 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
 
         if not ends_properly:
             chapter.content_translated = None
-            chapter.title_translated = None
+            # Preserve translated title - only reset content
             chapter.translation_status = "idle"
             reset_count += 1
 

@@ -47,3 +47,7 @@ backend/scratch_test_regex.py
 
 # Opencode config (contains API keys)
 opencode.json
+
+# Playwright profiles
+backend/.pw_nu_profile/
+backend/cf_blocked.png

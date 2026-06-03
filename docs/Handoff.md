@@ -27,10 +27,10 @@
 ├── backend/
 │   ├── database.py             # SQLite database setup, WAL mode, SQLAlchemy ORM models (all tables)
 │   ├── main.py                 # FastAPI app initialization, CORS middleware, router registration
-│   ├── models.py               # SQLAlchemy schema definitions (Threads, Chapters, Lorebook, Settings)
 │   ├── routers/
 │   │   ├── batch.py            # Batch translation endpoints (start, status, stop)
 │   │   ├── context.py          # Context extraction & glossary management
+│   │   ├── discovery.py        # Novel discovery endpoints
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
 │   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
@@ -53,7 +53,6 @@
 │   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker, TOC detection, auto-continue
 │   │   ├── cleaner_tools.py    # TXT/EPUB cleanup pipelines (ad detection, hallucination stripping)
 │   │   ├── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
-│   │   ├── epub_exporter.py    # EPUB builder and metadata packager
 │   │   └── hallucination_detector.py # Garbled output detection, repeated word analysis, suspicious char patterns
 │   └── tests/
 │       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
@@ -76,10 +75,11 @@
 │   │   │   ├── ChapterListControls.tsx # Chapter list toolbar (bulk translate, polish, export)
 │   │   │   ├── NovelHeader.tsx  # Novel title, cover, metadata display
 │   │   │   └── SettingsOverlay.tsx # In-reader settings overlay
-│   │   ├── hooks/
-│   │   │   └── use-confirm.tsx # Custom confirmation dialog hook (Radix UI AlertDialog)
 │   │   └── ui/                 # shadcn/ui primitives (Button, Card, etc.)
+│   ├── hooks/
+│   │   └── use-confirm.tsx # Custom confirmation dialog hook (Radix UI AlertDialog)
 │   ├── pages/
+│   │   ├── BrowseNovelPage.tsx # Novel discovery & SFACG scraping dashboard
 │   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes)
 │   │   ├── LibraryPage.tsx     # Rack bookshelf, reading history continue carousel, batch studios
 │   │   ├── ReaderPage.tsx      # Immersive reader dual-pane (Split-screen translation workspace)

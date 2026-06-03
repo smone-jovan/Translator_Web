@@ -7,6 +7,7 @@ import LibraryPage from './pages/LibraryPage';
 import ContextLibraryPage from './pages/ContextLibraryPage';
 import SettingsPage from './pages/SettingsPage';
 import ReaderPage from './pages/ReaderPage';
+import BrowseNovelPage from './pages/BrowseNovelPage';
 import BulkStatusCenter from './components/BulkStatusCenter';
 import type { TabId } from './components/Sidebar';
 
@@ -27,7 +28,7 @@ function readAppSession(): AppSessionState | null {
     if (
       typeof parsed.activeTab !== 'string' ||
       typeof parsed.lastActiveAt !== 'number' ||
-      !['translate', 'library', 'context', 'settings'].includes(parsed.activeTab)
+      !['translate', 'library', 'context', 'settings', 'browse'].includes(parsed.activeTab)
     ) {
       localStorage.removeItem(APP_SESSION_KEY);
       return null;
@@ -123,6 +124,7 @@ export default function App() {
             case 'library': return <LibraryPage onOpenThread={openReaderFromLibrary} />;
             case 'context': return <ContextLibraryPage />;
             case 'settings': return <SettingsPage />;
+            case 'browse': return <BrowseNovelPage />;
           }
         }}
       </Layout>

@@ -69,7 +69,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
 | **AI Providers** | LM Studio, Google Gemini, OpenAI |
 | **Scraping** | Crawl4AI, BeautifulSoup4 |
 | **EPUB** | EbookLib |
-| **Testing** | pytest (backend), Vitest (frontend) |
+| **Testing** | pytest (backend) |
 
 ---
 
@@ -142,15 +142,15 @@ Translator_Web/
 ├── backend/
 │   ├── main.py                 # FastAPI app entry
 │   ├── database.py             # SQLAlchemy models & auto-migration
-│   ├── routers/                # API endpoints (14 routers)
+│   ├── routers/                # API endpoints (13 routers)
 │   ├── services/
 │   │   ├── ai/                 # Provider adapters (Gemini, OpenAI, LM Studio)
 │   │   ├── background_translator.py  # Batch engine with auto-continue
 │   │   ├── context_engine.py   # Prompt builder & glossary injection
 │   │   └── cleaner_tools.py    # TXT/EPUB cleanup pipelines
-│   └── tests/                  # pytest test suite (48 tests)
+│   └── tests/                  # pytest test suite configuration
 ├── src/
-│   ├── pages/                  # 5 main pages
+│   ├── pages/                  # 6 main pages
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/

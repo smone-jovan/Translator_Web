@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from database import Base, GlobalSetting
+from database import Base, GlobalSetting, Chapter, Thread
 
 
 @pytest.fixture

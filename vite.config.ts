@@ -12,6 +12,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true, // Allow access from local network (mobile)
     watch: {
       ignored: [
         '**/backend/**',

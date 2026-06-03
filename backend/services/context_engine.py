@@ -24,11 +24,15 @@ class ContextEngine:
         is_quality = translation_mode == "quality"
         
         # Ini core instruksi buat AI-nya. Isinya aturan etika translasi yang diminta user.
-        guidelines = f"""Role:
+        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation in {lang_name} only. No Chinese characters or pinyin allowed in the output.
+
+Role:
 You are an expert translator of Chinese web novels (urban / system / transmigration).
 You must translate only the chapter body and title provided by the user.
 Do not add, remove, or summarize content. **DONT SUMMARY NOR CUT THE CHAPTER**.
 Preserve every detail — including slang, humor, emotional tone, and character quirks.
+
+IMPORTANT: Translate ALL text to {lang_name}. Do NOT output Chinese, do NOT leave raw pinyin.
 
 Objective:
 Translate the text from Chinese to natural, engaging, immersive {lang_name} — as if written by a native web novel author.
@@ -300,8 +304,23 @@ If no new terms, skip.
         cleaned = text
         if always_hide_thoughts:
             cleaned = ContextEngine.strip_thinking_blocks(cleaned)
+        
+        # Fallback: if stripping thoughts removed EVERYTHING, the AI might have put the translation inside <think>
+        if not cleaned.strip():
+            cleaned = text
+
         cleaned = ContextEngine.strip_translator_notes(cleaned)
+        
+        # Fallback again
+        if not cleaned.strip():
+            cleaned = text
+
         cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
+        
+        # Final safety fallback
+        if not cleaned.strip():
+            cleaned = text
+
         return cleaned.strip()
 
     @staticmethod

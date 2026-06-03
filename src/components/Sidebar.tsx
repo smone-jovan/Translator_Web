@@ -3,7 +3,7 @@ import { BookOpen, Languages, Library, Settings, Globe, User, Star } from 'lucid
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-export type TabId = 'translate' | 'library' | 'context' | 'settings';
+export type TabId = 'translate' | 'library' | 'context' | 'settings' | 'browse';
 
 interface NavItem {
   id: TabId;
@@ -67,11 +67,23 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
 
         {/* Bottom Section */}
         <div className="mt-auto space-y-6 w-full px-2">
-           <button className="w-full flex flex-col items-center p-3 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors group">
-            <Globe size={22} />
+           <button 
+             onClick={() => { onTabChange('browse'); onClose(); }}
+             title="Browse NovelUpdates"
+             className={cn(
+               "w-full flex flex-col items-center p-3 transition-colors group relative rounded-xl",
+               activeTab === 'browse'
+                 ? "bg-[#5c6aff]/10 text-[#5c6aff]"
+                 : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[#5c6aff]"
+             )}
+           >
+            <Globe size={22} className={activeTab === 'browse' ? 'scale-110' : 'group-hover:scale-110 transition-transform'} />
+            <div className="absolute left-full ml-4 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
+              Browse Novel
+            </div>
           </button>
-          <button className="w-full flex flex-col items-center p-3 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors group">
-            <Star size={22} />
+          <button className="w-full flex flex-col items-center p-3 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors group relative rounded-xl">
+            <Star size={22} className="group-hover:scale-110 transition-transform" />
           </button>
           <div className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center mx-auto cursor-pointer hover:border-[var(--primary)] transition-all">
             <User size={20} className="text-[var(--muted-foreground)]" />

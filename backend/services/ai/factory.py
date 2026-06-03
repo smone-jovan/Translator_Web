@@ -71,6 +71,8 @@ class AIProviderFactory:
                     resolved_model = "gemini-3-pro-preview"
                 elif "gemini-3.1-pro" in model_lower and not "preview" in model_lower:
                     resolved_model = "gemini-3.1-pro-preview"
+                elif "gemini-3.1-flash-lite" in model_lower:
+                    resolved_model = "gemini-3.1-flash-lite"
                 
                 print(f"[DEBUG] get_provider -> provider is gemini. Input model: '{model}', resolved_model: '{resolved_model}', database gemini_model: '{gs.gemini_model if gs else 'N/A'}'")
                 resolved_key = api_key or get_active_api_key("gemini", gs)

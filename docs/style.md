@@ -18,7 +18,7 @@ Aplikasi mendukung 6 preset visual yang disimpan di server (`GlobalSetting`) dan
 | **Omni** | `data-theme="omni"` | #0f2b60 | #e0e7ff | #818cf8 | #153573 |
 
 ### CSS Variable System
-Semua komponen menggunakan CSS variables melalui `var(--background)`, `var(--foreground)`, dsb. Variabel-variabel ini didefinisikan di `src/index.css` di dalam `@layer base`.
+Semua komponen menggunakan CSS variables melalui `var(--background)`, `var(--foreground)`, dsb. Variabel-variabel ini didefinisikan di `src/index.css`. Berdasarkan ADR-028, variabel tema telah dikeluarkan dari `@layer base` agar mendapatkan tingkat prioritas spesifisitas CSS tertinggi dan tidak ter-override oleh ekstensi dark-mode otomatis browser.
 
 Token utama:
 - `--background`, `--foreground` — warna dasar halaman

@@ -21,6 +21,7 @@ import ListItemText from '@mui/material/ListItemText';
 import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
+import { getApiUrl } from '@/lib/api';
 
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import Settings from '@mui/icons-material/Settings';
@@ -38,6 +39,7 @@ interface Chapter {
   title_original: string | null;
   title_translated?: string | null;
   has_translation: boolean;
+  translation_status?: string;
 }
 
 interface BulkTranslateModalProps {
@@ -67,12 +69,17 @@ export default function BulkTranslateModal({
   const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(
     () => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality'
   );
+  const [includeProhibited, setIncludeProhibited] = useState<boolean>(false);
 
   // Update selected IDs in Easy Mode
-  const updateEasySelection = (quantity: number) => {
+  const updateEasySelection = (quantity: number, incProhibited = includeProhibited) => {
     // Find chapters that are not translated yet
-    const untranslated = chapters.filter(c => !c.has_translation);
-    const baseList = untranslated.length > 0 ? untranslated : chapters;
+    const untranslated = chapters.filter(c => {
+      if (c.has_translation) return false;
+      if (!incProhibited && c.translation_status === 'prohibited') return false;
+      return true;
+    });
+    const baseList = untranslated.length > 0 ? untranslated : chapters.filter(c => incProhibited || c.translation_status !== 'prohibited');
     
     const result = baseList.slice(0, quantity).map(c => c.id);
     setSelectedIds(result);
@@ -82,7 +89,7 @@ export default function BulkTranslateModal({
     if (isOpen) {
       if (!hasInitialized) {
         // Fetch lorebook count to determine recommendation
-        fetch(`http://localhost:8000/api/threads/${threadId}/lorebook`)
+        fetch(getApiUrl(`/api/threads/${threadId}/lorebook`))
           .then(res => res.json())
           .then(data => {
             const count = data.length || 0;
@@ -302,6 +309,42 @@ export default function BulkTranslateModal({
                 }
               }}
             />
+
+            {/* Quick Prohibited Toggle in Easy Mode */}
+            {(() => {
+              const prohibitedCount = chapters.filter(c => c.translation_status === 'prohibited').length;
+              if (prohibitedCount === 0) return null;
+              
+              return (
+                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 1.5, background: 'rgba(239, 68, 68, 0.1)', borderRadius: '12px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                  <Typography variant="caption" sx={{ color: '#ef5350', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
+                    <Shield sx={{ fontSize: 16, mr: 0.5 }} />
+                    {prohibitedCount} chapters were previously blocked by AI.
+                  </Typography>
+                  <Button 
+                    size="small" 
+                    variant={includeProhibited ? "outlined" : "contained"}
+                    onClick={() => {
+                      const newVal = !includeProhibited;
+                      setIncludeProhibited(newVal);
+                      updateEasySelection(range, newVal);
+                    }}
+                    sx={{ 
+                      fontSize: '0.65rem', 
+                      fontWeight: 800, 
+                      borderRadius: '8px',
+                      background: includeProhibited ? 'transparent' : '#ef5350', 
+                      borderColor: '#ef5350',
+                      color: includeProhibited ? '#ef5350' : '#fff',
+                      boxShadow: 'none',
+                      '&:hover': { background: '#d32f2f', color: '#fff', borderColor: '#d32f2f' }
+                    }}
+                  >
+                    {includeProhibited ? 'Exclude' : 'Include (+)'}
+                  </Button>
+                </Box>
+              );
+            })()}
           </Box>
         )}
 
@@ -361,6 +404,23 @@ export default function BulkTranslateModal({
               >
                 Clear All
               </Button>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => {
+                  const prohibited = chapters.filter(c => c.translation_status === 'prohibited').map(c => c.id);
+                  setSelectedIds(prev => Array.from(new Set([...prev, ...prohibited])));
+                }}
+                sx={{ 
+                  fontSize: '0.65rem', 
+                  borderRadius: '8px', 
+                  borderColor: 'rgba(239, 68, 68, 0.5)', 
+                  color: '#ef5350',
+                  fontWeight: 700
+                }}
+              >
+                Select Prohibited
+              </Button>
             </Box>
 
             {/* Manual Checkbox List */}
@@ -394,6 +454,11 @@ export default function BulkTranslateModal({
                       <span style={{ fontSize: '0.8rem', fontWeight: 600, opacity: ch.has_translation ? 0.5 : 1 }}>
                         {`Ch ${ch.order}: ${ch.title_original || 'Untitled'}`}
                       </span>
+                      {ch.translation_status === 'prohibited' && (
+                        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px' }}>
+                          PROHIBITED
+                        </span>
+                      )}
                     </ListItemText>
                     {ch.has_translation && (
                       <Tooltip title="Already translated. Re-translating will overwrite it.">
@@ -664,6 +729,54 @@ export default function BulkTranslateModal({
                 <Typography variant="body2" sx={{ color: 'var(--foreground)', fontWeight: 'bold' }}>Force Overwrite Existing</Typography>
                 <Typography variant="caption" sx={{ opacity: 0.5, display: 'block', color: 'var(--muted-foreground)' }}>
                   Re-translate chapters that already have saved translations.
+                </Typography>
+              </Box>
+            }
+          />
+        </Box>
+
+        {/* Prohibited Content Toggle */}
+        <Box sx={{ 
+          p: 2.5, 
+          background: 'rgba(0,0,0,0.3)', 
+          borderRadius: '20px', 
+          border: '1px solid var(--border)',
+          mb: 3
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+            <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--foreground)', fontWeight: 'bold' }}>
+              <Shield fontSize="small" sx={{ color: '#ef5350' }} /> Retry Prohibited
+            </Typography>
+            {includeProhibited ? (
+              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef5350', fontSize: '0.65rem', fontWeight: 900 }}>
+                RISKY
+              </Box>
+            ) : (
+              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(76, 175, 80, 0.12)', color: '#81c784', fontSize: '0.65rem', fontWeight: 900 }}>
+                SAFE (IGNORED)
+              </Box>
+            )}
+          </Box>
+          
+          <FormControlLabel
+            control={
+              <Checkbox 
+                checked={includeProhibited} 
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setIncludeProhibited(val);
+                  if (mode === 'easy') {
+                    updateEasySelection(range, val);
+                  }
+                }}
+                sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: '#ef5350' } }}
+              />
+            }
+            label={
+              <Box>
+                <Typography variant="body2" sx={{ color: 'var(--foreground)', fontWeight: 'bold' }}>Include Prohibited Content</Typography>
+                <Typography variant="caption" sx={{ opacity: 0.5, display: 'block', color: 'var(--muted-foreground)' }}>
+                  Translates chapters previously blocked by AI due to adult/violent content. May cause failures.
                 </Typography>
               </Box>
             }
