@@ -179,7 +179,7 @@ export default function ChapterReader({
 
     const saveScrollProgress = async () => {
       try {
-        await fetch(`/api/threads/${thread.id}/chapters/${chapterContent.id}/scroll`, {
+        await fetch(getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/scroll`), {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
