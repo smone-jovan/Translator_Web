@@ -243,7 +243,7 @@ class BackgroundTranslator:
                 chunk_count = 0
                 notes_started = False
                 notes_header_pattern = re.compile(
-                    r"(\n\s*[-—*_]*\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*###\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*Notes?[:\s])", 
+                    r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?)", 
                     re.IGNORECASE
                 )
 

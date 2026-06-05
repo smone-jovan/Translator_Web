@@ -74,7 +74,7 @@ Use Markdown for chapter titles, character status screens, or system notificatio
 Ensure double newlines between paragraphs for clear readability.
 If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
 Never output malformed token soup, mixed-script noise, isolated symbol clusters, or analysis phrases pretending to be translation.
-After the chapter, if needed, add a “Translator Notes:” section with brief bullet points for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
+After the chapter, if needed, add a section starting EXACTLY with the phrase "### TRANSLATOR NOTES:" for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
 **FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
 Do NOT include terms from the Style Reference examples unless they are in the chapter.
 If no new terms, skip.
@@ -220,9 +220,9 @@ If no new terms, skip.
         if not text:
             return ""
         import re
-        # Pola pencarian header catatan penerjemah
+        # Pola pencarian header catatan penerjemah (Mencegah false positive dengan Author's Note)
         header_pattern = re.compile(
-            r"(\n\s*[-—*_]*\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*###\s*Translator['s]*\s*Notes?|\n\s*[-—*_]*\s*Notes?[:\s])", 
+            r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?)", 
             re.IGNORECASE
         )
         
@@ -332,8 +332,8 @@ If no new terms, skip.
         import re
         from sqlalchemy import select, func
         
-        # Cari header semacam "Translator Notes:", "Notes:", dsb.
-        header_pattern = re.compile(r"(Translator['s]*\s*Notes?[:\s]*|### Translator['s]*\s*Notes?[:\s]*|Notes?[:\s]*)", re.IGNORECASE)
+        # Cari header semacam "Translator Notes:", "Translation Notes:", "Glossary:", dsb.
+        header_pattern = re.compile(r"([-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*)", re.IGNORECASE)
         match = header_pattern.search(full_text)
         
         if not match:
