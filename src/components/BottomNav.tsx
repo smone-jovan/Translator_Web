@@ -1,6 +1,5 @@
 import { cn } from '@/lib/utils';
 import { navItems, type TabId } from './Sidebar';
-import { Globe } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: TabId;
@@ -17,7 +16,7 @@ export default function BottomNav({ activeTab, onTabChange, visible = true }: Bo
       )}
     >
       <div className="bg-[var(--card)]/80 backdrop-blur-xl border border-[var(--border)] rounded-2xl shadow-2xl flex items-center justify-around p-2">
-        {[...navItems, { id: 'browse' as TabId, icon: <Globe size={24} />, label: 'Browse' }].map((item) => (
+        {navItems.map((item) => (
           <button
             key={item.id}
             onClick={() => onTabChange(item.id)}
