@@ -6,6 +6,7 @@ export interface Chapter {
   word_count: number;
   has_translation: boolean;
   translation_status?: string;
+  is_bookmarked?: boolean;
 }
 
 export interface ThreadDetail {
@@ -33,4 +34,5 @@ export interface ChapterContent {
   content_translated: string | null;
   translation_status: string | null;
   scroll_progress?: number;
+  is_bookmarked?: boolean;
 }

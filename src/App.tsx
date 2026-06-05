@@ -7,6 +7,7 @@ import LibraryPage from './pages/LibraryPage';
 import ContextLibraryPage from './pages/ContextLibraryPage';
 import SettingsPage from './pages/SettingsPage';
 import ReaderPage from './pages/ReaderPage';
+import BookmarksPage from './pages/BookmarksPage';
 import BulkStatusCenter from './components/BulkStatusCenter';
 import type { TabId } from './components/Sidebar';
 
@@ -27,7 +28,7 @@ function readAppSession(): AppSessionState | null {
     if (
       typeof parsed.activeTab !== 'string' ||
       typeof parsed.lastActiveAt !== 'number' ||
-      !['translate', 'library', 'context', 'settings'].includes(parsed.activeTab)
+      !['translate', 'library', 'context', 'settings', 'bookmarks'].includes(parsed.activeTab)
     ) {
       localStorage.removeItem(APP_SESSION_KEY);
       return null;
@@ -50,6 +51,7 @@ function readAppSession(): AppSessionState | null {
 export default function App() {
   const initialSession = readAppSession();
   const [openThreadId, setOpenThreadId] = useState<number | null>(initialSession?.openThreadId ?? null);
+  const [openChapterId, setOpenChapterId] = useState<number | null>(null);
   const [isReadingChapter, setIsReadingChapter] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>(initialSession?.activeTab ?? 'translate');
 
@@ -73,9 +75,14 @@ export default function App() {
     };
   }, [activeTab, openThreadId]);
 
-  const openReaderFromLibrary = (threadId: number) => {
+  const openReaderFromLibrary = (threadId: number, chapterId?: number) => {
     setActiveTab('library');
     setOpenThreadId(threadId);
+    if (chapterId) {
+      setOpenChapterId(chapterId);
+    } else {
+      setOpenChapterId(null);
+    }
   };
 
   if (openThreadId !== null) {
@@ -83,9 +90,11 @@ export default function App() {
       <ConfirmProvider>
         <ReaderPage
           threadId={openThreadId}
+          initialChapterId={openChapterId}
           onBack={() => {
             setIsReadingChapter(false);
             setOpenThreadId(null);
+            setOpenChapterId(null);
           }}
           onReadingChapterChange={setIsReadingChapter}
         />
@@ -103,6 +112,7 @@ export default function App() {
           setActiveTab(tab);
           setIsReadingChapter(false);
           setOpenThreadId(null);
+          setOpenChapterId(null);
         }}
       >
         {(activeTab) => {
@@ -123,6 +133,7 @@ export default function App() {
             case 'library': return <LibraryPage onOpenThread={openReaderFromLibrary} />;
             case 'context': return <ContextLibraryPage />;
             case 'settings': return <SettingsPage />;
+            case 'bookmarks': return <BookmarksPage onOpenChapter={(tid, cid) => openReaderFromLibrary(tid, cid)} onOpenLibrary={() => setActiveTab('library')} />;
           }
         }}
       </Layout>

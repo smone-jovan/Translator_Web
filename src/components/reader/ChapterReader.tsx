@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import { renderMarkdown } from '@/lib/utils';
@@ -60,6 +60,26 @@ export default function ChapterReader({
 }: ChapterReaderProps) {
   const showOriginal = displayMode === 'both' || displayMode === 'original';
   const showTranslated = displayMode === 'both' || displayMode === 'translated';
+
+  const [isBookmarked, setIsBookmarked] = useState(false);
+
+  useEffect(() => {
+    setIsBookmarked(chapterContent?.is_bookmarked || false);
+  }, [chapterContent]);
+
+  const toggleBookmark = async () => {
+    if (!chapterContent) return;
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/bookmark`), {
+        method: 'PUT',
+      });
+      if (res.ok) {
+        setIsBookmarked(!isBookmarked);
+      }
+    } catch (err) {
+      console.error('Failed to toggle bookmark:', err);
+    }
+  };
 
   const [scrollProgress, setScrollProgress] = useState(0);
   const originalScrollContainerRef = useRef<HTMLDivElement>(null);
@@ -258,6 +278,17 @@ export default function ChapterReader({
           <span className="text-[10px] md:text-xs font-bold tracking-tight">
             CHAPTER {selectedChapterIdx + 1}
           </span>
+          <button 
+            onClick={toggleBookmark}
+            title={isBookmarked ? "Remove Bookmark" : "Bookmark Chapter"}
+            className={`p-1.5 rounded-lg transition-colors ml-2 ${
+              isBookmarked 
+                ? 'text-yellow-500 bg-yellow-500/10' 
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--secondary)]'
+            }`}
+          >
+            <Star size={16} className={isBookmarked ? 'fill-current' : ''} />
+          </button>
         </div>
         
         {/* Reader Controls (Display Mode) */}

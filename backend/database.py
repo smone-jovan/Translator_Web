@@ -102,6 +102,7 @@ class Chapter(Base):
     content_original: Mapped[Optional[str]] = mapped_column(Text)
     content_translated: Mapped[Optional[str]] = mapped_column(Text)
     translation_status: Mapped[str] = mapped_column(String(20), default="idle")
+    is_bookmarked: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     thread: Mapped["Thread"] = relationship(back_populates="chapters")
@@ -186,10 +187,16 @@ def init_db():
     columns_lb = [c['name'] for c in inspector.get_columns('lorebook_entries')]
     columns_th = [c['name'] for c in inspector.get_columns('threads')]
     columns_ub = [c['name'] for c in inspector.get_columns('user_bookmarks')]
+    columns_ch = [c['name'] for c in inspector.get_columns('chapters')]
 
     # Ensure character_relationships table exists (it gets created by create_all, but just to be safe with migrations)
 
     with engine.connect() as conn:
+        if 'is_bookmarked' not in columns_ch:
+            print("[MIGRASI] Menambahkan kolom 'is_bookmarked' ke dalam tabel chapters...")
+            conn.execute(text("ALTER TABLE chapters ADD COLUMN is_bookmarked BOOLEAN DEFAULT 0"))
+            conn.commit()
+
         if 'author' not in columns_th:
             print("[MIGRASI] Menambahkan kolom 'author' ke dalam tabel threads...")
             conn.execute(text("ALTER TABLE threads ADD COLUMN author VARCHAR(200)"))

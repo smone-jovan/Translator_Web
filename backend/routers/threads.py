@@ -27,6 +27,7 @@ class ChapterOut(BaseModel):
     word_count: int
     has_translation: bool
     translation_status: str
+    is_bookmarked: bool = False
 
     class Config:
         from_attributes = True
@@ -77,6 +78,7 @@ class ChapterContent(BaseModel):
     content_translated: Optional[str]
     translation_status: Optional[str]
     scroll_progress: float = 0.0
+    is_bookmarked: bool = False
     segments: List[TranslationSegmentOut] = []
 
 
@@ -564,6 +566,7 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
         content_translated=chapter.content_translated,
         translation_status=chapter.translation_status,
         scroll_progress=current_scroll_progress,
+        is_bookmarked=chapter.is_bookmarked,
         segments=[
             TranslationSegmentOut(
                 id=s.id,
@@ -701,3 +704,42 @@ def update_chapter_scroll(thread_id: int, chapter_id: int, payload: ScrollUpdate
         bookmark.scroll_progress = payload.scroll_progress
     db.commit()
     return {"status": "success", "scroll_progress": bookmark.scroll_progress}
+
+class BookmarkedChapterOut(BaseModel):
+    id: int
+    thread_id: int
+    thread_title: str
+    order: int
+    title_original: Optional[str]
+    title_translated: Optional[str]
+
+@router.get("/bookmarks", response_model=List[BookmarkedChapterOut])
+def get_all_bookmarks(db: Session = Depends(get_db)):
+    """Get all bookmarked chapters."""
+    stmt = select(Chapter).where(Chapter.is_bookmarked == True).order_by(Chapter.thread_id, Chapter.order)
+    chapters = db.execute(stmt).scalars().all()
+    
+    results = []
+    for ch in chapters:
+        thread_title = ch.thread.title_translated if ch.thread.title_translated else ch.thread.title_original
+        results.append({
+            "id": ch.id,
+            "thread_id": ch.thread_id,
+            "thread_title": thread_title or "Untitled Thread",
+            "order": ch.order,
+            "title_original": ch.title_original,
+            "title_translated": ch.title_translated
+        })
+    return results
+
+@router.put("/threads/{thread_id}/chapters/{chapter_id}/bookmark")
+def toggle_chapter_bookmark(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
+    """Toggle the bookmark/star status of a chapter."""
+    stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
+    chapter = db.execute(stmt).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+    
+    chapter.is_bookmarked = not chapter.is_bookmarked
+    db.commit()
+    return {"status": "success", "is_bookmarked": chapter.is_bookmarked}
