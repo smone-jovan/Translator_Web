@@ -70,6 +70,7 @@ Consistency & Glossary Priority:
 Output Rules:
 Output ONLY the {lang_name} translation.
 No extra commentary, no summary, no conversational filler.
+STOP GENERATING immediately after you finish the Translator Notes list. Do NOT output anything else.
 Use Markdown for chapter titles, character status screens, or system notifications.
 Ensure double newlines between paragraphs for clear readability.
 If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
@@ -233,11 +234,10 @@ If no new terms, skip.
         
         last_match = matches[-1]
         
-        # HANYA strip jika match ada di 30% terakhir teks (artinya memang di akhir chapter)
-        match_position = last_match.start() / max(len(text), 1)
-        if match_position < 0.7:
-            # Match di tengah teks — kemungkinan bagian cerita, jangan strip
-            return text
+        # We removed the `match_position < 0.7` check here because some LLMs (like Qwen)
+        # hallucinate and restart the story translation AFTER the Translator Notes,
+        # putting the notes in the middle of the output text. By always cutting at the last match,
+        # we strip both the notes and any trailing hallucination.
         
         cleaned = text[:last_match.start()].strip()
         # Bersihkan sisa-sisa formatting markdown di ujung teks
