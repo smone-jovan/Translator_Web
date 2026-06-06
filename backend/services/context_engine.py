@@ -24,7 +24,7 @@ class ContextEngine:
         is_quality = translation_mode == "quality"
         
         # Ini core instruksi buat AI-nya. Isinya aturan etika translasi yang diminta user.
-        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation in {lang_name} only. No Chinese characters or pinyin allowed in the output.
+        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Chinese characters or pinyin allowed in the story output. (Exception: You MAY use Chinese characters in the Translator Notes at the very end).
 
 Role:
 You are an expert translator of Chinese web novels (urban / system / transmigration).
@@ -32,7 +32,7 @@ You must translate only the chapter body and title provided by the user.
 Do not add, remove, or summarize content. **DONT SUMMARY NOR CUT THE CHAPTER**.
 Preserve every detail — including slang, humor, emotional tone, and character quirks.
 
-IMPORTANT: Translate ALL text to {lang_name}. Do NOT output Chinese, do NOT leave raw pinyin.
+IMPORTANT: Translate ALL story text to {lang_name}. Do NOT output Chinese, do NOT leave raw pinyin in the story.
 
 Objective:
 Translate the text from Chinese to natural, engaging, immersive {lang_name} — as if written by a native web novel author.
@@ -58,8 +58,8 @@ Preserve paragraph breaks where natural — don’t force them.
 Avoid machine-like long sentences. Break long Chinese sentences into 2–3 {lang_name} sentences if needed — preserve all meaning.
 
 Chinese Text Handling:
-Translate ALL Chinese characters and words to {lang_name}.
-Do NOT leave any Chinese characters or raw pinyin.
+Translate ALL Chinese characters and words to {lang_name} in the story.
+Do NOT leave any Chinese characters or raw pinyin in the main story text. (You MUST use Chinese characters ONLY when listing the original term in the 'Translator Notes' section).
 
 Consistency & Glossary Priority:
 **STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
@@ -445,11 +445,14 @@ If no new terms, skip.
             "Task: Extract key names, locations, cultivation techniques, sects, clans, buildings, and unique terms from the provided Chinese text.\n"
             f"CRITICAL LANGUAGE RULE: ALL output — translated terms, notes, and context descriptions — MUST be written in {target_lang}. NEVER output notes or descriptions in Chinese.\n"
             "MANDATORY RULE FOR CONTEXT/NOTES: Your brief context MUST explicitly explain relationships. If it is a person, state who they are connected to. If it is a place/sect/building, state its location or affiliated faction.\n"
-            "Format your output ONLY as a list of 'Translator Notes' like this:\n"
+            "Format your output EXACTLY starting with the header '### TRANSLATOR NOTES:', followed by a list like this:\n"
+            "### TRANSLATOR NOTES:\n"
             f"- 原本术语 → Translated Term ({target_lang} context explicitly stating relationships/affiliations)\n"
-            "Example: - 宁凡 → Ning Fan (Main Character, Disciple of Old Demon) \n"
-            "Example: - 天云宗 → Heavenly Cloud Sect (Rival sect located in the Northern Region)\n"
-            "If no important terms, output: 'No new terms found.'"
+            "Example:\n"
+            "### TRANSLATOR NOTES:\n"
+            "- 宁凡 → Ning Fan (Main Character, Disciple of Old Demon) \n"
+            "- 天云宗 → Heavenly Cloud Sect (Rival sect located in the Northern Region)\n"
+            "If no important terms, output: '### TRANSLATOR NOTES:\nNo new terms found.'"
         )
         
         try:
