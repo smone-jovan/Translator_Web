@@ -31,7 +31,12 @@ class OpenAIAdapter(BaseAIProviderAdapter):
                 resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data["choices"][0]["message"]["content"]
+                    msg = data["choices"][0]["message"]
+                    res = ""
+                    if msg.get("reasoning_content"):
+                        res += f"<think>\n{msg['reasoning_content']}\n</think>\n\n"
+                    res += msg.get("content", "")
+                    return res
                 raise Exception(f"HTTP {resp.status_code}: {resp.text}")
         except Exception as e:
             raise Exception(f"OpenAI connection failed: {e}")
@@ -56,6 +61,7 @@ class OpenAIAdapter(BaseAIProviderAdapter):
                         error_text = await response.aread()
                         raise Exception(f"HTTP {response.status_code}: {error_text.decode()}")
                     
+                    in_reasoning = False
                     async for line in response.aiter_lines():
                         if line.startswith("data: "):
                             if "[DONE]" in line:
@@ -63,19 +69,37 @@ class OpenAIAdapter(BaseAIProviderAdapter):
                             try:
                                 data = json.loads(line[6:])
                                 choice = data["choices"][0]
-                                content = choice["delta"].get("content", "")
+                                delta = choice.get("delta", {})
+                                
+                                reasoning = delta.get("reasoning_content", "")
+                                if reasoning:
+                                    if not in_reasoning:
+                                        yield "<think>\n"
+                                        in_reasoning = True
+                                    yield reasoning
+                                    
+                                content = delta.get("content", "")
                                 if content:
+                                    if in_reasoning:
+                                        yield "\n</think>\n\n"
+                                        in_reasoning = False
                                     yield content
-                                # Detect truncation (finish_reason="length" means max_tokens was hit)
+
                                 finish_reason = choice.get("finish_reason")
-                                if finish_reason == "length":
-                                    yield TRUNCATED_MARKER
-                                    return
-                                # Detect content filter / prohibited
-                                if finish_reason in PROHIBITED_FINISH_REASONS:
-                                    yield PROHIBITED_MARKER
-                                    return
+                                if finish_reason:
+                                    if in_reasoning:
+                                        yield "\n</think>\n\n"
+                                        in_reasoning = False
+                                        
+                                    if finish_reason == "length":
+                                        yield TRUNCATED_MARKER
+                                        return
+                                    if finish_reason in PROHIBITED_FINISH_REASONS:
+                                        yield PROHIBITED_MARKER
+                                        return
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
+                    if in_reasoning:
+                        yield "\n</think>\n\n"
         except Exception as e:
             raise Exception(f"OpenAI streaming failed: {e}")

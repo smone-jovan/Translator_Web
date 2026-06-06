@@ -24,9 +24,11 @@ interface BatchStatus {
   thread_title: string;
   total: number;
   completed: number;
-  current_chapter_id: number | null;
   current_chapter_title: string;
   failed_ids: number[];
+  quota_exhausted: boolean;
+  total_keys: number;
+  exhausted_keys: number;
 }
 
 export default function BulkStatusCenter() {
@@ -39,7 +41,10 @@ export default function BulkStatusCenter() {
     completed: 0,
     current_chapter_id: null,
     current_chapter_title: '',
-    failed_ids: []
+    failed_ids: [],
+    quota_exhausted: false,
+    total_keys: 1,
+    exhausted_keys: 0
   });
   const [showFinished, setShowFinished] = useState(false);
 
@@ -80,7 +85,10 @@ export default function BulkStatusCenter() {
                 completed: 0,
                 current_chapter_id: null,
                 current_chapter_title: '',
-                failed_ids: []
+                failed_ids: [],
+                quota_exhausted: false,
+                total_keys: 1,
+                exhausted_keys: 0
               };
             });
           }
@@ -133,7 +141,10 @@ export default function BulkStatusCenter() {
           completed: 0,
           current_chapter_id: null,
           current_chapter_title: '',
-          failed_ids: []
+          failed_ids: [],
+          quota_exhausted: false,
+          total_keys: 1,
+          exhausted_keys: 0
         });
         setShowFinished(false);
       }
@@ -191,8 +202,8 @@ export default function BulkStatusCenter() {
               <AutoAwesome sx={{ color: isFinished ? '#4caf50' : 'var(--primary)', fontSize: 20 }} />
             </Badge>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'var(--foreground)', fontSize: '0.85rem', lineHeight: 1.2 }}>
-                {isFinished ? 'Translation Done' : 'Batch Translating'}
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: status.quota_exhausted ? '#ef4444' : 'var(--foreground)', fontSize: '0.85rem', lineHeight: 1.2 }}>
+                {isFinished ? 'Translation Done' : status.quota_exhausted ? 'Stopped (Quota)' : 'Batch Translating'}
               </Typography>
               <Typography variant="caption" sx={{ 
                 color: 'var(--muted-foreground)', 
@@ -231,9 +242,16 @@ export default function BulkStatusCenter() {
               <Typography variant="caption" sx={{ opacity: 0.8, fontWeight: 600 }}>
                 {isFinished ? 'All chapters translated' : `Progress: ${status.completed}/${status.total} chapters`}
               </Typography>
-              <Typography variant="caption" sx={{ fontWeight: 900, color: isFinished ? '#4caf50' : 'var(--primary)' }}>
-                {Math.round(progress)}%
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                {status.total_keys > 1 && status.exhausted_keys > 0 && !isFinished && (
+                  <Typography variant="caption" sx={{ fontWeight: 700, color: status.quota_exhausted ? '#ef4444' : '#f59e0b' }}>
+                    🔑 {status.exhausted_keys}/{status.total_keys} Exhausted
+                  </Typography>
+                )}
+                <Typography variant="caption" sx={{ fontWeight: 900, color: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : 'var(--primary)' }}>
+                  {Math.round(progress)}%
+                </Typography>
+              </Box>
             </Box>
             
             <LinearProgress 
@@ -245,7 +263,7 @@ export default function BulkStatusCenter() {
                 background: 'var(--secondary)',
                 border: '1px solid var(--border)',
                 '& .MuiLinearProgress-bar': {
-                  background: isFinished ? '#4caf50' : 'linear-gradient(90deg, var(--primary), #8a2be2)',
+                  background: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : 'linear-gradient(90deg, var(--primary), #8a2be2)',
                   borderRadius: 4
                 }
               }} 

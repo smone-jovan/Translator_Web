@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import ExportModal from '@/components/ExportModal';
 import BulkTranslateModal from '@/components/BulkTranslateModal';
+import BulkFetchModal from '@/components/BulkFetchModal';
 import { toast } from 'sonner';
 import { useConfirm } from '@/hooks/use-confirm';
 
@@ -20,6 +21,7 @@ import type { ThreadDetail, ChapterContent } from '@/components/reader/types';
 
 interface ReaderPageProps {
   threadId: number;
+  initialChapterId?: number | null;
   onBack: () => void;
   onReadingChapterChange?: (isReading: boolean) => void;
 }
@@ -66,7 +68,10 @@ function readReaderSession(threadId: number): ReaderSessionState | null {
   }
 }
 
-export default function ReaderPage({ threadId, onBack, onReadingChapterChange }: ReaderPageProps) {
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export default function ReaderPage({ threadId, initialChapterId, onBack, onReadingChapterChange }: ReaderPageProps) {
   const { confirm } = useConfirm();
   const initialReaderSession = readReaderSession(threadId);
   const [thread, setThread] = useState<ThreadDetail | null>(null);
@@ -139,11 +144,22 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isFetchModalOpen, setIsFetchModalOpen] = useState(false);
   const [chapterSearch, setChapterSearch] = useState('');
   const [controlsVisible, setControlsVisible] = useState(true);
   const [chapterFilter, setChapterFilter] = useState<'all' | 'translated'>('all');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [mobileToolbarVisible, setMobileToolbarVisible] = useState(true);
+
+  // Jump to initial chapter if provided
+  useEffect(() => {
+    if (thread && initialChapterId) {
+      const idx = thread.chapters.findIndex(c => c.id === initialChapterId);
+      if (idx !== -1 && idx !== selectedChapterIdx) {
+        goToChapter(idx);
+      }
+    }
+  }, [thread, initialChapterId]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastFetchedIdRef = useRef<number | null>(null);
@@ -227,6 +243,9 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
       
       if (!res.ok) throw new Error('Failed to start batch');
       
+      // Re-fetch thread to update chapter statuses to "processing" and trigger the polling mechanism
+      await fetchThread();
+      
       let completed = 0;
       const total = chapterIds.length;
       
@@ -249,9 +268,52 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
       };
       
       simulateProgress();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
       window.dispatchEvent(new CustomEvent('batch-end'));
+    }
+  };
+
+  const handleStartBulkFetch = async (chapterIds: number[], fetchOnly: boolean) => {
+    if (!thread) return;
+    
+    window.dispatchEvent(new CustomEvent('batch-start', { 
+      detail: { total: chapterIds.length } 
+    }));
+
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}/batch-translate`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          chapter_ids: chapterIds, 
+          fetch_only: fetchOnly
+        })
+      });
+      
+      if (!res.ok) throw new Error('Failed to start bulk fetch');
+      
+      await fetchThread();
+      
+      let completed = 0;
+      const total = chapterIds.length;
+      const simulateProgress = () => {
+        if (completed < total) {
+          completed++;
+          window.dispatchEvent(new CustomEvent('batch-update', { 
+            detail: { completed, total } 
+          }));
+          setTimeout(simulateProgress, 1000);
+        } else {
+          window.dispatchEvent(new CustomEvent('batch-completed'));
+          fetchThread(); 
+        }
+      };
+
+      simulateProgress();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to start bulk fetch');
+      window.dispatchEvent(new CustomEvent('batch-completed'));
     }
   };
 
@@ -325,10 +387,10 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     overrideId?: number, 
     forceOverwrite = false
   ) => {
-    const textToTranslate = overrideContent || chapterContent?.content_original;
+    const textToTranslate = overrideContent || chapterContent?.content_original || '';
     const chId = overrideId || chapterContent?.id;
     
-    if (isTranslating || !textToTranslate || !chId) return;
+    if (isTranslating || !chId) return;
     setIsTranslating(true);
     if (!isResume) setTranslatedText('');
     else setTranslatedText(initialText);
@@ -389,14 +451,16 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     }
   }, [isTranslating, threadId, fetchThread, chapterContent?.content_original, chapterContent?.id, globalSettings]);
 
+  const lastFetchedStatusRef = useRef<string | null>(null);
+
   // Handle Chapter Selection
   useEffect(() => {
     if (!thread || selectedChapterIdx === null) return;
     const ch = thread.chapters[selectedChapterIdx];
     if (!ch) return;
 
-    // Prevent re-fetching if we already have this chapter's content
-    if (lastFetchedIdRef.current === ch.id) return;
+    // Prevent re-fetching if we already have this chapter's content AND its translation status hasn't changed
+    if (lastFetchedIdRef.current === ch.id && lastFetchedStatusRef.current === ch.translation_status) return;
     
     const abortController = new AbortController();
 
@@ -410,6 +474,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
         const data: ChapterContent = await res.json();
         
         lastFetchedIdRef.current = ch.id;
+        lastFetchedStatusRef.current = ch.translation_status || data.translation_status || null;
         setChapterContent(data);
         setTranslatedText(data.content_translated || '');
         setLastReadId(ch.id);
@@ -417,6 +482,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
         if (err instanceof Error && err.name !== 'AbortError') {
           setChapterContent(null);
           lastFetchedIdRef.current = null;
+          lastFetchedStatusRef.current = null;
         }
       } finally {
         setLoadingContent(false);
@@ -573,6 +639,33 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     }
   };
 
+  const handleFetchNextChapter = async () => {
+    if (!thread || !chapterContent) return;
+    try {
+      const toastId = toast.loading('Fetching next chapter from web...');
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${chapterContent.id}/fetch-next`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.detail || 'Failed to fetch next chapter', { id: toastId });
+        return;
+      }
+      toast.success(data.message || 'Next chapter fetched successfully!', { id: toastId });
+      
+      // Refresh thread to get the new chapter
+      await fetchThread();
+      
+      // Auto-navigate to the next chapter since it's now fetched
+      if (selectedChapterIdx !== null) {
+        goToChapter(selectedChapterIdx + 1);
+      }
+    } catch (err) {
+      console.error('Failed to fetch next chapter:', err);
+      toast.error('Network error while fetching next chapter');
+    }
+  };
+
   const runCleanerTool = async (tool: 'txt-cleaner' | 'epub-cleaner') => {
     const label = tool === 'txt-cleaner' ? 'TXT Cleaner' : 'EPUB Cleaner';
     try {
@@ -593,7 +686,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
     }
   };
 
-  const goToChapter = (idx: number) => {
+  function goToChapter(idx: number) {
     setSelectedChapterIdx(idx);
     setShowChapterList(false);
     setControlsVisible(true);
@@ -715,6 +808,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
                 goToChapter(startIdx !== -1 ? startIdx : 0);
               }}
               onOpenBulkModal={() => setIsBulkModalOpen(true)}
+              onOpenFetchModal={() => setIsFetchModalOpen(true)}
             />
 
             <ChapterListControls 
@@ -785,6 +879,7 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
               setControlsVisible={setControlsVisible}
               mobileToolbarVisible={mobileToolbarVisible}
               setMobileToolbarVisible={setMobileToolbarVisible}
+              handleFetchNextChapter={handleFetchNextChapter}
             />
           )
         )}
@@ -875,8 +970,18 @@ export default function ReaderPage({ threadId, onBack, onReadingChapterChange }:
           threadTitle={thread.title}
           chapters={thread.chapters}
           onStartBatch={handleStartBatch}
+          onSuccess={() => fetchThread({ silent: true })}
         />
       )}
+
+      <BulkFetchModal
+        isOpen={isFetchModalOpen}
+        onClose={() => setIsFetchModalOpen(false)}
+        threadId={threadId}
+        threadTitle={thread?.title || ''}
+        chapters={thread?.chapters || []}
+        onStartBatch={handleStartBulkFetch}
+      />
     </div>
   );
 }

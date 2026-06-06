@@ -1,12 +1,13 @@
-﻿/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2, Eraser, Cpu, Bot, BookOpen, Plus, Check } from 'lucide-react';
+import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2, Eraser, Cpu, Bot, BookOpen, Plus, Check, ListTree } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { getApiUrl } from '@/lib/api';
 import { toast } from 'sonner';
+import { TocImportModal, type TocChapter } from '@/components/TocImportModal';
 
 interface BookCardProps {
   id?: number;
@@ -90,6 +91,11 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
   const [openModelDropdown, setOpenModelDropdown] = useState(false);
   const [openThreadDropdown, setOpenThreadDropdown] = useState(false);
   const [providerLabel, setProviderLabel] = useState('lm_studio');
+  
+  const [isTocModalOpen, setIsTocModalOpen] = useState(false);
+  const [tocChapters, setTocChapters] = useState<TocChapter[]>([]);
+  const [tocNovelTitle, setTocNovelTitle] = useState('');
+  const [tocBaseUrl, setTocBaseUrl] = useState('');
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -265,6 +271,35 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
     }
   };
 
+  const handleTocExtract = async () => {
+    if (!inputText.trim().startsWith('http')) {
+      toast.error('Please enter a valid URL first.');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const res = await fetch(getApiUrl('/api/threads/scrape-toc'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: inputText.trim() }),
+      });
+      if (!res.ok) throw new Error('Failed to scrape TOC');
+      const data = await res.json();
+      if (!data.chapters || data.chapters.length === 0) {
+        toast.error('No chapters found at this URL.');
+        return;
+      }
+      setTocNovelTitle(data.title);
+      setTocChapters(data.chapters);
+      setTocBaseUrl(inputText.trim());
+      setIsTocModalOpen(true);
+    } catch (err: any) {
+      toast.error(err.message || 'TOC Extraction failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] w-full py-12">
       <div className="w-full max-w-3xl px-4">
@@ -332,6 +367,16 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
                   title="TXT Cleaner"
                 >
                   <Eraser size={20} />
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  title="Detect TOC / Bulk Import"
+                  onClick={handleTocExtract}
+                  disabled={isProcessing || !inputText.trim().startsWith('http')}
+                >
+                  <ListTree size={20} />
                 </Button>
                 <Button 
                   variant="ghost" 
@@ -490,6 +535,19 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
           </div>
         </div>
       </div>
+      
+      <TocImportModal 
+        open={isTocModalOpen}
+        onOpenChange={setIsTocModalOpen}
+        novelTitle={tocNovelTitle}
+        chapters={tocChapters}
+        threadId={selectedThreadId}
+        baseUrl={tocBaseUrl}
+        onSuccess={(id) => {
+          setInputText('');
+          onOpenThread?.(id);
+        }}
+      />
     </div>
   );
 }

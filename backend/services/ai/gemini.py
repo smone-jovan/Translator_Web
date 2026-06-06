@@ -8,7 +8,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
     Concrete adapter for the official Google Gemini API using OpenAI-compatible HTTP interface.
     No extra heavy Python SDK package dependencies required.
     """
-    FALLBACK_MODELS = ["gemini-2.5-flash"]  # Fallback chain for gemini-3.1-flash-lite
+    PROVIDER_NAME = "gemini"
     
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"):
         self.api_key = api_key
@@ -50,7 +50,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
                     # Check for empty content (Gemini-3.1-flash-lite sometimes returns HTTP 200 with no content)
                     if content is None or (isinstance(content, str) and not content.strip()):
                         fr_str = str(finish_reason).lower() if finish_reason else ""
-                        if any(p in fr_str for p in ["prohibited", "content_filter", "safety", "blocked"]):
+                        if any(p in fr_str for p in ["prohibited", "content_filter", "safety", "blocked", "other"]):
                             pass # Let caller handle it
                         else:
                             raise Exception(f"API returned empty content. finish_reason={finish_reason}")
@@ -62,10 +62,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 raise Exception(f"HTTP {resp.status_code}: {resp.text}")
 
     async def chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None) -> str:
-        # Try primary model, then fallback models if this is gemini-3.1-flash-lite
         models_to_try = [self.model]
-        if "gemini-3.1-flash-lite" in self.model.lower():
-            models_to_try.extend(self.FALLBACK_MODELS)
         
         last_error = ""
         for model in models_to_try:
@@ -81,22 +78,26 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 if finish_reason == "length":
                     return TRUNCATED_MARKER
                 fr_str = str(finish_reason).lower() if finish_reason else ""
-                if any(p in fr_str for p in ["prohibited", "content_filter", "safety", "blocked"]):
+                if any(p in fr_str for p in ["prohibited", "content_filter", "safety", "blocked", "other", "recitation"]):
                     return PROHIBITED_MARKER
                 
                 # Heuristic for gemini-3.1-flash-lite (~16K output limit):
-                # Only flag as truncated if content is dangerously short (<100 chars) with no clear ending
-                if "gemini-3.1-flash-lite" in model.lower() and len(content) < 100:
+                # Only flag as truncated if content is dangerously short (<100 chars) AND the input prompt is very large
+                # (>2500 chars, typical for full chapter translations). This prevents short inputs like title cleaning
+                # or relationship extraction from falsely returning TRUNCATED_MARKER when a short output is expected.
+                total_input_len = sum(len(m.get("content", "")) for m in messages)
+                if "gemini-3.1-flash-lite" in model.lower() and len(content) < 100 and total_input_len > 2500:
                     return TRUNCATED_MARKER
                 
                 return content
                 
             except Exception as e:
-                last_error = str(e)
-                print(f"[DEBUG] Model {model} failed: {e}")
+                last_error_str = str(e)
+                last_error = f"{type(e).__name__}: {last_error_str}"
+                print(f"[DEBUG] Model {model} failed: {last_error}")
                 err_str = last_error.lower()
                 # If Gemini threw a 400 Bad Request due to safety violation, return PROHIBITED_MARKER immediately.
-                if any(p in err_str for p in ["prohibited", "content_filter", "safety", "blocked", "block reason"]):
+                if any(p in err_str for p in ["prohibited", "content_filter", "safety", "blocked", "block reason", "policy", "rejected"]):
                     return PROHIBITED_MARKER
                 
                 # Add delay before next attempt for flash-lite to handle rate limits

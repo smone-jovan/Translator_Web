@@ -51,3 +51,17 @@ opencode.json
 # Playwright profiles
 backend/.pw_nu_profile/
 backend/cf_blocked.png
+
+# Imported Agent Skills
+.agent/skills/*
+!.agent/skills/my-custom-skill/
+!.agent/skills/custom-skills-discovery-rule.md
+
+# Temporary Test Scripts
+backend/test_*.py
+backend/check_status.py
+backend/reset_chapters.py
+backend/trigger_batch.py
+backend/test_links.txt
+test_*.py
+translate_*.py

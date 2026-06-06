@@ -292,6 +292,13 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
                 detail_url=detail_url
             )
             candidates.append(fallback_meta)
+            
+        # Enhance the top candidate to ensure it gets the cover image
+        if candidates and include_cover:
+            try:
+                await self._enhance_metadata(candidates[0], query_strip)
+            except Exception as e:
+                print(f"[NovelUpdates] Failed to enhance top candidate: {e}")
         
         # MangaUpdates enhancement disabled per user request
         # to strictly avoid Manhwa covers/genres.
@@ -358,8 +365,43 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
             synopsis=f"No results found on Novel Updates for '{query_strip}'"
         )
 
+    async def _enhance_metadata(self, meta: ScrapedNovelMetadata, query: str):
+        """Enhance basic snippet metadata by fetching the detail page directly."""
+        if not meta.detail_url:
+            return
+        
+        try:
+            print(f"[NovelUpdates] Enhancing metadata from: {meta.detail_url}")
+            async with AsyncSession() as client:
+                resp = await client.get(meta.detail_url, headers=self.headers, impersonate="chrome120", timeout=15.0)
+                if resp.status_code == 200:
+                    detail_meta = await self._parse_html(resp.text, meta.detail_url, query, True)
+                    # Merge detail_meta into meta
+                    if detail_meta.cover_image:
+                        meta.cover_image = detail_meta.cover_image
+                    if detail_meta.synopsis and len(detail_meta.synopsis) > len(meta.synopsis or ""):
+                        meta.synopsis = detail_meta.synopsis
+                    if detail_meta.genres:
+                        meta.genres = detail_meta.genres
+                    if detail_meta.tags:
+                        meta.tags = detail_meta.tags
+                    if detail_meta.author:
+                        meta.author = detail_meta.author
+                    if detail_meta.status_coo:
+                        meta.status_coo = detail_meta.status_coo
+        except Exception as e:
+            print(f"[NovelUpdates] Failed to enhance metadata: {e}")
+
     async def _scrape_detail_page(self, url: str, query: str, include_cover: bool) -> ScrapedNovelMetadata:
-        """Scrape detail page - now returns URL-based metadata since direct access is blocked."""
+        """Scrape detail page directly."""
+        try:
+            async with AsyncSession() as client:
+                resp = await client.get(url, headers=self.headers, impersonate="chrome120", timeout=15.0)
+                if resp.status_code == 200:
+                    return await self._parse_html(resp.text, url, query, include_cover)
+        except Exception as e:
+            print(f"[NovelUpdates] Detail page scrape failed: {e}")
+            
         url_title = self._extract_title_from_url(url)
         return ScrapedNovelMetadata(
             success=True,

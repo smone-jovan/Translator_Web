@@ -30,6 +30,17 @@ class ExportRequest(BaseModel):
     cover_b64: Optional[str] = None
     cover_url: Optional[str] = None
     chapter_ids: List[int]
+    hide_thoughts: bool = False
+
+def remove_thoughts(text: str) -> str:
+    """Strip <think>...</think> tags and their contents from the text."""
+    if not text:
+        return text
+    # Strip fully enclosed tags
+    cleaned = re.sub(r'<(think|thought)\b[^>]*>.*?</\1>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # Strip unclosed trailing tags
+    cleaned = re.sub(r'<(think|thought)\b[^>]*>.*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned.strip()
 
 def clean_html_content(text: str) -> str:
     """Simple converter from plain text to basic HTML for EPUB chapters."""
@@ -118,6 +129,9 @@ async def export_thread(
         for i, ch in enumerate(chapters):
             ch_title = ch.title_translated or ch.title_original or f"Chapter {i+1}"
             ch_content = ch.content_translated or "Translation not available for this chapter."
+
+            if request.hide_thoughts:
+                ch_content = remove_thoughts(ch_content)
 
             file_name = f"chapter_{i+1}.xhtml"
             epub_ch = epub.EpubHtml(title=ch_title, file_name=file_name, lang="id")
@@ -209,6 +223,10 @@ async def export_thread(
         for i, ch in enumerate(chapters):
             ch_title = ch.title_translated or ch.title_original or f"Chapter {i+1}"
             ch_content = ch.content_translated or "Translation not available."
+            
+            if request.hide_thoughts:
+                ch_content = remove_thoughts(ch_content)
+                
             out.write(f"=== {ch_title} ===\n\n")
             out.write(ch_content + "\n\n")
             out.write("-" * 20 + "\n\n")

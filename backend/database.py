@@ -101,6 +101,7 @@ class Chapter(Base):
     title_translated: Mapped[Optional[str]] = mapped_column(String(500))
     content_original: Mapped[Optional[str]] = mapped_column(Text)
     content_translated: Mapped[Optional[str]] = mapped_column(Text)
+    source_url: Mapped[Optional[str]] = mapped_column(String(1000))
     translation_status: Mapped[str] = mapped_column(String(20), default="idle")
     is_bookmarked: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -195,6 +196,11 @@ def init_db():
         if 'is_bookmarked' not in columns_ch:
             print("[MIGRASI] Menambahkan kolom 'is_bookmarked' ke dalam tabel chapters...")
             conn.execute(text("ALTER TABLE chapters ADD COLUMN is_bookmarked BOOLEAN DEFAULT 0"))
+            conn.commit()
+
+        if 'source_url' not in columns_ch:
+            print("[MIGRASI] Menambahkan kolom 'source_url' ke dalam tabel chapters...")
+            conn.execute(text("ALTER TABLE chapters ADD COLUMN source_url VARCHAR(1000)"))
             conn.commit()
 
         if 'author' not in columns_th:

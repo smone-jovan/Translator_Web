@@ -49,10 +49,11 @@ interface BulkTranslateModalProps {
   threadTitle: string;
   chapters: Chapter[];
   onStartBatch: (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast') => void;
+  onSuccess?: () => void;
 }
 
 export default function BulkTranslateModal({ 
-  isOpen, onClose, threadId, threadTitle, chapters, onStartBatch 
+  isOpen, onClose, threadId, threadTitle, chapters, onStartBatch
 }: BulkTranslateModalProps) {
   const [mode, setMode] = useState<'easy' | 'advanced'>('easy');
   const [loadMode, setLoadMode] = useState<'soft' | 'hard'>('soft');

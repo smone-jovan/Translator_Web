@@ -8,12 +8,14 @@ interface NovelHeaderProps {
   thread: ThreadDetail;
   onReadNow: () => void;
   onOpenBulkModal: () => void;
+  onOpenFetchModal: () => void;
 }
 
 export default function NovelHeader({
   thread,
   onReadNow,
   onOpenBulkModal,
+  onOpenFetchModal,
 }: NovelHeaderProps) {
   const [isSynopsisCollapsed, setIsSynopsisCollapsed] = useState(true);
 
@@ -90,6 +92,19 @@ export default function NovelHeader({
                   <Sparkles className="w-4 h-4 text-[var(--primary)]" />
                   Batch Translate
                 </Button>
+
+                {/* Show Fetch Button ONLY if it's from a URL */}
+                {thread.source_url && (
+                  <Button 
+                    variant="outline"
+                    size="lg"
+                    onClick={onOpenFetchModal}
+                    className="rounded-2xl gap-2 font-bold px-5 h-12 text-sm border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm hover:bg-[var(--secondary)] text-[var(--foreground)] transition-all"
+                  >
+                    <BookOpen className="w-4 h-4 text-blue-400" />
+                    Bulk Fetch
+                  </Button>
+                )}
               </div>
 
               {/* Genres Grid */}

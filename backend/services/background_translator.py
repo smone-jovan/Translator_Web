@@ -2,9 +2,13 @@ import asyncio
 import json
 import re
 import time
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from database import SessionLocal, Chapter, GlobalSetting
+from database import SessionLocal, Chapter, GlobalSetting, Thread
+from services.context_engine import ContextEngine
+from services.ai.factory import AIProviderFactory
+from routers.scrape import html_to_markdown
+import httpx
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -16,13 +20,16 @@ active_tasks = {}
 # chapter_id -> [asyncio.Queue] for streaming
 translation_queues = {}
 
+# Strong references to prevent garbage collection of wrapper tasks
+_prefetch_tasks = set()
+
 # Global lock to ensure single-concurrency for AI requests under Soft Load
 translation_lock = asyncio.Lock()
 # Global state to track last request timestamp for pacing (ADR-029)
 _last_api_call_time = 0.0
 
 class ActiveBatch:
-    def __init__(self, thread_id: int, chapter_ids: list, target_lang: str, model: str | None, lm_url: str | None, force_extract: bool, force_overwrite: bool, translation_mode: str = "quality"):
+    def __init__(self, thread_id: int, chapter_ids: list, target_lang: str, model: str | None, lm_url: str | None, force_extract: bool, force_overwrite: bool, translation_mode: str = "quality", fetch_only: bool = False):
         self.thread_id = thread_id
         self.chapter_ids = list(chapter_ids)
         self.total = len(chapter_ids)
@@ -36,7 +43,9 @@ class ActiveBatch:
         self.force_extract = force_extract
         self.force_overwrite = force_overwrite
         self.translation_mode = translation_mode
+        self.fetch_only = fetch_only
         self.is_stopped = False
+        self.quota_exhausted = False
         self.active_task = None
 
 active_batches = {} # thread_id -> ActiveBatch
@@ -54,6 +63,8 @@ def _is_retryable_error(error: Exception) -> bool:
         "503",           # service unavailable
         "502",           # bad gateway
         "408",           # request timeout
+        "empty content", # gemini 3.1 flash lite safety glitch
+        "empty translation",
         "high load",
         "overloaded",
         "rate limit",
@@ -70,17 +81,42 @@ def _is_retryable_error(error: Exception) -> bool:
     return any(pattern in err_str for pattern in retryable_patterns)
 
 class BackgroundTranslator:
-    @staticmethod
+    @classmethod
     async def run_chapter_translation(
-        chapter_id: int, 
-        thread_id: int, 
-        target_lang: str, 
-        model: str | None = None, 
+        cls,
+        chapter_id: int,
+        thread_id: int,
+        target_lang: str,
+        model: str | None = None,
         lm_url: str | None = None,
         force_extract: bool = False,
         force_overwrite: bool = False,
         translation_mode: str = "quality"
-    ):
+    ) -> bool:
+        try:
+            return await cls._run_translation_internal(
+                chapter_id, thread_id, target_lang, model, lm_url, force_extract, force_overwrite, translation_mode
+            )
+        finally:
+            if chapter_id in translation_queues:
+                for q in translation_queues[chapter_id]:
+                    try:
+                        q.put_nowait("[DONE]")
+                    except Exception:
+                        pass
+
+    @classmethod
+    async def _run_translation_internal(
+        cls,
+        chapter_id: int,
+        thread_id: int,
+        target_lang: str,
+        model: str | None = None,
+        lm_url: str | None = None,
+        force_extract: bool = False,
+        force_overwrite: bool = False,
+        translation_mode: str = "quality"
+    ) -> bool:
         """Start background chapter translation task."""
         if chapter_id in active_tasks:
             print(f"[WARN] Chapter {chapter_id} is already being translated. Ignoring duplicate request.")
@@ -94,20 +130,38 @@ class BackgroundTranslator:
         active_tasks[chapter_id] = task
         try:
             await task
+            return True
+        except Exception as e:
+            print(f"[ERROR] Single translation task failed: {e}")
+            from database import SessionLocal, Chapter
+            with SessionLocal() as db:
+                ch = db.get(Chapter, chapter_id)
+                if ch:
+                    ch.translation_status = "error"
+                    db.commit()
+            
+            if chapter_id in translation_queues:
+                for q in translation_queues[chapter_id]:
+                    try:
+                        q.put_nowait(f"\n\n[SYSTEM ERROR] Translation failed: {e}")
+                    except Exception:
+                        pass
+            return False
         finally:
             if chapter_id in active_tasks:
                 del active_tasks[chapter_id]
 
     @staticmethod
     async def _do_translate(
-        chapter_id: int, 
-        thread_id: int, 
-        target_lang: str, 
-        model: str | None = None, 
+        chapter_id: int,
+        thread_id: int,
+        target_lang: str,
+        model: str | None = None,
         lm_url: str | None = None,
         force_extract: bool = False,
         force_overwrite: bool = False,
-        translation_mode: str = "quality"
+        translation_mode: str = "quality",
+        fetch_only: bool = False
     ) -> bool:
         # 1. Siapkan data bab-nya
         content_original = None
@@ -123,10 +177,55 @@ class BackgroundTranslator:
                 return False
                 
             if not chapter.content_original:
-                print(f"[ERROR] Chapter {chapter_id} has no original content. Translation aborted.")
-                chapter.translation_status = "error"
+                if getattr(chapter, "source_url", None):
+                    print(f"[SCRAPE] Chapter {chapter_id} has no content. Scraping on-demand from {chapter.source_url}")
+                    try:
+                        async with httpx.AsyncClient(
+                            follow_redirects=True,
+                            timeout=30.0,
+                            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+                        ) as client:
+                            resp = await client.get(chapter.source_url)
+                            resp.raise_for_status()
+                        
+                        fetched_title, fetched_markdown = html_to_markdown(resp.text)
+                        
+                        is_vip = False
+                        if chapter.source_url and "/vip/" in chapter.source_url.lower():
+                            is_vip = True
+                        elif fetched_title and "VIP章节" in fetched_title:
+                            is_vip = True
+                        elif not fetched_markdown or len(fetched_markdown) < 50:
+                            is_vip = True
+
+                        if is_vip:
+                            print(f"[VIP] Chapter {chapter_id} flagged as VIP.")
+                            chapter.translation_status = "vip"
+                            chapter.content_original = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+                            db.commit()
+                            return False
+                        
+                        chapter.content_original = fetched_markdown
+                        if not chapter.title_original and fetched_title:
+                            chapter.title_original = fetched_title
+                        db.commit()
+                        print(f"[SCRAPE] Successfully scraped chapter {chapter_id}.")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to scrape chapter {chapter_id}: {e}")
+                        chapter.translation_status = "error"
+                        db.commit()
+                        return False
+                else:
+                    print(f"[ERROR] Chapter {chapter_id} has no original content and no source_url. Translation aborted.")
+                    chapter.translation_status = "error"
+                    db.commit()
+                    return False
+
+            if fetch_only:
+                print(f"[FETCH_ONLY] Chapter {chapter_id} raw text successfully fetched. Skipping translation.")
+                chapter.translation_status = "idle"  # Keep it idle so it can be translated later
                 db.commit()
-                return False
+                return True
 
             if chapter.translation_status == "done" and chapter.content_translated and not force_overwrite:
                 print(f"[SKIP] Chapter {chapter_id} already has a translation. Skipping.")
@@ -177,6 +276,7 @@ class BackgroundTranslator:
                 # AI Extract First Logic
                 if force_extract:
                     print(f"[EXTRACT] Starting glossary extraction for chapter {chapter_id} before translation...")
+                    await BackgroundTranslator._enforce_pacing(model, gs)
                     await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model, target_lang)
 
                 # Ambil konten aslinya dan set status ke processing
@@ -190,36 +290,7 @@ class BackgroundTranslator:
                 )
 
             # Pace the API requests based on selected model's strict RPM limits (ADR-029)
-            global _last_api_call_time
-            llm_provider = "lm_studio"
-            resolved_model = model
-            if gs:
-                llm_provider = getattr(gs, "llm_provider", "lm_studio")
-                resolved_model = resolve_active_model(gs, model)
-
-            required_delay = 1.0
-            if llm_provider == "gemini":
-                m_lower = (resolved_model or "").lower()
-                if "gemini-3.1-flash-lite" in m_lower:
-                    required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
-                elif "gemini-2.5-flash-lite" in m_lower:
-                    required_delay = 6.2  # 10 RPM = 6.0s (Safety margin: 6.2s)
-                elif "gemini-2.5-flash" in m_lower:
-                    required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
-                elif "gemini-3-flash" in m_lower:
-                    required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
-                elif "gemma-4-31b" in m_lower:
-                    required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
-                else:
-                    required_delay = 12.2
-
-            time_since_last = time.time() - _last_api_call_time
-            if time_since_last < required_delay:
-                wait_time = required_delay - time_since_last
-                print(f"[PACING] [RPM Safety Guard] Delaying request for {wait_time:.2f}s to respect {resolved_model} RPM limits...")
-                await asyncio.sleep(wait_time)
-
-            _last_api_call_time = time.time()
+            await BackgroundTranslator._enforce_pacing(model, gs)
 
             # 3. Panggil AI-nya (LM Studio)
             try:
@@ -383,11 +454,6 @@ class BackgroundTranslator:
                         ch.translation_status = "error"
                         db.commit()
                 return False
-            finally:
-                # Kasih sinyal ke queue kalau sudah beres
-                if chapter_id in translation_queues:
-                    for q in translation_queues[chapter_id]:
-                        await q.put("[DONE]")
         finally:
             if use_lock:
                 try:
@@ -423,11 +489,13 @@ class BackgroundTranslator:
                 for next_ch in next_chapters:
                     if next_ch.translation_status == "idle" and not next_ch.content_translated:
                         print(f"[PREFETCH] [{prefetch_mode.capitalize()} Load] Queueing prefetch for chapter: {next_ch.id} (Order: {next_ch.order})")
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             BackgroundTranslator.run_chapter_translation(
                                 next_ch.id, thread_id, target_lang, model, lm_url
                             )
                         )
+                        _prefetch_tasks.add(task)
+                        task.add_done_callback(_prefetch_tasks.discard)
         except Exception as e:
             print(f"[WARN] Prefetch failed: {e}")
 
@@ -440,7 +508,8 @@ class BackgroundTranslator:
         lm_url: str | None = None,
         force_extract: bool = False,
         force_overwrite: bool = False,
-        translation_mode: str = "quality"
+        translation_mode: str = "quality",
+        fetch_only: bool = False
     ):
         """Mulai proses batch translation secara berurutan (Sequential Queue)."""
         if thread_id in active_batches:
@@ -454,7 +523,8 @@ class BackgroundTranslator:
             lm_url=lm_url,
             force_extract=force_extract,
             force_overwrite=force_overwrite,
-            translation_mode=translation_mode
+            translation_mode=translation_mode,
+            fetch_only=fetch_only
         )
         active_batches[thread_id] = batch
         
@@ -474,6 +544,70 @@ class BackgroundTranslator:
             if batch.current_chapter_id in active_tasks:
                 active_tasks[batch.current_chapter_id].cancel()
             active_batches.pop(thread_id, None)
+
+    @staticmethod
+    async def _enforce_pacing(model: str, gs: 'GlobalSetting' = None):
+        """Enforces strict RPM limit pacing. Called before ANY LLM API call."""
+        global _last_api_call_time
+        llm_provider = "lm_studio"
+        resolved_model = model
+        num_keys = 1
+        
+        if gs:
+            llm_provider = getattr(gs, "llm_provider", "lm_studio")
+            from services.ai.settings import resolve_active_model
+            resolved_model = resolve_active_model(gs, model)
+            
+            # Count keys to divide delay
+            if llm_provider == "gemini" and getattr(gs, "gemini_api_keys", None):
+                try:
+                    import json
+                    keys = json.loads(gs.gemini_api_keys)
+                    if isinstance(keys, list) and len(keys) > 0:
+                        num_keys = len(keys)
+                except Exception:
+                    pass
+            elif llm_provider == "openai" and getattr(gs, "openai_api_keys", None):
+                try:
+                    import json
+                    keys = json.loads(gs.openai_api_keys)
+                    if isinstance(keys, list) and len(keys) > 0:
+                        num_keys = len(keys)
+                except Exception:
+                    pass
+
+        required_delay = 1.0
+        if llm_provider == "gemini":
+            m_lower = (resolved_model or "").lower()
+            if "gemini-3.1-flash-lite" in m_lower:
+                required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
+            elif "gemini-2.5-flash-lite" in m_lower:
+                required_delay = 6.2  # 10 RPM = 6.0s (Safety margin: 6.2s)
+            elif "gemini-2.5-flash" in m_lower:
+                required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
+            elif "gemini-3-flash" in m_lower:
+                required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
+            elif "gemma-4-31b" in m_lower:
+                required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
+            else:
+                required_delay = 12.2
+                
+        # Divide delay by number of active API keys to multiply RPM
+        required_delay = required_delay / num_keys
+
+        time_since_last = time.time() - _last_api_call_time
+        if time_since_last < required_delay:
+            wait_time = required_delay - time_since_last
+            print(f"[PACING] [RPM Safety Guard] Delaying request for {wait_time:.2f}s to respect {resolved_model} RPM limits ({num_keys} keys active)...")
+            import asyncio
+            await asyncio.sleep(wait_time)
+
+        _last_api_call_time = time.time()
+        
+        # Round-robin rotate the key on EVERY request so we distribute load evenly across keys
+        if gs and num_keys > 1:
+            from services.ai.secrets import rotate_api_key
+            rotate_api_key(llm_provider, gs)
 
     @staticmethod
     async def _run_batch_worker(batch: ActiveBatch):
@@ -515,8 +649,16 @@ class BackgroundTranslator:
                         lm_url=batch.lm_url,
                         force_extract=batch.force_extract,
                         force_overwrite=batch.force_overwrite,
-                        translation_mode=batch.translation_mode
+                        translation_mode=batch.translation_mode,
+                        fetch_only=batch.fetch_only
                     )
+                    
+                    # Random delay to simulate human scraping if fetch_only is True
+                    if batch.fetch_only and success:
+                        import random
+                        delay = random.uniform(1.0, 2.5)
+                        await asyncio.sleep(delay)
+
                     if success:
                         # Chapter done — remove from tracking so it won't be re-processed
                         pending_retries.pop(ch_id, None)
@@ -533,6 +675,14 @@ class BackgroundTranslator:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
+                    # Check if the error is a QuotaExhaustedError from secrets.py
+                    from services.ai.secrets import QuotaExhaustedError
+                    if isinstance(e, QuotaExhaustedError):
+                        print(f"[FATAL] Batch translation stopped: {e}")
+                        batch.is_stopped = True
+                        batch.quota_exhausted = True
+                        break
+
                     if _is_retryable_error(e) and pending_retries.get(ch_id, 0) < MAX_RETRIES:
                         retry_count = pending_retries.get(ch_id, 0) + 1
                         pending_retries[ch_id] = retry_count
@@ -540,13 +690,29 @@ class BackgroundTranslator:
                         print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/{MAX_RETRIES}). "
                               f"Re-queuing after {delay:.0f}s delay. Error: {e}")
                         
-                        # Rotate API key if applicable, then reset chapter status
-                        from services.ai.secrets import rotate_api_key
+                        # Check if error is 429 Quota Exceeded (RPD limit)
+                        err_str = str(e).lower()
+                        is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted"])
+                        
+                        from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key
                         with SessionLocal() as db:
                             gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                             if gs_fresh and gs_fresh.llm_provider:
-                                # Rotate the key globally
-                                rotate_api_key(gs_fresh.llm_provider, gs_fresh)
+                                try:
+                                    if is_quota_limit:
+                                        # Get current key and mark it exhausted
+                                        current_key = get_active_api_key(gs_fresh.llm_provider, gs_fresh)
+                                        if current_key:
+                                            mark_key_exhausted(gs_fresh.llm_provider, current_key)
+                                    
+                                    # Rotate the key globally
+                                    rotate_api_key(gs_fresh.llm_provider, gs_fresh)
+                                except QuotaExhaustedError as qe:
+                                    print(f"[FATAL] Batch translation stopped during retry: {qe}")
+                                    batch.is_stopped = True
+                                    batch.quota_exhausted = True
+                                    db.commit()
+                                    break
                             
                             ch = db.get(Chapter, ch_id)
                             if ch:

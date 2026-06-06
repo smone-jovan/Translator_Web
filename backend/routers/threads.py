@@ -77,10 +77,10 @@ class ChapterContent(BaseModel):
     content_original: Optional[str]
     content_translated: Optional[str]
     translation_status: Optional[str]
+    source_url: Optional[str] = None
     scroll_progress: float = 0.0
     is_bookmarked: bool = False
     segments: List[TranslationSegmentOut] = []
-
 
 class HallucinationMatchOut(BaseModel):
     token: str
@@ -180,6 +180,11 @@ def list_threads(db: Session = Depends(get_db)):
 def get_active_batch(db: Session = Depends(get_db)):
     """Get the currently active global batch translation progress if any."""
     from services.background_translator import active_batches
+    
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    from services.ai.secrets import get_key_stats
+    stats = get_key_stats(gs.llm_provider if gs else "lm_studio", gs)
+    
     if not active_batches:
         return {
             "active": False,
@@ -189,7 +194,10 @@ def get_active_batch(db: Session = Depends(get_db)):
             "completed": 0,
             "current_chapter_id": None,
             "current_chapter_title": "",
-            "failed_ids": []
+            "failed_ids": [],
+            "quota_exhausted": False,
+            "total_keys": stats["total"],
+            "exhausted_keys": stats["exhausted"]
         }
     
     thread_id = list(active_batches.keys())[0]
@@ -207,7 +215,10 @@ def get_active_batch(db: Session = Depends(get_db)):
         "completed": batch.completed,
         "current_chapter_id": batch.current_chapter_id,
         "current_chapter_title": batch.current_chapter_title,
-        "failed_ids": batch.failed_ids
+        "failed_ids": batch.failed_ids,
+        "quota_exhausted": getattr(batch, "quota_exhausted", False),
+        "total_keys": stats["total"],
+        "exhausted_keys": stats["exhausted"]
     }
 
 
@@ -526,6 +537,42 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
     
     current_scroll_progress = bookmark.scroll_progress
 
+    # --- ON-DEMAND READ SCRAPING ---
+    if not chapter.content_original and getattr(chapter, "source_url", None):
+        import httpx
+        from routers.scrape import html_to_markdown
+        try:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=15.0,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+            ) as client:
+                resp = client.get(chapter.source_url)
+                resp.raise_for_status()
+            
+            fetched_title, fetched_markdown = html_to_markdown(resp.text)
+            
+            is_vip = False
+            if chapter.source_url and "/vip/" in chapter.source_url.lower():
+                is_vip = True
+            elif fetched_title and "VIP章节" in fetched_title:
+                is_vip = True
+            elif not fetched_markdown or len(fetched_markdown) < 50:
+                is_vip = True
+
+            if is_vip:
+                chapter.translation_status = "vip"
+                chapter.content_original = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+            else:
+                chapter.content_original = fetched_markdown
+                if not chapter.title_original and fetched_title:
+                    chapter.title_original = fetched_title
+            
+            db.commit()
+            print(f"[ON-DEMAND READ] Fetched chapter {chapter_id} content from {chapter.source_url}")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch on-demand chapter {chapter_id}: {e}")
+
     # --- PREFETCH TRIGGER (ADR-009) ---
     from services.background_translator import BackgroundTranslator
     from services.ai.settings import resolve_active_base_url, resolve_active_model
@@ -565,6 +612,7 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
         content_original=chapter.content_original,
         content_translated=chapter.content_translated,
         translation_status=chapter.translation_status,
+        source_url=chapter.source_url,
         scroll_progress=current_scroll_progress,
         is_bookmarked=chapter.is_bookmarked,
         segments=[
@@ -721,7 +769,7 @@ def get_all_bookmarks(db: Session = Depends(get_db)):
     
     results = []
     for ch in chapters:
-        thread_title = ch.thread.title_translated if ch.thread.title_translated else ch.thread.title_original
+        thread_title = ch.thread.title if ch.thread.title else ch.thread.original_title
         results.append({
             "id": ch.id,
             "thread_id": ch.thread_id,

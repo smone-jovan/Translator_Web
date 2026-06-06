@@ -16,7 +16,7 @@ class BatchTranslateRequest(BaseModel):
     target_lang: Optional[str] = "Indonesian"
     overwrite: bool = True
     translation_mode: str = "quality"  # "quality" or "fast"
-
+    fetch_only: bool = False
 
 @router.post("/threads/{thread_id}/batch-translate")
 async def batch_translate(
@@ -51,7 +51,8 @@ async def batch_translate(
         lm_url=lm_url,
         force_extract=req.ai_extract,
         force_overwrite=req.overwrite,
-        translation_mode=translation_mode
+        translation_mode=translation_mode,
+        fetch_only=req.fetch_only
     )
 
     return {
@@ -63,9 +64,14 @@ async def batch_translate(
 
 
 @router.get("/threads/{thread_id}/batch-status")
-def get_batch_status(thread_id: int):
+def get_batch_status(thread_id: int, db: Session = Depends(get_db)):
     """Get the active stateful batch translation progress for a specific thread."""
     batch = active_batches.get(thread_id)
+    
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    from services.ai.secrets import get_key_stats
+    stats = get_key_stats(gs.llm_provider if gs else "lm_studio", gs)
+    
     if not batch:
         return {
             "active": False,
@@ -73,7 +79,10 @@ def get_batch_status(thread_id: int):
             "completed": 0,
             "current_chapter_id": None,
             "current_chapter_title": "",
-            "failed_ids": []
+            "failed_ids": [],
+            "quota_exhausted": False,
+            "total_keys": stats["total"],
+            "exhausted_keys": stats["exhausted"]
         }
     return {
         "active": True,
@@ -81,7 +90,10 @@ def get_batch_status(thread_id: int):
         "completed": batch.completed,
         "current_chapter_id": batch.current_chapter_id,
         "current_chapter_title": batch.current_chapter_title,
-        "failed_ids": batch.failed_ids
+        "failed_ids": batch.failed_ids,
+        "quota_exhausted": getattr(batch, "quota_exhausted", False),
+        "total_keys": stats["total"],
+        "exhausted_keys": stats["exhausted"]
     }
 
 

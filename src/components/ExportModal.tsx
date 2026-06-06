@@ -33,6 +33,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
   const [cover, setCover] = useState<string | null>(null);
   const [coverSource, setCoverSource] = useState<'file' | 'url'>('file');
   const [coverUrl, setCoverUrl] = useState('');
+  const [hideThoughts, setHideThoughts] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>(
     chapters.filter(c => c.has_translation).map(c => c.id)
   );
@@ -117,7 +118,8 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
           author,
           cover_b64: coverSource === 'file' ? cover : null,
           cover_url: coverSource === 'url' ? coverUrl : null,
-          chapter_ids: selectedIds
+          chapter_ids: selectedIds,
+          hide_thoughts: hideThoughts
         })
       });
 
@@ -191,6 +193,19 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
                   <span className="text-xs font-bold">CLEAN</span>
                 </button>
               </div>
+            </div>
+
+            <div className="space-y-1.5 pt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={hideThoughts} 
+                  onChange={(e) => setHideThoughts(e.target.checked)}
+                  className="rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)]"
+                />
+                <span className="text-xs font-bold text-[var(--foreground)]">Remove AI Thoughts ({"<think>"})</span>
+              </label>
+              <p className="text-[9px] text-[var(--muted-foreground)] pl-5">Automatically strips any AI thinking process from the exported book.</p>
             </div>
 
             <div className="space-y-1.5">

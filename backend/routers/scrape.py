@@ -72,8 +72,21 @@ def html_to_markdown(html: str) -> tuple[str, str]:
 
     # Remove elements with ad-like classes/ids
     for el in soup.find_all(True):
-        classes = " ".join(el.get("class", []))
+        if getattr(el, "attrs", None) is None:
+            continue
+            
+        classes_raw = el.get("class", [])
+        if isinstance(classes_raw, list):
+            classes = " ".join(str(c) for c in classes_raw)
+        elif isinstance(classes_raw, str):
+            classes = classes_raw
+        else:
+            classes = ""
+            
         el_id = el.get("id", "")
+        if not isinstance(el_id, str):
+            el_id = str(el_id)
+            
         if AD_PATTERNS.search(classes) or AD_PATTERNS.search(el_id):
             el.decompose()
 
@@ -193,8 +206,17 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
         raise HTTPException(502, f"Failed to fetch URL: {e}")
 
     title, markdown = html_to_markdown(resp.text)
-    if not markdown:
-        raise HTTPException(422, "No content extracted from URL.")
+    
+    is_vip = False
+    if "/vip/" in req.url.lower():
+        is_vip = True
+    elif title and "VIP章节" in title:
+        is_vip = True
+    elif not markdown or len(markdown) < 50:
+        is_vip = True
+
+    if is_vip:
+        markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
 
     if req.thread_id:
         # Add chapter to existing thread
@@ -211,7 +233,9 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             thread_id=thread.id,
             order=max_order + 1,
             title_original=title,
-            content_original=markdown
+            content_original=markdown,
+            source_url=req.url,
+            translation_status="vip" if is_vip else "idle"
         )
         db.add(chapter)
         db.commit()
@@ -233,7 +257,9 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             thread_id=thread.id,
             order=0,
             title_original=title,
-            content_original=markdown
+            content_original=markdown,
+            source_url=req.url,
+            translation_status="vip" if is_vip else "idle"
         )
         db.add(chapter)
         db.commit()
@@ -400,3 +426,92 @@ async def save_metadata_route(
     db.commit()
     return {"success": True}
 
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/fetch-next")
+async def fetch_next_chapter(
+    thread_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db)
+):
+    """Auto-fetch the next chapter from the web if a 'Next' link exists in the current chapter's HTML."""
+    chapter = db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+        
+    if not chapter.source_url:
+        raise HTTPException(400, "Current chapter has no source_url to fetch from.")
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+        ) as client:
+            resp = await client.get(chapter.source_url)
+            resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
+
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    links = soup.find_all('a')
+    next_url = None
+    next_title = None
+    
+    for a in links:
+        text = a.get_text(strip=True)
+        if '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text:
+            href = a.get('href')
+            if href:
+                next_url = urllib.parse.urljoin(str(resp.url), href)
+                next_title = text
+                break
+
+    if not next_url:
+        raise HTTPException(404, "Could not find a 'Next Chapter' link on the page.")
+
+    # Check if next_url is already in the thread
+    existing = db.execute(select(Chapter).where(Chapter.thread_id == thread_id, Chapter.source_url == next_url)).scalar_one_or_none()
+    if existing:
+        return {"success": True, "chapter_id": existing.id, "message": "Chapter already exists."}
+
+    # Fetch and parse the new chapter content
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+        ) as client:
+            next_resp = await client.get(next_url)
+            next_resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
+
+    parsed_title, markdown = html_to_markdown(next_resp.text)
+    
+    is_vip = False
+    if "/vip/" in next_url.lower():
+        is_vip = True
+    elif parsed_title and "VIP章节" in parsed_title:
+        is_vip = True
+    elif not markdown or len(markdown) < 50:
+        is_vip = True
+
+    if is_vip:
+        markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+
+    # Get max order
+    max_order = db.execute(
+        select(func.max(Chapter.order)).where(Chapter.thread_id == thread_id)
+    ).scalar() or chapter.order
+
+    new_chapter = Chapter(
+        thread_id=thread_id,
+        order=max_order + 1,
+        title_original=parsed_title or next_title or "Untitled Next Chapter",
+        content_original=markdown,
+        source_url=next_url,
+        translation_status="vip" if is_vip else "idle"
+    )
+    db.add(new_chapter)
+    db.commit()
+
+    return {"success": True, "chapter_id": new_chapter.id}
