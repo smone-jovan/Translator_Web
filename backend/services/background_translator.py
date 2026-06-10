@@ -47,8 +47,13 @@ class ActiveBatch:
         self.is_stopped = False
         self.quota_exhausted = False
         self.active_task = None
+        self.is_waiting = True
 
 active_batches = {} # thread_id -> ActiveBatch
+
+# Master Queue for global sequential batch translation
+master_batch_queue = asyncio.Queue()
+master_worker_task = None
 
 # Retry configuration for service unavailable errors
 MAX_RETRIES = 3
@@ -288,6 +293,7 @@ class BackgroundTranslator:
                 system_prompt = ContextEngine.build_translation_prompt(
                     db, thread_id, target_lang, content_original, translation_mode
                 )
+                print(f"[DEBUG] Chapter {chapter_id} - System Prompt Length: {len(system_prompt)} chars, Original Content Length: {len(content_original)} chars")
 
             # Pace the API requests based on selected model's strict RPM limits (ADR-029)
             await BackgroundTranslator._enforce_pacing(model, gs)
@@ -305,10 +311,8 @@ class BackgroundTranslator:
                 if cap_enabled:
                     # Cap is on — respect it regardless of mode
                     pass  # max_tokens already set by get_chapter_translation_max_tokens
-                elif translation_mode == "quality":
-                    max_tokens = None  # No cap for quality when disabled
                 else:
-                    max_tokens = 10000  # Fast always caps at 10K
+                    max_tokens = None  # No cap when disabled
                 full_content = ""
                 sent_clean_content = ""
                 chunk_count = 0
@@ -406,6 +410,21 @@ class BackgroundTranslator:
 
                     if not round_truncated:
                         break  # Translation complete, no truncation
+
+                    # ----- ANTI 40K TOKEN LEAK -----
+                    # Prevent LLM from continuing an infinite hallucination loop
+                    tail = full_content[-2000:]
+                    is_looping = False
+                    for i in range(len(tail) - 50):
+                        substr = tail[i:i+50]
+                        if tail.count(substr) > 5:
+                            is_looping = True
+                            break
+                    
+                    if is_looping:
+                        print(f"[WARN] Chapter {chapter_id} truncated due to infinite loop hallucination! Aborting continuation to save tokens.")
+                        break
+                    # -------------------------------
 
                     continuation_round += 1
                     if continuation_round > MAX_CONTINUATIONS:
@@ -528,9 +547,13 @@ class BackgroundTranslator:
         )
         active_batches[thread_id] = batch
         
-        # Mulai worker task di background
-        worker_task = asyncio.create_task(BackgroundTranslator._run_batch_worker(batch))
-        batch.active_task = worker_task
+        # Masukkan ke antrian global
+        await master_batch_queue.put(batch)
+        
+        # Jalankan master worker jika belum aktif
+        global master_worker_task
+        if master_worker_task is None or master_worker_task.done():
+            master_worker_task = asyncio.create_task(BackgroundTranslator._master_loop())
 
     @staticmethod
     async def stop_batch(thread_id: int):
@@ -538,12 +561,39 @@ class BackgroundTranslator:
         batch = active_batches.get(thread_id)
         if batch:
             batch.is_stopped = True
+            batch.is_waiting = False
             if batch.active_task:
                 batch.active_task.cancel()
             # Cancel current active chapter task if any
             if batch.current_chapter_id in active_tasks:
                 active_tasks[batch.current_chapter_id].cancel()
             active_batches.pop(thread_id, None)
+
+    @staticmethod
+    async def _master_loop():
+        """Master worker that processes batches sequentially across all threads."""
+        while True:
+            batch = await master_batch_queue.get()
+            if batch.is_stopped:
+                master_batch_queue.task_done()
+                continue
+                
+            batch.is_waiting = False
+            
+            # Buat task agar bisa di-cancel independen oleh stop_batch
+            batch_task = asyncio.create_task(BackgroundTranslator._run_batch_worker(batch))
+            batch.active_task = batch_task
+            
+            try:
+                await batch_task
+            except asyncio.CancelledError:
+                print(f"[MASTER QUEUE] Master loop cancelled. Cancelling active batch for thread {batch.thread_id}.")
+                batch_task.cancel()
+                raise
+            except Exception as e:
+                print(f"[MASTER QUEUE] Batch worker for thread {batch.thread_id} crashed: {e}")
+            finally:
+                master_batch_queue.task_done()
 
     @staticmethod
     async def _enforce_pacing(model: str, gs: 'GlobalSetting' = None):
@@ -594,141 +644,196 @@ class BackgroundTranslator:
                 
         # Divide delay by number of active API keys to multiply RPM
         required_delay = required_delay / num_keys
-
-        time_since_last = time.time() - _last_api_call_time
-        if time_since_last < required_delay:
-            wait_time = required_delay - time_since_last
-            print(f"[PACING] [RPM Safety Guard] Delaying request for {wait_time:.2f}s to respect {resolved_model} RPM limits ({num_keys} keys active)...")
-            import asyncio
-            await asyncio.sleep(wait_time)
-
-        _last_api_call_time = time.time()
         
-        # Round-robin rotate the key on EVERY request so we distribute load evenly across keys
-        if gs and num_keys > 1:
-            from services.ai.secrets import rotate_api_key
-            rotate_api_key(llm_provider, gs)
+        # Hard cap minimum delay to avoid aggressive banning (e.g. 1.6s minimum for multiple keys)
+        if num_keys > 1:
+            required_delay = max(required_delay, 1.6)
+
+        global _pacing_lock
+        try:
+            _pacing_lock
+        except NameError:
+            import asyncio
+            _pacing_lock = asyncio.Lock()
+
+        import asyncio
+        async with _pacing_lock:
+            time_since_last = time.time() - _last_api_call_time
+            if time_since_last < required_delay:
+                wait_time = required_delay - time_since_last
+                print(f"[PACING] [RPM Safety Guard] Delaying request for {wait_time:.2f}s to respect {resolved_model} RPM limits ({num_keys} keys active)...")
+                await asyncio.sleep(wait_time)
+
+            _last_api_call_time = time.time()
+            
+            # Round-robin rotate the key on EVERY request so we distribute load evenly across keys
+            if gs and num_keys > 1:
+                from services.ai.secrets import rotate_api_key
+                rotate_api_key(llm_provider, gs)
+
+    @staticmethod
+    def _calculate_concurrency_limit(provider: str, api_keys_json: str | None = None) -> int:
+        if provider == "lm_studio":
+            return 1
+            
+        num_keys = 1
+        if provider == "gemini" and api_keys_json:
+            try:
+                import json
+                keys = json.loads(api_keys_json)
+                if isinstance(keys, list) and len(keys) > 0:
+                    num_keys = len(keys)
+            except Exception:
+                pass
+                
+        return min(max(num_keys * 3, 2), 20)
 
     @staticmethod
     async def _run_batch_worker(batch: ActiveBatch):
-        """Worker loop yang mengeksekusi bab secara berurutan, dengan retry untuk error service unavailable."""
+        """Worker loop yang mengeksekusi bab secara CONCURRENT (Ngebut Paralel)."""
         try:
-            pending_retries: dict[int, int] = {}  # chapter_id -> retry_count
-
-            while True:
-                # Build work queue: original chapters + pending retries
-                work_queue: list[int] = []
-                for ch_id in list(batch.chapter_ids):
-                    if ch_id not in pending_retries or pending_retries[ch_id] < MAX_RETRIES:
-                        work_queue.append(ch_id)
-                # Add retry chapters that aren't in the original list anymore
-                for ch_id in list(pending_retries.keys()):
-                    if ch_id not in work_queue and pending_retries[ch_id] < MAX_RETRIES:
-                        work_queue.append(ch_id)
-
-                if not work_queue or batch.is_stopped:
-                    break
-
-                ch_id = work_queue.pop(0)
-                batch.current_chapter_id = ch_id
-
-                # Update status bab ke memori untuk info ke frontend
-                with SessionLocal() as db:
-                    chapter = db.get(Chapter, ch_id)
-                    if chapter:
-                        batch.current_chapter_title = f"Ch {chapter.order}: {chapter.title_original or 'Untitled'}"
-                    else:
-                        batch.current_chapter_title = f"Chapter {ch_id}"
-
-                try:
-                    success = await BackgroundTranslator._do_translate(
-                        chapter_id=ch_id,
-                        thread_id=batch.thread_id,
-                        target_lang=batch.target_lang,
-                        model=batch.model,
-                        lm_url=batch.lm_url,
-                        force_extract=batch.force_extract,
-                        force_overwrite=batch.force_overwrite,
-                        translation_mode=batch.translation_mode,
-                        fetch_only=batch.fetch_only
-                    )
+            from services.ai.secrets import QuotaExhaustedError
+            import asyncio
+            
+            provider = "lm_studio"
+            api_keys_json = None
+            
+            with SessionLocal() as db:
+                gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+                if gs:
+                    provider = gs.llm_provider or "lm_studio"
+                    if provider == "gemini":
+                        api_keys_json = getattr(gs, "gemini_api_keys", None)
+                    elif provider == "openai":
+                        api_keys_json = getattr(gs, "openai_api_keys", None)
+            
+            concurrency_limit = BackgroundTranslator._calculate_concurrency_limit(provider, api_keys_json)
+            
+            print(f"[BATCH] Starting batch worker with {concurrency_limit} concurrent tasks for thread {batch.thread_id}.")
+            
+            queue = asyncio.Queue()
+            for ch_id in list(batch.chapter_ids):
+                queue.put_nowait(ch_id)
+                
+            pending_retries: dict[int, int] = {}
+            
+            async def worker(worker_id: int):
+                while batch.chapter_ids and not batch.is_stopped:
+                    try:
+                        ch_id = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        await asyncio.sleep(1.0)
+                        continue
+                        
+                    batch.current_chapter_id = ch_id
                     
-                    # Random delay to simulate human scraping if fetch_only is True
-                    if batch.fetch_only and success:
-                        import random
-                        delay = random.uniform(1.0, 2.5)
-                        await asyncio.sleep(delay)
-
-                    if success:
-                        # Chapter done — remove from tracking so it won't be re-processed
-                        pending_retries.pop(ch_id, None)
-                        if ch_id in batch.chapter_ids:
-                            batch.chapter_ids.remove(ch_id)
-                        batch.completed += 1
-                    else:
-                        # Failed but not retryable (e.g., prohibited, no content)
-                        pending_retries.pop(ch_id, None)
-                        if ch_id in batch.chapter_ids:
-                            batch.chapter_ids.remove(ch_id)
-                        batch.failed_ids.append(ch_id)
-                        batch.completed += 1
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    # Check if the error is a QuotaExhaustedError from secrets.py
-                    from services.ai.secrets import QuotaExhaustedError
-                    if isinstance(e, QuotaExhaustedError):
-                        print(f"[FATAL] Batch translation stopped: {e}")
-                        batch.is_stopped = True
-                        batch.quota_exhausted = True
-                        break
-
-                    if _is_retryable_error(e) and pending_retries.get(ch_id, 0) < MAX_RETRIES:
-                        retry_count = pending_retries.get(ch_id, 0) + 1
-                        pending_retries[ch_id] = retry_count
-                        delay = RETRY_BASE_DELAY * (2 ** (retry_count - 1))
-                        print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/{MAX_RETRIES}). "
-                              f"Re-queuing after {delay:.0f}s delay. Error: {e}")
-                        
-                        # Check if error is 429 Quota Exceeded (RPD limit)
-                        err_str = str(e).lower()
-                        is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted"])
-                        
-                        from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key
-                        with SessionLocal() as db:
-                            gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
-                            if gs_fresh and gs_fresh.llm_provider:
-                                try:
-                                    if is_quota_limit:
-                                        # Get current key and mark it exhausted
-                                        current_key = get_active_api_key(gs_fresh.llm_provider, gs_fresh)
-                                        if current_key:
-                                            mark_key_exhausted(gs_fresh.llm_provider, current_key)
-                                    
-                                    # Rotate the key globally
-                                    rotate_api_key(gs_fresh.llm_provider, gs_fresh)
-                                except QuotaExhaustedError as qe:
-                                    print(f"[FATAL] Batch translation stopped during retry: {qe}")
-                                    batch.is_stopped = True
-                                    batch.quota_exhausted = True
-                                    db.commit()
-                                    break
+                    with SessionLocal() as db:
+                        chapter = db.get(Chapter, ch_id)
+                        if chapter:
+                            batch.current_chapter_title = f"Ch {chapter.order}: {chapter.title_original or 'Untitled'}"
+                        else:
+                            batch.current_chapter_title = f"Chapter {ch_id}"
                             
-                            ch = db.get(Chapter, ch_id)
-                            if ch:
-                                ch.translation_status = "idle"
-                            db.commit()
-                        await asyncio.sleep(delay)
-                        continue  # Don't increment completed — will retry
-                    else:
-                        # Not retryable or max retries exceeded
-                        pending_retries.pop(ch_id, None)
-                        print(f"[ERROR] Batch chapter {ch_id} failed permanently: {e}")
-                        batch.failed_ids.append(ch_id)
-                        batch.completed += 1
-
-                # Istirahat 1 detik antar bab biar GPU gak overheat
-                await asyncio.sleep(1.0)
+                    try:
+                        success = await BackgroundTranslator._do_translate(
+                            chapter_id=ch_id, thread_id=batch.thread_id,
+                            target_lang=batch.target_lang, model=batch.model,
+                            lm_url=batch.lm_url, force_extract=batch.force_extract,
+                            force_overwrite=batch.force_overwrite,
+                            translation_mode=batch.translation_mode, fetch_only=batch.fetch_only
+                        )
+                        
+                        if batch.fetch_only and success:
+                            import random
+                            await asyncio.sleep(random.uniform(1.0, 2.5))
+                            
+                        if success:
+                            pending_retries.pop(ch_id, None)
+                            if ch_id in batch.chapter_ids:
+                                batch.chapter_ids.remove(ch_id)
+                            batch.completed += 1
+                        else:
+                            pending_retries.pop(ch_id, None)
+                            if ch_id in batch.chapter_ids:
+                                batch.chapter_ids.remove(ch_id)
+                            batch.failed_ids.append(ch_id)
+                            batch.completed += 1
+                            
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        if isinstance(e, QuotaExhaustedError):
+                            fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']
+                            with SessionLocal() as db:
+                                gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
+                                current_model = gs_fresh.gemini_model if (gs_fresh and gs_fresh.gemini_model) else ""
+                                if gs_fresh and gs_fresh.llm_provider == "gemini" and current_model in fallback_sequence:
+                                    idx = fallback_sequence.index(current_model)
+                                    if idx + 1 < len(fallback_sequence):
+                                        next_model = fallback_sequence[idx + 1]
+                                        print(f"[AUTO-FALLBACK] Gemini model '{current_model}' exhausted on all keys. Switching to '{next_model}'.")
+                                        gs_fresh.gemini_model = next_model
+                                        batch.model = next_model
+                                        db.commit()
+                                        pending_retries[ch_id] = 0
+                                        queue.put_nowait(ch_id)
+                                        continue
+                            
+                            print(f"[FATAL] Batch translation stopped: {e}")
+                            batch.is_stopped = True
+                            batch.quota_exhausted = True
+                            break
+                            
+                        if _is_retryable_error(e) and pending_retries.get(ch_id, 0) < 15: # Increase max retries internally to handle many keys
+                            err_str = str(e).lower()
+                            is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted"])
+                            
+                            if is_quota_limit:
+                                retry_count = pending_retries.get(ch_id, 0) # Don't increment for quota
+                            else:
+                                retry_count = pending_retries.get(ch_id, 0) + 1
+                                
+                            pending_retries[ch_id] = retry_count
+                            delay = RETRY_BASE_DELAY * (2 ** (retry_count - 1)) if retry_count > 0 else RETRY_BASE_DELAY
+                            print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/15). Re-queuing after {delay:.0f}s. Error: {e}")
+                            is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted"])
+                            
+                            from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key
+                            with SessionLocal() as db:
+                                gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
+                                if gs_fresh and gs_fresh.llm_provider:
+                                    try:
+                                        if is_quota_limit:
+                                            current_key = get_active_api_key(gs_fresh.llm_provider, gs_fresh)
+                                            if current_key:
+                                                mark_key_exhausted(gs_fresh.llm_provider, current_key, gs_fresh.gemini_model)
+                                        rotate_api_key(gs_fresh.llm_provider, gs_fresh)
+                                    except QuotaExhaustedError as qe:
+                                        pass
+                                    
+                                ch = db.get(Chapter, ch_id)
+                                if ch:
+                                    ch.translation_status = "idle"
+                                db.commit()
+                            
+                            async def delayed_requeue(cid, d):
+                                await asyncio.sleep(d)
+                                if getattr(batch, "is_stopped", False) == False:
+                                    queue.put_nowait(cid)
+                            
+                            asyncio.create_task(delayed_requeue(ch_id, delay))
+                        else:
+                            pending_retries.pop(ch_id, None)
+                            print(f"[ERROR] Batch chapter {ch_id} failed permanently: {e}")
+                            batch.failed_ids.append(ch_id)
+                            batch.completed += 1
+                            if ch_id in batch.chapter_ids:
+                                batch.chapter_ids.remove(ch_id)
+                    finally:
+                        await asyncio.sleep(1.0)
+                        
+            tasks = [asyncio.create_task(worker(i)) for i in range(concurrency_limit)]
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         except asyncio.CancelledError:
             print(f"[STOP] Batch translation worker for thread {batch.thread_id} dibatalkan.")

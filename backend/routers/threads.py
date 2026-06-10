@@ -197,19 +197,30 @@ def get_active_batch(db: Session = Depends(get_db)):
             "failed_ids": [],
             "quota_exhausted": False,
             "total_keys": stats["total"],
-            "exhausted_keys": stats["exhausted"]
+            "exhausted_keys": stats["exhausted"],
+            "queue_count": 0,
+            "is_waiting": False
         }
     
-    thread_id = list(active_batches.keys())[0]
-    batch = active_batches[thread_id]
+    # Prioritize showing the currently running batch (not waiting)
+    active_thread_id = None
+    for tid, b in list(active_batches.items()):
+        if getattr(b, "is_waiting", False) is False:
+            active_thread_id = tid
+            break
+            
+    if active_thread_id is None:
+        active_thread_id = list(active_batches.keys())[0]
+        
+    batch = active_batches[active_thread_id]
     
-    stmt = select(Thread).where(Thread.id == thread_id)
+    stmt = select(Thread).where(Thread.id == active_thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
     thread_title = thread.title if thread else "Unknown Book"
     
     return {
         "active": True,
-        "thread_id": thread_id,
+        "thread_id": active_thread_id,
         "thread_title": thread_title,
         "total": batch.total,
         "completed": batch.completed,
@@ -218,7 +229,9 @@ def get_active_batch(db: Session = Depends(get_db)):
         "failed_ids": batch.failed_ids,
         "quota_exhausted": getattr(batch, "quota_exhausted", False),
         "total_keys": stats["total"],
-        "exhausted_keys": stats["exhausted"]
+        "exhausted_keys": stats["exhausted"],
+        "queue_count": len(active_batches) - 1,
+        "is_waiting": getattr(batch, "is_waiting", False)
     }
 
 

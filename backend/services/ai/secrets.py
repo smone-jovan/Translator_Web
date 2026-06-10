@@ -9,7 +9,7 @@ class QuotaExhaustedError(Exception):
     pass
 
 # Global RAM-based blacklist for API keys that hit their daily RPD limit
-# Format: { "api_key": "YYYY-MM-DD" }
+# Format: { "api_key::model_name": "YYYY-MM-DD" }
 exhausted_gemini_keys: dict[str, str] = {}
 
 def _clear_stale_exhausted_keys():
@@ -19,31 +19,36 @@ def _clear_stale_exhausted_keys():
     for k in stale_keys:
         del exhausted_gemini_keys[k]
 
-def mark_key_exhausted(provider: str, api_key: str):
+def mark_key_exhausted(provider: str, api_key: str, model: str = ""):
     """Marks an API key as exhausted for the current day."""
     if provider == "gemini" and api_key:
         today = datetime.date.today().isoformat()
-        exhausted_gemini_keys[api_key] = today
-        print(f"[QUOTA] Gemini API key starting with '{api_key[:8]}...' has been marked as EXHAUSTED until {today} ends.")
+        dict_key = f"{api_key}::{model}" if model else api_key
+        exhausted_gemini_keys[dict_key] = today
+        model_str = f" for model '{model}'" if model else ""
+        print(f"[QUOTA] Gemini API key starting with '{api_key[:8]}...' has been marked as EXHAUSTED{model_str} until {today} ends.")
 
 def get_key_stats(provider: str, gs) -> dict:
     """Returns total keys and currently exhausted keys for a provider."""
     stats = {"total": 1, "exhausted": 0}
     if provider == "gemini":
         _clear_stale_exhausted_keys()
+        model = gs.gemini_model if gs else ""
         if gs and gs.gemini_api_keys:
             try:
                 keys = json.loads(gs.gemini_api_keys)
                 if isinstance(keys, list) and len(keys) > 0:
                     stats["total"] = len(keys)
-                    stats["exhausted"] = sum(1 for k in keys if k in exhausted_gemini_keys)
+                    stats["exhausted"] = sum(1 for k in keys if (f"{k}::{model}" if model else k) in exhausted_gemini_keys)
             except Exception:
                 pass
         else:
             # Single key fallback
             single_key = load_secrets().get("gemini_api_key", "")
-            if single_key and single_key in exhausted_gemini_keys:
-                stats["exhausted"] = 1
+            if single_key:
+                dict_key = f"{single_key}::{model}" if model else single_key
+                if dict_key in exhausted_gemini_keys:
+                    stats["exhausted"] = 1
     return stats
 
 
@@ -115,6 +120,7 @@ def get_active_api_key(provider: str, gs=None) -> str:
     
     if provider == "gemini":
         _clear_stale_exhausted_keys()
+        model = gs.gemini_model if gs else ""
         if gs and gs.gemini_api_keys:
             keys = json.loads(gs.gemini_api_keys)
             if keys:
@@ -122,17 +128,22 @@ def get_active_api_key(provider: str, gs=None) -> str:
                 start_idx = gs.gemini_active_key_index if gs.gemini_active_key_index < len(keys) else 0
                 for offset in range(len(keys)):
                     idx = (start_idx + offset) % len(keys)
-                    if keys[idx] not in exhausted_gemini_keys:
+                    dict_key = f"{keys[idx]}::{model}" if model else keys[idx]
+                    if dict_key not in exhausted_gemini_keys:
                         # Found a healthy key, optionally update the index if we skipped
                         if offset > 0:
                             gs.gemini_active_key_index = idx
                         return keys[idx]
-                # If we get here, ALL keys are exhausted
-                raise QuotaExhaustedError("All available Gemini API keys have hit their daily quota limit.")
+                # If we get here, ALL keys are exhausted for this model
+                model_str = f" for model '{model}'" if model else ""
+                raise QuotaExhaustedError(f"All available Gemini API keys have hit their daily quota limit{model_str}.")
         
         single_key = secrets.get("gemini_api_key", "")
-        if single_key in exhausted_gemini_keys:
-            raise QuotaExhaustedError("The single Gemini API key has hit its daily quota limit.")
+        if single_key:
+            dict_key = f"{single_key}::{model}" if model else single_key
+            if dict_key in exhausted_gemini_keys:
+                model_str = f" for model '{model}'" if model else ""
+                raise QuotaExhaustedError(f"The single Gemini API key has hit its daily quota limit{model_str}.")
         return single_key
     
     elif provider == "openai":
@@ -153,12 +164,14 @@ def rotate_api_key(provider: str, gs) -> str:
     """
     if provider == "gemini" and gs.gemini_api_keys:
         _clear_stale_exhausted_keys()
+        model = gs.gemini_model if gs else ""
         keys = json.loads(gs.gemini_api_keys)
         if len(keys) > 1:
             start_idx = gs.gemini_active_key_index
             for offset in range(1, len(keys) + 1):
                 idx = (start_idx + offset) % len(keys)
-                if keys[idx] not in exhausted_gemini_keys:
+                dict_key = f"{keys[idx]}::{model}" if model else keys[idx]
+                if dict_key not in exhausted_gemini_keys:
                     gs.gemini_active_key_index = idx
                     print(f"[KEY ROTATE] Gemini: switched to key #{gs.gemini_active_key_index}")
                     return keys[idx]

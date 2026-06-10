@@ -29,6 +29,8 @@ interface BatchStatus {
   quota_exhausted: boolean;
   total_keys: number;
   exhausted_keys: number;
+  is_waiting: boolean;
+  queue_count?: number;
 }
 
 export default function BulkStatusCenter() {
@@ -44,7 +46,9 @@ export default function BulkStatusCenter() {
     failed_ids: [],
     quota_exhausted: false,
     total_keys: 1,
-    exhausted_keys: 0
+    exhausted_keys: 0,
+    is_waiting: false,
+    queue_count: 0
   });
   const [showFinished, setShowFinished] = useState(false);
 
@@ -88,7 +92,9 @@ export default function BulkStatusCenter() {
                 failed_ids: [],
                 quota_exhausted: false,
                 total_keys: 1,
-                exhausted_keys: 0
+                exhausted_keys: 0,
+                is_waiting: false,
+                queue_count: 0
               };
             });
           }
@@ -144,7 +150,9 @@ export default function BulkStatusCenter() {
           failed_ids: [],
           quota_exhausted: false,
           total_keys: 1,
-          exhausted_keys: 0
+          exhausted_keys: 0,
+          is_waiting: false,
+          queue_count: 0
         });
         setShowFinished(false);
       }
@@ -162,30 +170,30 @@ export default function BulkStatusCenter() {
   return (
     <Box sx={{ 
       position: 'fixed', 
-      bottom: { xs: 88, md: 24 }, 
-      right: { xs: 12, md: 24 },
-      left: { xs: 12, md: 'auto' },
+      bottom: { xs: 72, md: 24 }, 
+      right: { xs: 8, md: 24 },
+      left: { xs: 8, md: 'auto' },
       zIndex: 2000,
-      width: { xs: 'auto', md: 360 },
+      width: { xs: 'auto', md: 340 },
       pointerEvents: 'auto'
     }}>
       <Paper sx={{ 
         background: 'var(--card)',
         backdropFilter: 'blur(24px)',
-        border: isFinished ? '1.5px solid rgba(76, 175, 80, 0.4)' : '1.5px solid var(--primary)',
-        borderRadius: '24px',
+        border: isFinished ? '1.5px solid rgba(76, 175, 80, 0.4)' : status.is_waiting ? '1.5px solid rgba(245, 158, 11, 0.4)' : '1.5px solid var(--primary)',
+        borderRadius: { xs: '16px', md: '24px' },
         overflow: 'hidden',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.3)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
         color: 'var(--foreground)',
         transition: 'all 0.3s ease'
       }}>
         {/* Header Area */}
         <Box sx={{ 
-          p: 2, 
+          p: { xs: 1.5, md: 2 }, 
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'space-between',
-          background: isFinished ? 'rgba(76, 175, 80, 0.08)' : 'rgba(0,0,0,0.15)',
+          background: isFinished ? 'rgba(76, 175, 80, 0.08)' : status.is_waiting ? 'rgba(245, 158, 11, 0.08)' : 'rgba(0,0,0,0.15)',
           cursor: 'pointer',
           borderBottom: '1px solid var(--border)'
         }} onClick={() => setIsOpen(!isOpen)}>
@@ -195,15 +203,17 @@ export default function BulkStatusCenter() {
               anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
               badgeContent={
                 isFinished ? 
-                <CheckCircle sx={{ fontSize: 15, color: '#4caf50' }} /> : 
-                <Sync sx={{ fontSize: 15, color: 'var(--primary)', animation: 'spin 2s linear infinite' }} />
+                <CheckCircle sx={{ fontSize: 14, color: '#4caf50' }} /> : 
+                status.is_waiting ?
+                <AutoAwesome sx={{ fontSize: 14, color: '#f59e0b' }} /> :
+                <Sync sx={{ fontSize: 14, color: 'var(--primary)', animation: 'spin 2s linear infinite' }} />
               }
             >
-              <AutoAwesome sx={{ color: isFinished ? '#4caf50' : 'var(--primary)', fontSize: 20 }} />
+              <AutoAwesome sx={{ color: isFinished ? '#4caf50' : status.is_waiting ? '#f59e0b' : 'var(--primary)', fontSize: { xs: 18, md: 20 } }} />
             </Badge>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: status.quota_exhausted ? '#ef4444' : 'var(--foreground)', fontSize: '0.85rem', lineHeight: 1.2 }}>
-                {isFinished ? 'Translation Done' : status.quota_exhausted ? 'Stopped (Quota)' : 'Batch Translating'}
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: status.quota_exhausted ? '#ef4444' : 'var(--foreground)', fontSize: { xs: '0.8rem', md: '0.85rem' }, lineHeight: 1.2 }}>
+                {isFinished ? 'Translation Done' : status.quota_exhausted ? 'Stopped (Quota)' : status.is_waiting ? 'Waiting in Queue...' : `Batch Translating${status.queue_count ? ` (+${status.queue_count})` : ''}`}
               </Typography>
               <Typography variant="caption" sx={{ 
                 color: 'var(--muted-foreground)', 
@@ -237,33 +247,35 @@ export default function BulkStatusCenter() {
 
         {/* Expandable Area */}
         <Collapse in={isOpen}>
-          <Box sx={{ p: 2.5 }}>
+          <Box sx={{ p: { xs: 1.5, md: 2.5 } }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1.2 }}>
               <Typography variant="caption" sx={{ opacity: 0.8, fontWeight: 600 }}>
-                {isFinished ? 'All chapters translated' : `Progress: ${status.completed}/${status.total} chapters`}
+                {isFinished ? 'All chapters translated' : status.is_waiting ? 'Queued for processing' : `Progress: ${status.completed}/${status.total} chapters`}
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                {status.total_keys > 1 && status.exhausted_keys > 0 && !isFinished && (
+                {status.total_keys > 1 && status.exhausted_keys > 0 && !isFinished && !status.is_waiting && (
                   <Typography variant="caption" sx={{ fontWeight: 700, color: status.quota_exhausted ? '#ef4444' : '#f59e0b' }}>
                     🔑 {status.exhausted_keys}/{status.total_keys} Exhausted
                   </Typography>
                 )}
-                <Typography variant="caption" sx={{ fontWeight: 900, color: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : 'var(--primary)' }}>
-                  {Math.round(progress)}%
-                </Typography>
+                {!status.is_waiting && (
+                  <Typography variant="caption" sx={{ fontWeight: 900, color: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : 'var(--primary)' }}>
+                    {Math.round(progress)}%
+                  </Typography>
+                )}
               </Box>
             </Box>
             
             <LinearProgress 
-              variant="determinate" 
-              value={progress} 
+              variant={status.is_waiting ? "indeterminate" : "determinate"}
+              value={status.is_waiting ? undefined : progress} 
               sx={{ 
-                height: 8, 
+                height: { xs: 6, md: 8 }, 
                 borderRadius: 4,
                 background: 'var(--secondary)',
                 border: '1px solid var(--border)',
                 '& .MuiLinearProgress-bar': {
-                  background: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : 'linear-gradient(90deg, var(--primary), #8a2be2)',
+                  background: status.quota_exhausted ? '#ef4444' : isFinished ? '#4caf50' : status.is_waiting ? '#f59e0b' : 'linear-gradient(90deg, var(--primary), #8a2be2)',
                   borderRadius: 4
                 }
               }} 
@@ -292,7 +304,7 @@ export default function BulkStatusCenter() {
 
             <Typography variant="caption" sx={{ 
               display: 'block', 
-              mt: 2, 
+              mt: 1.5, 
               color: 'var(--muted-foreground)', 
               fontWeight: 500,
               fontSize: '0.75rem',
@@ -300,7 +312,7 @@ export default function BulkStatusCenter() {
               overflow: 'hidden', 
               textOverflow: 'ellipsis' 
             }}>
-              {isFinished ? 'Feel free to read your translated book now!' : `Now: ${status.current_chapter_title}`}
+              {isFinished ? 'Feel free to read your translated book now!' : status.is_waiting ? 'Waiting for previous batch to finish...' : `Now: ${status.current_chapter_title}`}
             </Typography>
 
             {isFinished && (

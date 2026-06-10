@@ -163,6 +163,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastFetchedIdRef = useRef<number | null>(null);
+  const autoTranslatePendingRef = useRef(false);
   const initialReaderSessionRef = useRef<ReaderSessionState | null>(initialReaderSession);
 
   const fetchThread = useCallback(async (opts?: { silent?: boolean }) => {
@@ -222,7 +223,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
     };
   }, [thread, threadId, selectedChapterIdx, showChapterList]);
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean) => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast' = 'quality') => {
     if (!thread) return;
     
     window.dispatchEvent(new CustomEvent('batch-start', { 
@@ -237,7 +238,8 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
           chapter_ids: chapterIds, 
           ai_extract: aiExtract,
           overwrite: overwrite,
-          target_lang: targetLang
+          target_lang: targetLang,
+          translation_mode: translationMode
         })
       });
       
@@ -493,6 +495,17 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
     return () => abortController.abort();
   }, [selectedChapterIdx, threadId, thread]);
 
+  // Auto-translate on fetch next chapter
+  useEffect(() => {
+    if (autoTranslatePendingRef.current && chapterContent?.id && !isTranslating) {
+      autoTranslatePendingRef.current = false;
+      // Small delay ensures UI has rendered the chapter view before kicking off the heavy translation stream
+      setTimeout(() => {
+        handleTranslateChapter(false, '', chapterContent.content_original, chapterContent.id, false);
+      }, 100);
+    }
+  }, [chapterContent, handleTranslateChapter, isTranslating]);
+
   // Auto-detect starting chapter number based on the first chapter's original title
   const getAutoStartNum = useCallback(() => {
     if (!thread || !thread.chapters || thread.chapters.length === 0) return 1;
@@ -658,6 +671,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
       
       // Auto-navigate to the next chapter since it's now fetched
       if (selectedChapterIdx !== null) {
+        autoTranslatePendingRef.current = true;
         goToChapter(selectedChapterIdx + 1);
       }
     } catch (err) {

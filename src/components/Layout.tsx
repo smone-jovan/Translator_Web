@@ -1,4 +1,4 @@
-import { useState, useRef, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import Sidebar, { type TabId } from './Sidebar';
 import BottomNav from './BottomNav';
 
@@ -12,27 +12,38 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const lastScrollTop = useRef(0);
+  const scrollRafId = useRef<number | null>(null);
 
   const handleTabChange = (tab: TabId) => {
     setControlsVisible(true);
     onTabChange?.(tab);
   };
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const scrollTop = e.currentTarget.scrollTop;
-    const delta = scrollTop - lastScrollTop.current;
-    
-    if (scrollTop < 20) {
-      setControlsVisible(true);
-    } else if (delta > 30) {
-      setSidebarOpen(false);
-      setControlsVisible(false);
-    } else if (delta < -15) {
-      setControlsVisible(true);
-    }
-    
-    lastScrollTop.current = scrollTop;
-  };
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      if (scrollRafId.current !== null) return;
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      
+      scrollRafId.current = requestAnimationFrame(() => {
+        const delta = scrollTop - lastScrollTop.current;
+        
+        if (scrollTop < 20) {
+          setControlsVisible(true);
+        } else if (delta > 30) {
+          setSidebarOpen(false);
+          setControlsVisible(false);
+        } else if (delta < -15) {
+          setControlsVisible(true);
+        }
+        
+        lastScrollTop.current = scrollTop;
+        scrollRafId.current = null;
+      });
+    };
+
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, []);
 
   const handleContentClick = (e: React.MouseEvent) => {
     if (window.getSelection()?.toString()) return;
@@ -44,7 +55,7 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex min-h-screen w-full bg-[var(--background)]">
       <Sidebar
         isOpen={isSidebarOpen}
         activeTab={activeTab}
@@ -52,26 +63,10 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
         onClose={() => setSidebarOpen(false)}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-[var(--background)]">
-        {/* Mobile Menu Button - Optional, keeping hidden if BottomNav is enough, or move to top-right if needed */}
-        {/* <div className="md:hidden absolute top-4 right-4 z-50">
-          <button
-            className="p-3 rounded-2xl bg-[var(--card)]/80 backdrop-blur-md border border-[var(--border)] shadow-xl text-[var(--foreground)]"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu size={20} />
-          </button>
-        </div> */}
-
+      <main className="flex-1 flex flex-col min-w-0 relative" onClick={handleContentClick}>
         {/* Content */}
-        <div 
-          className="flex-1 overflow-auto p-4 md:p-8 pb-28 md:pb-8"
-          onScroll={handleScroll}
-          onClick={handleContentClick}
-        >
-          <div className="max-w-6xl mx-auto h-full">
-            {children(activeTab)}
-          </div>
+        <div className="flex-1 p-4 md:p-8 pb-28 md:pb-8 w-full max-w-6xl mx-auto">
+          {children(activeTab)}
         </div>
 
         {/* Mobile Bottom Nav */}

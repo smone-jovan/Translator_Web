@@ -75,6 +75,7 @@ def get_batch_status(thread_id: int, db: Session = Depends(get_db)):
     if not batch:
         return {
             "active": False,
+            "is_waiting": False,
             "total": 0,
             "completed": 0,
             "current_chapter_id": None,
@@ -86,6 +87,7 @@ def get_batch_status(thread_id: int, db: Session = Depends(get_db)):
         }
     return {
         "active": True,
+        "is_waiting": getattr(batch, "is_waiting", False),
         "total": batch.total,
         "completed": batch.completed,
         "current_chapter_id": batch.current_chapter_id,

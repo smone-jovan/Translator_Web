@@ -23,8 +23,7 @@ class ContextEngine:
         # Mode-aware settings
         is_quality = translation_mode == "quality"
         
-        # Ini core instruksi buat AI-nya. Isinya aturan etika translasi yang diminta user.
-        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Chinese characters or pinyin allowed in the story output. (Exception: You MAY use Chinese characters in the Translator Notes at the very end).
+        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Chinese characters or pinyin allowed in the story output. (Exception: You MAY use Chinese characters in the Translator Notes at the very end if requested).
 
 Role:
 You are an expert translator of Chinese web novels (urban / system / transmigration).
@@ -50,7 +49,6 @@ Style Reference:
 - Translate Chinese slang to natural, immersive {lang_name} equivalents (e.g., system terms, cultivation ranks, or urban slang).
 - Maintain consistent character voices and mechanical system notifications.
 - Use standard novel formatting for dialogue and internal monologues.
-**ZERO TOLERANCE**: DO NOT include any term in "Translator Notes" that does not appear in the current chapter text. DO NOT mention terms to say they are "not present". If it's not in the chapter, it MUST NOT be in the notes.
 
 Style:
 Use smooth, active, web-novel {lang_name} — vivid, immersive, emotional.
@@ -59,7 +57,7 @@ Avoid machine-like long sentences. Break long Chinese sentences into 2–3 {lang
 
 Chinese Text Handling:
 Translate ALL Chinese characters and words to {lang_name} in the story.
-Do NOT leave any Chinese characters or raw pinyin in the main story text. (You MUST use Chinese characters ONLY when listing the original term in the 'Translator Notes' section).
+Do NOT leave any Chinese characters or raw pinyin in the main story text.
 
 Consistency & Glossary Priority:
 **STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
@@ -70,15 +68,25 @@ Consistency & Glossary Priority:
 Output Rules:
 Output ONLY the {lang_name} translation.
 No extra commentary, no summary, no conversational filler.
-STOP GENERATING immediately after you finish the Translator Notes list. Do NOT output anything else.
 Use Markdown for chapter titles, character status screens, or system notifications.
 Ensure double newlines between paragraphs for clear readability.
 If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
 Never output malformed token soup, mixed-script noise, isolated symbol clusters, or analysis phrases pretending to be translation.
+"""
+
+        # Tambahkan instruksi Translator Notes jika di mode Quality
+        if is_quality:
+            guidelines += f"""
+**ZERO TOLERANCE**: DO NOT include any term in "Translator Notes" that does not appear in the current chapter text. DO NOT mention terms to say they are "not present". If it's not in the chapter, it MUST NOT be in the notes.
 After the chapter, if needed, add a section starting EXACTLY with the phrase "### TRANSLATOR NOTES:" for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
 **FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
 Do NOT include terms from the Style Reference examples unless they are in the chapter.
 If no new terms, skip.
+STOP GENERATING immediately after you finish the Translator Notes list. Do NOT output anything else.
+"""
+        else:
+            guidelines += f"""
+Do NOT output any Translator Notes. STOP GENERATING immediately after the story ends. Do NOT output anything else.
 """
 
         # Gabungkan semua context tambahan (Global & Thread-specific)
@@ -87,7 +95,8 @@ If no new terms, skip.
         gs_stmt = select(GlobalSetting)
         gs = db.execute(gs_stmt).scalar_one_or_none()
         if gs and gs.global_context:
-            full_prompt += f"\n[Global Literary Style]:\n{gs.global_context}\n"
+            gc_trunc = gs.global_context[:1000] + "... (truncated)" if len(gs.global_context) > 1000 else gs.global_context
+            full_prompt += f"\n[Global Literary Style]:\n{gc_trunc}\n"
 
         if thread_id:
             if original_text:
@@ -96,11 +105,13 @@ If no new terms, skip.
             thread_stmt = select(Thread).where(Thread.id == thread_id)
             thread = db.execute(thread_stmt).scalar_one_or_none()
             if thread and thread.thread_context:
-                full_prompt += f"\n[Thread-Specific Context]:\n{thread.thread_context}\n"
+                tc_trunc = thread.thread_context[:2000] + "... (truncated)" if len(thread.thread_context) > 2000 else thread.thread_context
+                full_prompt += f"\n[Thread-Specific Context]:\n{tc_trunc}\n"
 
             # Style guide injection (Quality mode only)
             if is_quality and thread and thread.style_guide:
-                full_prompt += f"\n[Style Guide for This Novel]:\n{thread.style_guide}\n"
+                sg_trunc = thread.style_guide[:1000] + "... (truncated)" if len(thread.style_guide) > 1000 else thread.style_guide
+                full_prompt += f"\n[Style Guide for This Novel]:\n{sg_trunc}\n"
 
             # Mode-aware glossary limit:
             # - Quality: follow global max_context_terms setting (user controls depth)
@@ -129,10 +140,14 @@ If no new terms, skip.
                     db.commit()
 
             if entries:
-                terms = "\n".join(
-                    f"- {e.original_term} → {e.translated_term}" + (f" ({e.notes})" if e.notes else "")
-                    for e in entries
-                )
+                terms_list = []
+                for e in entries:
+                    note = e.notes if e.notes else ""
+                    if note and len(note) > 150:
+                        note = note[:147] + "..."
+                    terms_list.append(f"- {e.original_term} → {e.translated_term}" + (f" ({note})" if note else ""))
+                
+                terms = "\n".join(terms_list)
                 full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
 
         return full_prompt

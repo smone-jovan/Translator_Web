@@ -53,7 +53,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
                         if any(p in fr_str for p in ["prohibited", "content_filter", "safety", "blocked", "other"]):
                             pass # Let caller handle it
                         else:
-                            raise Exception(f"API returned empty content. finish_reason={finish_reason}")
+                            return PROHIBITED_MARKER, "safety", data
                     
                     return content, finish_reason, data
                 else:
