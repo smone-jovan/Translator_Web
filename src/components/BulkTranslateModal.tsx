@@ -2,7 +2,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable react-hooks/exhaustive-deps */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo, useCallback, useMemo } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -52,6 +53,40 @@ interface BulkTranslateModalProps {
   onSuccess?: () => void;
 }
 
+const ChapterItem = memo(({ ch, isSelected, onToggle }: { ch: Chapter, isSelected: boolean, onToggle: (id: number) => void }) => (
+  <ListItem 
+    onClick={() => onToggle(ch.id)}
+    sx={{ 
+      borderRadius: '10px', 
+      mb: 0.5,
+      cursor: 'pointer',
+      background: isSelected ? 'rgba(var(--primary-rgb), 0.08)' : 'transparent',
+      '&:hover': { background: 'rgba(255,255,255,0.03)' }
+    }}
+  >
+    <Checkbox 
+      checked={isSelected} 
+      size="small"
+      sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: 'var(--primary)' } }}
+    />
+    <ListItemText>
+      <span style={{ fontSize: '0.8rem', fontWeight: 600, opacity: ch.has_translation ? 0.5 : 1 }}>
+        {`Ch ${ch.order}: ${ch.title_original || 'Untitled'}`}
+      </span>
+      {ch.translation_status === 'prohibited' && (
+        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px' }}>
+          PROHIBITED
+        </span>
+      )}
+    </ListItemText>
+    {ch.has_translation && (
+      <Tooltip title="Already translated. Re-translating will overwrite it.">
+        <History sx={{ fontSize: 16, opacity: 0.5, color: 'var(--primary)' }} />
+      </Tooltip>
+    )}
+  </ListItem>
+));
+
 export default function BulkTranslateModal({ 
   isOpen, onClose, threadId, threadTitle, chapters, onStartBatch
 }: BulkTranslateModalProps) {
@@ -74,13 +109,13 @@ export default function BulkTranslateModal({
 
   // Update selected IDs in Easy Mode
   const updateEasySelection = (quantity: number, incProhibited = includeProhibited) => {
-    // Find chapters that are not translated yet
     const untranslated = chapters.filter(c => {
-      if (c.has_translation) return false;
-      if (!incProhibited && c.translation_status === 'prohibited') return false;
-      return true;
+      // is untranslated AND (we include prohibited/error OR it's neither)
+      const valid = !c.has_translation && (incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
+      return valid;
     });
-    const baseList = untranslated.length > 0 ? untranslated : chapters.filter(c => incProhibited || c.translation_status !== 'prohibited');
+
+    const baseList = untranslated.length > 0 ? untranslated : chapters.filter(c => incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
     
     const result = baseList.slice(0, quantity).map(c => c.id);
     setSelectedIds(result);
@@ -118,19 +153,21 @@ export default function BulkTranslateModal({
     }
   };
 
-  const toggleChapter = (id: number) => {
+  const toggleChapter = useCallback((id: number) => {
     setSelectedIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
-  };
+  }, []);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const selectAllUntranslated = () => {
-    const untranslated = chapters.filter(c => !c.has_translation).map(c => c.id);
+    const untranslated = chapters.filter(c => !c.has_translation && (includeProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'))).map(c => c.id);
     setSelectedIds(untranslated);
   };
 
   const selectAll = () => {
-    const all = chapters.map(c => c.id);
+    const all = chapters.filter(c => includeProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error')).map(c => c.id);
     setSelectedIds(all);
   };
 
@@ -426,48 +463,25 @@ export default function BulkTranslateModal({
 
             {/* Manual Checkbox List */}
             <Box sx={{ 
-              maxHeight: 200, 
-              overflow: 'auto', 
+              height: 210, 
               background: 'rgba(0,0,0,0.25)', 
               border: '1px solid var(--border)',
               borderRadius: '16px', 
               p: 1 
             }}>
-              <List dense sx={{ py: 0 }}>
-                {chapters.map(ch => (
-                  <ListItem 
-                    key={ch.id} 
-                    onClick={() => toggleChapter(ch.id)}
-                    sx={{ 
-                      borderRadius: '10px', 
-                      mb: 0.5,
-                      cursor: 'pointer',
-                      background: selectedIds.includes(ch.id) ? 'rgba(var(--primary-rgb), 0.08)' : 'transparent',
-                      '&:hover': { background: 'rgba(255,255,255,0.03)' }
-                    }}
-                  >
-                    <Checkbox 
-                      checked={selectedIds.includes(ch.id)} 
-                      size="small"
-                      sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: 'var(--primary)' } }}
+              <List dense sx={{ py: 0, height: '100%', p: 0 }}>
+                <Virtuoso
+                  style={{ height: '100%' }}
+                  data={chapters}
+                  itemContent={(index, ch) => (
+                    <ChapterItem 
+                      key={ch.id} 
+                      ch={ch} 
+                      isSelected={selectedSet.has(ch.id)} 
+                      onToggle={toggleChapter} 
                     />
-                    <ListItemText>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, opacity: ch.has_translation ? 0.5 : 1 }}>
-                        {`Ch ${ch.order}: ${ch.title_original || 'Untitled'}`}
-                      </span>
-                      {ch.translation_status === 'prohibited' && (
-                        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px' }}>
-                          PROHIBITED
-                        </span>
-                      )}
-                    </ListItemText>
-                    {ch.has_translation && (
-                      <Tooltip title="Already translated. Re-translating will overwrite it.">
-                        <History sx={{ fontSize: 16, opacity: 0.5, color: 'var(--primary)' }} />
-                      </Tooltip>
-                    )}
-                  </ListItem>
-                ))}
+                  )}
+                />
               </List>
             </Box>
           </Box>

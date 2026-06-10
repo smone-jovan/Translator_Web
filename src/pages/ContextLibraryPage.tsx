@@ -54,6 +54,11 @@ export default function ContextLibraryPage() {
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(50);
+  
+  useEffect(() => {
+    setVisibleCount(50);
+  }, [searchQuery]);
   const [newEntry, setNewEntry] = useState({ original: '', translated: '', notes: '' });
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
 
@@ -366,13 +371,33 @@ export default function ContextLibraryPage() {
     (e.notes || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const displayedEntries = filteredEntries.slice(0, visibleCount);
+
   return (
-    <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-64px)] min-h-[calc(100vh-64px)] w-full overflow-hidden bg-[var(--background)]">
+    <div className="flex flex-col md:flex-row min-h-[calc(100vh-100px)] w-full bg-[var(--background)] gap-6">
       {/* Internal Sidebar: Thread List */}
-      <aside className="w-full md:w-72 border-b md:border-b-0 md:border-r border-[var(--border)] flex flex-col bg-[var(--card)]/50">
-        <div className="p-6 border-b border-[var(--border)]">
-          <h2 className="text-lg font-bold text-[var(--foreground)] mb-1">Context Library</h2>
-          <p className="text-xs text-[var(--muted-foreground)]">Manage lore and terminology</p>
+      <aside className="w-full md:w-72 md:sticky md:top-8 md:h-[calc(100vh-8rem)] rounded-3xl flex flex-col bg-[var(--card)]/50 border border-[var(--border)] overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-[var(--border)] bg-[var(--card)] flex-shrink-0">
+          <div className="flex items-center gap-2 mb-4">
+            <BookOpen size={18} className="text-[var(--primary)]" />
+            <h2 className="font-bold text-[var(--foreground)] tracking-tight">Global Context</h2>
+          </div>
+          
+          <button 
+            onClick={() => setSelectedThreadId(null)}
+            className={cn(
+              "w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all font-medium text-sm border",
+              selectedThreadId === null 
+                ? "bg-[var(--primary)]/10 text-[var(--primary)] border-[var(--primary)]/30" 
+                : "bg-[var(--secondary)] text-[var(--foreground)] border-transparent hover:border-[var(--border)]"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <Globe size={16} />
+              <span>All Threads</span>
+            </div>
+            {selectedThreadId === null && <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)]" />}
+          </button>
         </div>
         
         <div className="md:hidden p-4 border-b border-[var(--border)]">
@@ -387,7 +412,7 @@ export default function ContextLibraryPage() {
           </select>
         </div>
 
-        <div className="hidden md:block flex-1 overflow-auto py-4 px-3 space-y-1">
+        <div className="hidden md:block flex-1 overflow-auto py-4 px-3 space-y-1 custom-scrollbar">
           {threads.map(thread => (
             <button
               key={thread.id}
@@ -405,7 +430,7 @@ export default function ContextLibraryPage() {
           ))}
         </div>
 
-        <div className="p-4 border-t border-[var(--border)]">
+        <div className="p-4 border-t border-[var(--border)] bg-[var(--card)]">
           <button className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--border)] text-sm font-medium text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-all">
             <Plus size={16} /> New Context
           </button>
@@ -413,11 +438,11 @@ export default function ContextLibraryPage() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <main className="flex-1 flex flex-col min-w-0 rounded-3xl bg-[var(--card)]/30 border border-[var(--border)] shadow-xl">
         {selectedThread ? (
           <>
             {/* Thread Header */}
-            <header className="px-4 md:px-8 py-5 md:py-6 border-b border-[var(--border)] bg-[var(--card)]/30 backdrop-blur-sm relative z-[60]">
+            <header className="sticky top-0 px-4 md:px-8 py-5 md:py-6 border-b border-[var(--border)] bg-[var(--card)]/80 backdrop-blur-md z-[60]">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
                 <div>
                   <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
@@ -621,7 +646,7 @@ export default function ContextLibraryPage() {
             </header>
 
             {/* Content Tab: Glossary or Rules */}
-            <div className="flex-1 overflow-auto p-4 md:p-8">
+            <div className="flex-1 p-4 md:p-8">
               {activeSubTab === 'glossary' && (
                 <div className="space-y-8">
                   {/* ... (Glossary content same as before) ... */}
@@ -813,7 +838,7 @@ export default function ContextLibraryPage() {
 
                   {/* Term Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {filteredEntries.map(entry => (
+                    {displayedEntries.map(entry => (
                       <Card key={entry.id} className="group hover:border-[var(--primary)]/50 transition-all duration-300 shadow-sm hover:shadow-md relative overflow-hidden">
                         <CardContent className="p-6">
                           <div className="flex justify-between items-start mb-4">
@@ -880,6 +905,18 @@ export default function ContextLibraryPage() {
                         <BookOpen className="mx-auto w-12 h-12 text-[var(--muted-foreground)] mb-4 opacity-20" />
                         <h3 className="text-lg font-bold text-[var(--foreground)]">No terms found</h3>
                         <p className="text-sm text-[var(--muted-foreground)]">Add your first term to build the glossary.</p>
+                      </div>
+                    )}
+
+                    {filteredEntries.length > visibleCount && (
+                      <div className="col-span-full flex justify-center py-6">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setVisibleCount(v => v + 50)}
+                          className="rounded-xl bg-[var(--card)] hover:bg-[var(--accent)] text-[var(--foreground)]"
+                        >
+                          Load More Context Terms ({filteredEntries.length - visibleCount} left)
+                        </Button>
                       </div>
                     )}
                   </div>

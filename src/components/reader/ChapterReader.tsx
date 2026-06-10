@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
@@ -90,44 +90,58 @@ export default function ChapterReader({
   const lastScrollTopOriginal = useRef(0);
   const lastScrollTopTranslated = useRef(0);
 
+  const scrollRafOriginalId = useRef<number | null>(null);
+
   const handleScrollOriginal = (e: React.UIEvent<HTMLDivElement>) => {
+    if (scrollRafOriginalId.current !== null) return;
     const target = e.currentTarget;
     const scrollTop = target.scrollTop;
     const scrollHeight = target.scrollHeight - target.clientHeight;
-    const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-    setScrollProgress(pct);
+    
+    scrollRafOriginalId.current = requestAnimationFrame(() => {
+      const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+      setScrollProgress(pct);
 
-    const delta = scrollTop - lastScrollTopOriginal.current;
-    
-    if (scrollTop < 20) {
-      setControlsVisible(true);
-    } else if (delta > 30) {
-      setControlsVisible(false);
-    } else if (delta < -15) {
-      setControlsVisible(true);
-    }
-    
-    lastScrollTopOriginal.current = scrollTop;
+      const delta = scrollTop - lastScrollTopOriginal.current;
+      
+      if (scrollTop < 20) {
+        setControlsVisible(true);
+      } else if (delta > 30) {
+        setControlsVisible(false);
+      } else if (delta < -15) {
+        setControlsVisible(true);
+      }
+      
+      lastScrollTopOriginal.current = scrollTop;
+      scrollRafOriginalId.current = null;
+    });
   };
 
+  const scrollRafTranslatedId = useRef<number | null>(null);
+
   const handleScrollTranslated = (e: React.UIEvent<HTMLDivElement>) => {
+    if (scrollRafTranslatedId.current !== null) return;
     const target = e.currentTarget;
     const scrollTop = target.scrollTop;
     const scrollHeight = target.scrollHeight - target.clientHeight;
-    const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-    setScrollProgress(pct);
+    
+    scrollRafTranslatedId.current = requestAnimationFrame(() => {
+      const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+      setScrollProgress(pct);
 
-    const delta = scrollTop - lastScrollTopTranslated.current;
-    
-    if (scrollTop < 20) {
-      setControlsVisible(true);
-    } else if (delta > 30) {
-      setControlsVisible(false);
-    } else if (delta < -15) {
-      setControlsVisible(true);
-    }
-    
-    lastScrollTopTranslated.current = scrollTop;
+      const delta = scrollTop - lastScrollTopTranslated.current;
+      
+      if (scrollTop < 20) {
+        setControlsVisible(true);
+      } else if (delta > 30) {
+        setControlsVisible(false);
+      } else if (delta < -15) {
+        setControlsVisible(true);
+      }
+      
+      lastScrollTopTranslated.current = scrollTop;
+      scrollRafTranslatedId.current = null;
+    });
   };
 
   const handleContentClick = () => {
@@ -138,23 +152,30 @@ export default function ChapterReader({
 
   const lastWindowScrollTop = useRef(0);
 
+  const scrollRafWindowId = useRef<number | null>(null);
+
   useEffect(() => {
     const handleWindowScroll = () => {
-      const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-      const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+      if (scrollRafWindowId.current !== null) return;
       
-      setScrollProgress(pct);
-      
-      const delta = scrollTop - lastWindowScrollTop.current;
-      if (scrollTop < 20) {
-        setControlsVisible(true);
-      } else if (delta > 30) {
-        setControlsVisible(false);
-      } else if (delta < -15) {
-        setControlsVisible(true);
-      }
-      lastWindowScrollTop.current = scrollTop;
+      scrollRafWindowId.current = requestAnimationFrame(() => {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
+        const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+        
+        setScrollProgress(pct);
+        
+        const delta = scrollTop - lastWindowScrollTop.current;
+        if (scrollTop < 20) {
+          setControlsVisible(true);
+        } else if (delta > 30) {
+          setControlsVisible(false);
+        } else if (delta < -15) {
+          setControlsVisible(true);
+        }
+        lastWindowScrollTop.current = scrollTop;
+        scrollRafWindowId.current = null;
+      });
     };
 
     window.addEventListener('scroll', handleWindowScroll);
@@ -255,6 +276,17 @@ export default function ChapterReader({
     const hasTranslation = !!chapterContent?.content_translated || !!translatedText;
     handleTranslateChapter(false, '', undefined, undefined, hasTranslation);
   };
+
+  const originalContentNode = useMemo(() => {
+    return chapterContent?.content_original
+      ? renderMarkdown(chapterContent.content_original)
+      : 'No original content found.';
+  }, [chapterContent?.content_original]);
+
+  const translatedContentNode = useMemo(() => {
+    if (!translatedText) return null;
+    return renderMarkdown(alwaysHideThoughts ? cleanThoughts(translatedText) : translatedText);
+  }, [translatedText, alwaysHideThoughts]);
 
   return (
     <div className="max-w-screen-2xl mx-auto h-full flex flex-col">
@@ -375,9 +407,7 @@ export default function ChapterReader({
               ) : (
                 <>
                   <div className="whitespace-pre-wrap">
-                    {chapterContent?.content_original
-                      ? renderMarkdown(chapterContent.content_original)
-                      : 'No original content found.'}
+                    {originalContentNode}
                   </div>
                   <div className="py-12 flex flex-col items-center justify-center gap-6 text-center mt-8">
                     <div className="flex items-center gap-4 w-full max-w-xs px-6 opacity-60">
@@ -485,7 +515,7 @@ export default function ChapterReader({
               ) : translatedText ? (
                 <>
                   <div className="whitespace-pre-wrap">
-                    {renderMarkdown(alwaysHideThoughts ? cleanThoughts(translatedText) : translatedText)}
+                    {translatedContentNode}
                   </div>
                   <div className="py-12 flex flex-col items-center justify-center gap-6 text-center mt-8">
                     <div className="flex items-center gap-4 w-full max-w-xs px-6 opacity-60">
