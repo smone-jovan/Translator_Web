@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -34,10 +34,17 @@ interface TocImportModalProps {
 export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initialChapters, threadId, baseUrl, onSuccess }: TocImportModalProps) {
   const [chapters, setChapters] = useState<TocChapter[]>(initialChapters);
   const [isImporting, setIsImporting] = useState(false);
+  const [genres, setGenres] = useState('');
 
-  useEffect(() => {
+  const [prevInitialChapters, setPrevInitialChapters] = useState(initialChapters);
+  const [prevOpen, setPrevOpen] = useState(open);
+
+  if (initialChapters !== prevInitialChapters || open !== prevOpen) {
     setChapters(initialChapters);
-  }, [initialChapters, open]);
+    setGenres('');
+    setPrevInitialChapters(initialChapters);
+    setPrevOpen(open);
+  }
 
   const removeChapter = (index: number) => {
     setChapters(prev => prev.filter((_, i) => i !== index));
@@ -48,12 +55,20 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
     setIsImporting(true);
     
     try {
-      const payload: any = { chapters };
+      interface ImportPayload {
+        chapters: TocChapter[];
+        thread_id?: number;
+        title?: string;
+        base_url?: string;
+        genres?: string;
+      }
+      const payload: ImportPayload = { chapters };
       if (threadId && threadId !== 'new') {
         payload.thread_id = typeof threadId === 'number' ? threadId : parseInt(threadId as string);
       } else {
         payload.title = novelTitle;
         if (baseUrl) payload.base_url = baseUrl;
+        if (genres.trim()) payload.genres = genres.trim();
       }
       
       const res = await fetch(getApiUrl('/api/threads/bulk-import-toc'), {
@@ -69,8 +84,9 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
       onOpenChange(false);
       if (onSuccess) onSuccess(data.thread_id);
       
-    } catch (err: any) {
-      toast.error(err.message || 'Import failed');
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Import failed';
+      toast.error(errorMsg);
     } finally {
       setIsImporting(false);
     }
@@ -82,7 +98,7 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
       onClose={() => !isImporting && onOpenChange(false)}
       fullWidth
       maxWidth="md"
-      {...({ PaperProps: { sx: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '16px', color: 'var(--foreground)' } } } as any)}
+      {...({ PaperProps: { sx: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '16px', color: 'var(--foreground)' } } } as Record<string, unknown>)}
     >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Box>
@@ -97,6 +113,21 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
       </DialogTitle>
       
       <DialogContent dividers sx={{ borderColor: 'var(--border)', p: 0 }}>
+        {(!threadId || threadId === 'new') && (
+          <Box sx={{ p: 2, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography variant="caption" sx={{ fontWeight: 'bold', textTransform: 'uppercase', color: 'var(--muted-foreground)' }}>
+              Genres (comma-separated)
+            </Typography>
+            <input 
+              type="text" 
+              placeholder="e.g. Fantasy, Xianxia, Romance"
+              value={genres}
+              onChange={(e) => setGenres(e.target.value)}
+              className="w-full bg-[var(--input)] border border-[var(--border)] rounded-lg py-2 px-3 text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]"
+              disabled={isImporting}
+            />
+          </Box>
+        )}
         <List dense sx={{ maxHeight: '50vh', overflow: 'auto', p: 1 }}>
           {chapters.length === 0 ? (
             <Typography sx={{ textAlign: 'center', p: 4, color: 'var(--muted-foreground)' }}>

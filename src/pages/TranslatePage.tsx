@@ -293,8 +293,9 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
       setTocChapters(data.chapters);
       setTocBaseUrl(inputText.trim());
       setIsTocModalOpen(true);
-    } catch (err: any) {
-      toast.error(err.message || 'TOC Extraction failed.');
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'TOC Extraction failed.';
+      toast.error(errorMsg);
     } finally {
       setIsProcessing(false);
     }

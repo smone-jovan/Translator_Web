@@ -106,9 +106,16 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
         count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == req.thread_id)
         lorebook_count = db.execute(count_stmt).scalar() or 0
 
+    import re
+    image_pattern = re.compile(r"(!\[.*?\]\(.*?\))")
+    protected_images = image_pattern.findall(req.text)
+    protected_text = req.text
+    for i, img_md in enumerate(protected_images):
+        protected_text = protected_text.replace(img_md, f"\n❖IMAGE_{i}❖\n")
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": req.text},
+        {"role": "user", "content": protected_text},
     ]
 
     try:
@@ -124,10 +131,25 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
             always_hide_thoughts=bool(always_hide_thoughts)
         )
 
+        for i, img_md in enumerate(protected_images):
+            clean_translation = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_translation, flags=re.IGNORECASE)
+            if img_md not in clean_translation:
+                clean_translation += f"\n\n{img_md}\n\n"
+
         return TranslateResponse(
             translation=clean_translation,
             model_used=model_used,
             lorebook_terms=lorebook_count,
         )
     except Exception as e:
-        raise HTTPException(502, str(e))
+        # Log full error server-side for debugging, but don't leak internals to client
+        print(f"[ERROR] Translation failed: {e}")
+        safe_msg = "Translation request failed. Check server logs for details."
+        error_str = str(e).lower()
+        if "connection" in error_str or "timeout" in error_str:
+            safe_msg = "AI provider connection failed. Is the LLM server running?"
+        elif "api_key" in error_str or "auth" in error_str or "401" in error_str:
+            safe_msg = "AI provider authentication failed. Check your API key."
+        elif "rate" in error_str or "429" in error_str or "quota" in error_str:
+            safe_msg = "AI provider rate limit reached. Please wait and try again."
+        raise HTTPException(502, safe_msg)

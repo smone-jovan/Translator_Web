@@ -4,9 +4,9 @@ from services.ai.settings import (
     resolve_active_model,
     resolve_active_base_url,
     get_chapter_translation_max_tokens,
+    get_context_scale_for_model,
     DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS,
 )
-
 
 class TestResolveActiveModel:
     """Tests for resolve_active_model() -- picks the model matching the active provider."""
@@ -166,3 +166,22 @@ class TestGetChapterTranslationMaxTokens:
         db_session.commit()
 
         assert get_chapter_translation_max_tokens(gs) == DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS
+
+
+class TestGetContextScaleForModel:
+    """Tests for get_context_scale_for_model() (ADR-075)."""
+
+    def test_returns_conservative_for_local_models(self):
+        assert get_context_scale_for_model("llama-3-8b") == 1.0
+        assert get_context_scale_for_model("qwen-32b") == 1.0
+
+    def test_returns_generous_for_standard_cloud_models(self):
+        assert get_context_scale_for_model("gpt-4o") == 4.0
+        assert get_context_scale_for_model("claude-3-sonnet") == 4.0
+
+    def test_returns_maximum_for_large_context_models(self):
+        assert get_context_scale_for_model("gemini-2.5-flash") == 8.0
+        assert get_context_scale_for_model("gemini-3.1-pro") == 8.0
+
+    def test_returns_conservative_when_model_is_none(self):
+        assert get_context_scale_for_model(None) == 1.0

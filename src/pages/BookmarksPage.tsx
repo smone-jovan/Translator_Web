@@ -20,10 +20,6 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
   const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchBookmarks();
-  }, []);
-
   const fetchBookmarks = async () => {
     try {
       setLoading(true);
@@ -36,6 +32,19 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      await Promise.resolve();
+      if (!active) return;
+      fetchBookmarks();
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const removeBookmark = async (threadId: number, chapterId: number, e: React.MouseEvent) => {
     e.stopPropagation();

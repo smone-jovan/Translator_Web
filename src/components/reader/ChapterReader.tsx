@@ -63,11 +63,13 @@ export default function ChapterReader({
   const showOriginal = displayMode === 'both' || displayMode === 'original';
   const showTranslated = displayMode === 'both' || displayMode === 'translated';
 
-  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isBookmarked, setIsBookmarked] = useState(chapterContent?.is_bookmarked || false);
+  const [prevChapterContent, setPrevChapterContent] = useState(chapterContent);
 
-  useEffect(() => {
+  if (chapterContent !== prevChapterContent) {
     setIsBookmarked(chapterContent?.is_bookmarked || false);
-  }, [chapterContent]);
+    setPrevChapterContent(chapterContent);
+  }
 
   const toggleBookmark = async () => {
     if (!chapterContent) return;
@@ -83,7 +85,28 @@ export default function ChapterReader({
     }
   };
 
-  const [scrollProgress, setScrollProgress] = useState(0);
+  // PERFORMANCE FIX: Use refs for scroll progress to avoid re-rendering huge HTML chunks
+  const scrollProgressRef = useRef(0);
+  const progressCircleRef = useRef<SVGCircleElement>(null);
+  const progressTextRef = useRef<HTMLSpanElement>(null);
+  const scrollBtnRef = useRef<HTMLButtonElement>(null);
+  const saveProgressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsVisibleRef = useRef(controlsVisible);
+  
+  useEffect(() => {
+    controlsVisibleRef.current = controlsVisible;
+    // Also update button visibility when controlsVisible changes
+    if (scrollBtnRef.current) {
+      if (controlsVisible && scrollProgressRef.current > 5) {
+        scrollBtnRef.current.classList.remove('translate-y-28', 'opacity-0', 'scale-75', 'pointer-events-none');
+        scrollBtnRef.current.classList.add('translate-y-0', 'opacity-100', 'scale-100');
+      } else {
+        scrollBtnRef.current.classList.add('translate-y-28', 'opacity-0', 'scale-75', 'pointer-events-none');
+        scrollBtnRef.current.classList.remove('translate-y-0', 'opacity-100', 'scale-100');
+      }
+    }
+  }, [controlsVisible]);
+
   const originalScrollContainerRef = useRef<HTMLDivElement>(null);
   const translatedScrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -91,6 +114,42 @@ export default function ChapterReader({
   const lastScrollTopTranslated = useRef(0);
 
   const scrollRafOriginalId = useRef<number | null>(null);
+
+  // Shared DOM update logic
+  const updateScrollUI = (pct: number) => {
+    scrollProgressRef.current = pct;
+    
+    if (progressCircleRef.current) {
+      progressCircleRef.current.style.strokeDashoffset = `${163.4 - (pct / 100) * 163.4}`;
+    }
+    if (progressTextRef.current) {
+      progressTextRef.current.innerText = `${Math.round(pct)}%`;
+    }
+    if (scrollBtnRef.current) {
+      scrollBtnRef.current.style.borderRadius = `${Math.min(50, 16 + (pct / 100) * 34)}%`;
+      scrollBtnRef.current.title = `Scroll to Top (${Math.round(pct)}%)`;
+      
+      if (controlsVisibleRef.current && pct > 5) {
+        scrollBtnRef.current.classList.remove('translate-y-28', 'opacity-0', 'scale-75', 'pointer-events-none');
+        scrollBtnRef.current.classList.add('translate-y-0', 'opacity-100', 'scale-100');
+      } else {
+        scrollBtnRef.current.classList.add('translate-y-28', 'opacity-0', 'scale-75', 'pointer-events-none');
+        scrollBtnRef.current.classList.remove('translate-y-0', 'opacity-100', 'scale-100');
+      }
+    }
+
+    // Debounced API save
+    if (saveProgressTimeout.current) clearTimeout(saveProgressTimeout.current);
+    saveProgressTimeout.current = setTimeout(() => {
+      if (chapterContent && pct > 0) {
+        fetch(getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scroll_progress: pct }),
+        }).catch(err => console.error('Failed to save scroll progress', err));
+      }
+    }, 1000);
+  };
 
   const handleScrollOriginal = (e: React.UIEvent<HTMLDivElement>) => {
     if (scrollRafOriginalId.current !== null) return;
@@ -100,7 +159,7 @@ export default function ChapterReader({
     
     scrollRafOriginalId.current = requestAnimationFrame(() => {
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      setScrollProgress(pct);
+      updateScrollUI(pct);
 
       const delta = scrollTop - lastScrollTopOriginal.current;
       
@@ -127,7 +186,7 @@ export default function ChapterReader({
     
     scrollRafTranslatedId.current = requestAnimationFrame(() => {
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      setScrollProgress(pct);
+      updateScrollUI(pct);
 
       const delta = scrollTop - lastScrollTopTranslated.current;
       
@@ -151,7 +210,6 @@ export default function ChapterReader({
   };
 
   const lastWindowScrollTop = useRef(0);
-
   const scrollRafWindowId = useRef<number | null>(null);
 
   useEffect(() => {
@@ -163,7 +221,7 @@ export default function ChapterReader({
         const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
         const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
         
-        setScrollProgress(pct);
+        updateScrollUI(pct);
         
         const delta = scrollTop - lastWindowScrollTop.current;
         if (scrollTop < 20) {
@@ -179,8 +237,12 @@ export default function ChapterReader({
     };
 
     window.addEventListener('scroll', handleWindowScroll);
-    return () => window.removeEventListener('scroll', handleWindowScroll);
-  }, [setControlsVisible]);
+    return () => {
+      window.removeEventListener('scroll', handleWindowScroll);
+      if (scrollRafWindowId.current !== null) cancelAnimationFrame(scrollRafWindowId.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Restore scroll progress when chapter content changes
   useEffect(() => {
@@ -216,30 +278,19 @@ export default function ChapterReader({
     }
   }, [chapterContent]);
 
-  // Auto-save scroll progress to backend with debounce
   useEffect(() => {
-    if (!chapterContent || scrollProgress <= 0) return;
-
-    const saveScrollProgress = async () => {
-      try {
-        await fetch(getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/scroll`), {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ scroll_progress: scrollProgress }),
-        });
-      } catch (err) {
-        console.error('Failed to save scroll progress:', err);
-      }
+    return () => {
+      if (saveProgressTimeout.current) clearTimeout(saveProgressTimeout.current);
     };
+  }, []);
 
-    const timer = setTimeout(() => {
-      saveScrollProgress();
-    }, 2000); // Debounce: save 2 seconds after scroll finishes
-
-    return () => clearTimeout(timer);
-  }, [scrollProgress, chapterContent, thread.id]);
+  useEffect(() => {
+    if (originalScrollContainerRef.current) originalScrollContainerRef.current.scrollTop = 0;
+    if (translatedScrollContainerRef.current) translatedScrollContainerRef.current.scrollTop = 0;
+    window.scrollTo(0, 0);
+    updateScrollUI(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterContent?.id]);
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -252,7 +303,7 @@ export default function ChapterReader({
     if (translatedScrollContainerRef.current) {
       translatedScrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
-    setScrollProgress(0);
+    updateScrollUI(0);
     setControlsVisible(true);
   };
 
@@ -281,7 +332,7 @@ export default function ChapterReader({
     return chapterContent?.content_original
       ? renderMarkdown(chapterContent.content_original)
       : 'No original content found.';
-  }, [chapterContent?.content_original]);
+  }, [chapterContent]);
 
   const translatedContentNode = useMemo(() => {
     if (!translatedText) return null;
@@ -330,7 +381,10 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'original' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setDisplayMode('original')}
+            onClick={() => {
+              setDisplayMode('original');
+              try { localStorage.setItem('display_mode', 'original'); } catch { /* ignore */ }
+            }}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'original' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             ORI
@@ -338,7 +392,10 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'translated' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setDisplayMode('translated')}
+            onClick={() => {
+              setDisplayMode('translated');
+              try { localStorage.setItem('display_mode', 'translated'); } catch { /* ignore */ }
+            }}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'translated' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             TRS
@@ -346,7 +403,10 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'both' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setDisplayMode('both')}
+            onClick={() => {
+              setDisplayMode('both');
+              try { localStorage.setItem('display_mode', 'both'); } catch { /* ignore */ }
+            }}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'both' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             BOTH
@@ -514,6 +574,16 @@ export default function ChapterReader({
                 </div>
               ) : translatedText ? (
                 <>
+                  {chapterContent?.fidelity_warning && (
+                    <div className="mb-6 p-4 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-sans flex items-start gap-2.5">
+                      <span className="text-base leading-none">⚠️</span>
+                      <div className="flex-1 space-y-1">
+                        <span className="font-bold block uppercase tracking-wider text-[10px]">Fidelity Warning</span>
+                        <p className="leading-normal">{chapterContent.fidelity_warning}</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="whitespace-pre-wrap">
                     {translatedContentNode}
                   </div>
@@ -566,20 +636,17 @@ export default function ChapterReader({
 
       {/* Floating Scroll-To-Top Dynamic Progress Button */}
       <button
+        ref={scrollBtnRef}
         onClick={scrollToTop}
         className={`fixed right-4 md:right-6 flex items-center justify-center w-[56px] h-[56px] shadow-2xl z-50 transition-all duration-300 cursor-pointer focus:outline-none ${
           mobileToolbarVisible ? 'bottom-28 md:bottom-6' : 'bottom-6'
-        } ${
-          controlsVisible && scrollProgress > 5
-            ? 'translate-y-0 opacity-100 scale-100 animate-in fade-in zoom-in duration-300'
-            : 'translate-y-28 opacity-0 scale-75 pointer-events-none'
-        } hover:scale-105 active:scale-95`}
+        } translate-y-28 opacity-0 scale-75 pointer-events-none hover:scale-105 active:scale-95`}
         style={{
           backgroundColor: 'var(--card)',
           boxShadow: '0 8px 30px rgba(0, 0, 0, 0.25)',
-          borderRadius: `${Math.min(50, 16 + (scrollProgress / 100) * 34)}%`,
+          borderRadius: '16px',
         }}
-        title={`Scroll to Top (${Math.round(scrollProgress)}%)`}
+        title="Scroll to Top (0%)"
       >
         <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 56 56">
           <circle
@@ -590,12 +657,9 @@ export default function ChapterReader({
             stroke="var(--border)"
             strokeWidth="2.5"
             className="opacity-30"
-            style={{
-              borderRadius: `${Math.min(50, 16 + (scrollProgress / 100) * 34)}%`,
-              transition: 'all 0.3s ease-out'
-            }}
           />
           <circle
+            ref={progressCircleRef}
             cx="28"
             cy="28"
             r="26"
@@ -603,14 +667,17 @@ export default function ChapterReader({
             stroke="var(--primary)"
             strokeWidth="2.5"
             strokeDasharray={163.4}
-            strokeDashoffset={163.4 - (scrollProgress / 100) * 163.4}
+            strokeDashoffset={163.4}
             strokeLinecap="round"
             className="transition-all duration-300 ease-out"
           />
         </svg>
         <ArrowUp className="w-5 h-5 text-[var(--foreground)] relative z-10 transition-transform duration-200" />
-        <span className="absolute -top-1.5 -right-1.5 bg-[var(--primary)] text-[var(--primary-foreground)] text-[8px] font-bold h-4 min-w-4 px-1 flex items-center justify-center rounded-full border-2 border-[var(--background)] shadow-sm z-10">
-          {Math.round(scrollProgress)}%
+        <span 
+          ref={progressTextRef}
+          className="absolute -top-1.5 -right-1.5 bg-[var(--primary)] text-[var(--primary-foreground)] text-[8px] font-bold h-4 min-w-4 px-1 flex items-center justify-center rounded-full border-2 border-[var(--background)] shadow-sm z-10"
+        >
+          0%
         </span>
       </button>
     </div>

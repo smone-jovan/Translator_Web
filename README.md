@@ -28,7 +28,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
 ## Features
 
 ### Translation Engine
-- **Multi-provider support** — LM Studio (local), Google Gemini, OpenAI with seamless switching
+- **Multi-provider support** — LM Studio (local), Google Gemini, OpenAI, OpenRouter with seamless switching
 - **Quality / Fast mode** — Quality mode for cloud (full glossary, style guide), Fast mode for local LLMs (10K token cap)
 - **Auto-continue** — Detects truncated translations and automatically continues until complete
 - **Batch translation** — Translate hundreds of chapters with real-time progress tracking
@@ -142,7 +142,9 @@ Translator_Web/
 ├── backend/
 │   ├── main.py                 # FastAPI app entry
 │   ├── database.py             # SQLAlchemy models & auto-migration
-│   ├── routers/                # API endpoints (13 routers)
+│   ├── routers/                # API endpoints (16 routers)
+│   │   ├── system.py          # Workspace switching (Ghost Mode) with PIN authentication
+│   │   └── toc.py             # TOC scraping and bulk chapter import pipeline
 │   ├── services/
 │   │   ├── ai/                 # Provider adapters (Gemini, OpenAI, LM Studio)
 │   │   ├── background_translator.py  # Batch engine with auto-continue
@@ -154,7 +156,7 @@ Translator_Web/
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/
-    ├── decisions/              # 51 Architectural Decision Records
+    ├── decisions/              # 70 Architectural Decision Records
     ├── Handoff.md              # Developer onboarding guide
     └── SDLC.md                 # Development lifecycle docs
 ```
@@ -167,7 +169,7 @@ Translator_Web/
 |----------|-------------|
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
 | [SDLC](docs/SDLC.md) | Software development lifecycle |
-| [ADRs](docs/decisions/) | 51 architectural decision records |
+| [ADRs](docs/decisions/) | 70 architectural decision records |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
 ---

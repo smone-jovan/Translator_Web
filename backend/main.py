@@ -8,12 +8,16 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
+import os
+import mimetypes
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 
-from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc
+from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system
 
 
 @asynccontextmanager
@@ -41,6 +45,38 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+os.makedirs("uploads/images", exist_ok=True)
+
+def guess_image_ext(file_path: str) -> str:
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(12)
+        if header.startswith(b"\xff\xd8"): return "jpeg"
+        if header.startswith(b"\x89PNG\r\n\x1a\n"): return "png"
+        if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"): return "gif"
+        if header.startswith(b"RIFF") and header[8:12] == b"WEBP": return "webp"
+    except Exception:
+        pass
+    return ""
+
+@app.get("/images/{rest_of_path:path}", tags=["Images"])
+async def serve_images(rest_of_path: str):
+    file_path = os.path.join("uploads", "images", rest_of_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Try to guess mime type from extension first
+    media_type, _ = mimetypes.guess_type(file_path)
+    if not media_type:
+        # Check magic bytes if no extension
+        ext = guess_image_ext(file_path)
+        if ext:
+            media_type = f"image/{ext}"
+        else:
+            media_type = "application/octet-stream"
+            
+    return FileResponse(file_path, media_type=media_type)
+
 
 @app.get("/", tags=["Health"])
 def health_check():
@@ -62,3 +98,4 @@ app.include_router(tools.router)
 app.include_router(relationships.router)
 app.include_router(discovery.router)
 app.include_router(toc.router)
+app.include_router(system.router)

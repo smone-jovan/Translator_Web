@@ -43,6 +43,8 @@ class AIProviderFactory:
                 else:
                     if "generativelanguage.googleapis.com" in base_url or "gemini" in base_url.lower():
                         provider = "gemini"
+                    elif "openrouter.ai" in base_url.lower() or "openrouter" in base_url.lower():
+                        provider = "openrouter"
                     elif "api.openai.com" in base_url or "openai" in base_url.lower():
                         provider = "openai"
                     elif "localhost" in base_url or "127.0.0.1" in base_url:
@@ -51,8 +53,8 @@ class AIProviderFactory:
             # 1. Google Gemini Provider
             if provider == "gemini":
                 from services.ai.gemini import GeminiAdapter
-                # Smart model resolution: only respect passed model if it contains 'gemini' or 'gemma'
-                is_gemini_model = model and ("gemini" in model.lower() or "gemma" in model.lower())
+                # Smart model resolution: only respect passed model if it contains 'gemini' or 'gemma' and NO slash (e.g. google/gemma)
+                is_gemini_model = model and ("gemini" in model.lower() or "gemma" in model.lower()) and "/" not in model
                 resolved_model = model if is_gemini_model else (gs.gemini_model if gs else "gemini-2.5-flash")
                 
                 # Double check to prevent local models like qwen from leaking as gemini model
@@ -81,8 +83,18 @@ class AIProviderFactory:
                 if base_url and ("googleapis.com" in base_url or "gemini" in base_url.lower()):
                     resolved_url = base_url
                 return GeminiAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
+
+            # 2. OpenRouter Cloud Provider
+            elif provider == "openrouter":
+                from services.ai.openrouter import OpenRouterAdapter
+                resolved_model = model or (gs.openrouter_model if gs else "deepseek/deepseek-chat")
+                resolved_key = api_key or get_active_api_key("openrouter", gs) or "sk-or-dummy"
+                resolved_url = "https://openrouter.ai/api/v1"
+                if base_url and "openrouter.ai" in base_url.lower():
+                    resolved_url = base_url
+                return OpenRouterAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
                 
-            # 2. OpenAI Cloud Provider
+            # 3. OpenAI Cloud Provider
             elif provider == "openai":
                 from services.ai.openai import OpenAIAdapter
                 # Smart model resolution: only respect passed model if it is an OpenAI model name
@@ -98,7 +110,7 @@ class AIProviderFactory:
                     resolved_url = base_url
                 return OpenAIAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
                 
-            # 3. LM Studio / Local LLM Provider
+            # 4. LM Studio / Local LLM Provider
             else:
                 from services.ai.lm_studio import LMStudioAdapter
                 resolved_url = base_url or (gs.lm_url if gs else "http://localhost:1234")

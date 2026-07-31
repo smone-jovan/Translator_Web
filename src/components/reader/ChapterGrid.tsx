@@ -98,6 +98,11 @@ export default function ChapterGrid({
             <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-[var(--border)]/20">
               <div className="flex items-center gap-1 text-[10px] text-[var(--muted-foreground)]">
                 <span className="font-mono">{ch.word_count?.toLocaleString() || 0} words</span>
+                {ch.fidelity_warning && (
+                  <span className="text-amber-500 cursor-help ml-1" title={ch.fidelity_warning} aria-label="Fidelity Warning">
+                    ⚠️
+                  </span>
+                )}
               </div>
               
               {/* Actions / Status badges */}

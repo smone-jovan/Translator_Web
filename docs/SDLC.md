@@ -147,6 +147,11 @@
 - **Implementation**: Konsolidasi UI library (ADR-042), centralized settings state (ADR-043), dekomposisi komponen besar (ADR-044), ekspansi suite test formal (ADR-045), auto-continue pada truncation dengan deteksi `finish_reason` dan continuation loop (ADR-046), Quality/Fast translation mode toggle dengan parameter otomatis per provider (ADR-047), perbaikan cleanup logic untuk ad detection, hallucination stripper, dan preview endpoint (ADR-048), serta batch worker reliability dengan retry exponential backoff dan infinite loop prevention (ADR-049). Tambahan: delete chapter button, TOC page detection & skip, Gemini thinking mode compatibility, dan multiple API keys dengan rotation.
 - **Status**: Finished.
 
+## Phase 18: Mobile Screen Sleep Recovery, Gemini Catalog Refresh & Garbage Glossary Filtering (COMPLETE)
+- **Goal**: Menjamin ketahanan pembaca saat layar HP mati/terkunci, memutakhirkan katalog model Gemini/Gemma teks, dan menyaring istilah glosarium ampas.
+- **Implementation**: Sinkronisasi `displayMode` ke `localStorage` dan pemulihan layar mati mobile via `sessionStorage` cache & `visibilitychange` listener (ADR-085), pembaruan katalog model terjemahan Gemini & Gemma dengan pengaturan RPM/RPD terbaru (ADR-086), serta penyaringan otomatis istilah ampas via `ContextEngine.is_garbage_lorebook_entry()` (ADR-087).
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing

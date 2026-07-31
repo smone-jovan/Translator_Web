@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/hooks/use-confirm';
+import { toast } from 'sonner';
 
 interface Chapter {
   id: number;
@@ -27,6 +29,7 @@ interface ExportModalProps {
 }
 
 export default function ExportModal({ isOpen, onClose, threadId, threadTitle, threadAuthor, currentCover, chapters }: ExportModalProps) {
+  const { confirm } = useConfirm();
   const [format, setFormat] = useState<'epub' | 'txt' | 'cleanup'>('epub');
   const [title, setTitle] = useState(threadTitle);
   const [author, setAuthor] = useState(threadAuthor || 'SMONE');
@@ -72,7 +75,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
 
   const handleExport = async () => {
     if (selectedIds.length === 0) {
-      alert('Please select at least one chapter.');
+      toast.error('Please select at least one chapter.');
       return;
     }
 
@@ -94,14 +97,19 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
         a.click();
         window.URL.revokeObjectURL(url);
 
-        const apply = window.confirm(`Cleanup preview generated and downloaded!\\n\\nStats:\\n- Chapters Scanned: ${data.chapters_scanned}\\n- Chapters Deleted: ${data.chapters_deleted}\\n- Chapters Updated: ${data.chapters_updated}\\n- Lines Removed: ${data.lines_removed}\\n\\nDo you want to APPLY these changes destructively to the database?`);
+        const apply = await confirm({
+          title: "Apply Cleanup?",
+          description: `Cleanup preview generated and downloaded!\n\nStats:\n- Chapters Scanned: ${data.chapters_scanned}\n- Chapters Deleted: ${data.chapters_deleted}\n- Chapters Updated: ${data.chapters_updated}\n- Lines Removed: ${data.lines_removed}\n\nDo you want to APPLY these changes destructively to the database?`,
+          confirmText: "Apply Cleanup",
+          cancelText: "Cancel"
+        });
         
         if (apply) {
           const applyRes = await fetch(getApiUrl(`/api/threads/${threadId}/cleanup-apply`), {
             method: 'POST',
           });
           if (!applyRes.ok) throw new Error('Apply failed');
-          alert('Cleanup successfully applied to thread!');
+          toast.success('Cleanup successfully applied to thread!');
           window.location.reload();
         }
         
@@ -136,7 +144,7 @@ export default function ExportModal({ isOpen, onClose, threadId, threadTitle, th
       onClose();
     } catch (err) {
       console.error(err);
-      alert('Failed to export or cleanup. Please try again.');
+      toast.error('Failed to export or cleanup. Please try again.');
     } finally {
       setIsExporting(false);
     }

@@ -71,6 +71,11 @@ export default function ContextLibraryPage() {
   const [extractSettings, setExtractSettings] = useState({ chapterCount: 25, sampleSize: 1000 });
   const [showExtractSettings, setShowExtractSettings] = useState(false);
 
+  // Presets
+  const [presets, setPresets] = useState<{ key: string; name: string; description: string; entry_count: number }[]>([]);
+  const [showPresetsModal, setShowPresetsModal] = useState(false);
+  const [isApplyingPreset, setIsApplyingPreset] = useState<string | null>(null);
+
   // Refs
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +108,11 @@ export default function ContextLibraryPage() {
         }
       })
       .catch(e => console.error('Failed to fetch global context', e));
+
+    fetch(getApiUrl('/api/presets'))
+      .then(res => res.json())
+      .then(data => setPresets(data))
+      .catch(e => console.error('Failed to fetch presets', e));
   }, []);
 
   const fetchRelationships = async () => {
@@ -163,6 +173,29 @@ export default function ContextLibraryPage() {
       toast.error(e.message || 'Failed to scan relationships');
     } finally {
       setIsScanningRels(false);
+    }
+  };
+
+  const handleApplyPreset = async (presetKey: string) => {
+    if (!selectedThreadId) return;
+    setIsApplyingPreset(presetKey);
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/presets/${presetKey}`), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to apply preset');
+      toast.success(`Successfully applied preset! Added ${data.added} entries.`);
+      
+      // Fetch and update glossary/lorebook entries inline
+      const entriesRes = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/lorebook`));
+      const entriesData = await entriesRes.json();
+      setEntries(entriesData);
+      setShowPresetsModal(false);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to apply preset');
+    } finally {
+      setIsApplyingPreset(null);
     }
   };
 
@@ -556,7 +589,7 @@ export default function ContextLibraryPage() {
                               <span className="text-[10px] font-mono font-bold text-[var(--primary)]">{extractSettings.sampleSize} Chars</span>
                             </div>
                             <input 
-                              type="range" min="200" max="4000" step="100"
+                              type="range" min="200" max="20000" step="100"
                               value={extractSettings.sampleSize}
                               onChange={e => {
                                 const val = parseInt(e.target.value);
@@ -595,6 +628,16 @@ export default function ContextLibraryPage() {
                       </div>
                     </div>
                   )}
+
+                  <Button 
+                    variant="outline"
+                    size="sm" 
+                    className="rounded-xl gap-2 h-9 px-4"
+                    onClick={() => setShowPresetsModal(true)}
+                  >
+                    <Sparkles size={14} className="text-[var(--primary)]" />
+                    <span className="hidden sm:inline">Apply Preset</span>
+                  </Button>
 
                   <Button 
                     size="sm" 
@@ -1053,6 +1096,48 @@ export default function ContextLibraryPage() {
           </div>
         )}
       </main>
+
+      {showPresetsModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <Card className="w-full max-w-lg overflow-hidden shadow-2xl border border-[var(--border)] bg-[var(--card)] rounded-2xl flex flex-col">
+            <div className="p-6 border-b border-[var(--border)] flex justify-between items-center bg-[var(--card)]">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-[var(--primary)]" />
+                <h2 className="text-lg font-bold text-[var(--foreground)]">Apply Genre Preset</h2>
+              </div>
+              <button onClick={() => setShowPresetsModal(false)} className="p-1.5 hover:bg-[var(--secondary)] rounded-full transition-colors text-[var(--muted-foreground)]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <p className="text-xs text-[var(--muted-foreground)] mb-2">
+                Select a preset to populate this thread's lorebook with common genre conventions. Preset entries are additive and will not overwrite existing terms.
+              </p>
+              {presets.map((preset) => (
+                <div key={preset.key} className="p-4 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/10 hover:border-[var(--primary)]/30 transition-all flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-[var(--foreground)]">{preset.name}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[var(--primary)]/10 text-[var(--primary)]">{preset.entry_count} terms</span>
+                  </div>
+                  <p className="text-xs text-[var(--muted-foreground)]">{preset.description}</p>
+                  <Button
+                    size="sm"
+                    className="mt-2 w-full rounded-lg text-xs"
+                    onClick={() => handleApplyPreset(preset.key)}
+                    disabled={isApplyingPreset !== null}
+                  >
+                    {isApplyingPreset === preset.key ? (
+                      <>
+                        <Loader2 size={12} className="animate-spin mr-1.5" /> Applying...
+                      </>
+                    ) : 'Apply Preset'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

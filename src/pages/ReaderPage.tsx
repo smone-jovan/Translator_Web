@@ -85,6 +85,15 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   const [fontSize, setFontSize] = useState(18);
   const [showSettings, setShowSettings] = useState(false);
   const [displayMode, setDisplayMode] = useState(localStorage.getItem('display_mode') || 'both');
+
+  useEffect(() => {
+    if (displayMode) {
+      try {
+        localStorage.setItem('display_mode', displayMode);
+      } catch { /* ignore */ }
+    }
+  }, [displayMode]);
+
   const [isTranslatingTitles, setIsTranslatingTitles] = useState(false);
   const [lastReadId, setLastReadId] = useState<number | null>(null);
   const [prefetchEnabled, setPrefetchEnabled] = useState(false);
@@ -200,20 +209,28 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
 
   useEffect(() => {
     const persistReaderSession = () => {
-      const selectedChapterId =
-        selectedChapterIdx !== null && thread?.chapters?.[selectedChapterIdx]
+      if (!thread) return;
+      const currentChapterId =
+        !showChapterList && selectedChapterIdx !== null && thread.chapters?.[selectedChapterIdx]
           ? thread.chapters[selectedChapterIdx].id
           : null;
+
+      const savedRaw = localStorage.getItem(getReaderSessionKey(threadId));
+      let prevSession: ReaderSessionState | null = null;
+      try { if (savedRaw) prevSession = JSON.parse(savedRaw); } catch { /* ignore */ }
+
+      const finalChapterId = currentChapterId !== null ? currentChapterId : (prevSession?.selectedChapterId ?? null);
+      const finalShowList = !showChapterList ? false : (prevSession?.showChapterList ?? true);
+
       const payload: ReaderSessionState = {
         threadId,
-        selectedChapterId,
-        showChapterList,
+        selectedChapterId: finalChapterId,
+        showChapterList: finalShowList,
         lastActiveAt: Date.now(),
       };
       localStorage.setItem(getReaderSessionKey(threadId), JSON.stringify(payload));
     };
 
-    persistReaderSession();
     window.addEventListener('pagehide', persistReaderSession);
     document.addEventListener('visibilitychange', persistReaderSession);
 
@@ -455,18 +472,41 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
 
   const lastFetchedStatusRef = useRef<string | null>(null);
 
-  // Handle Chapter Selection
+  // Handle Chapter Selection & Mobile Screen Wake Recovery
   useEffect(() => {
     if (!thread || selectedChapterIdx === null) return;
     const ch = thread.chapters[selectedChapterIdx];
     if (!ch) return;
 
-    // Prevent re-fetching if we already have this chapter's content AND its translation status hasn't changed
-    if (lastFetchedIdRef.current === ch.id && lastFetchedStatusRef.current === ch.translation_status) return;
-    
+    const CH_CACHE_KEY = `readomni_chapter_cache_${threadId}_${ch.id}`;
+
+    // Prevent re-fetching ONLY if we already have valid chapterContent AND id matches AND translation_status matches
+    if (
+      chapterContent &&
+      chapterContent.id === ch.id &&
+      lastFetchedIdRef.current === ch.id &&
+      lastFetchedStatusRef.current === ch.translation_status
+    ) {
+      return;
+    }
+
     const abortController = new AbortController();
 
     const fetchContent = async () => {
+      // Instant restore from sessionStorage cache before network fetch
+      if (!chapterContent || chapterContent.id !== ch.id) {
+        try {
+          const cachedRaw = sessionStorage.getItem(CH_CACHE_KEY);
+          if (cachedRaw) {
+            const cachedData: ChapterContent = JSON.parse(cachedRaw);
+            if (cachedData.id === ch.id) {
+              setChapterContent(cachedData);
+              setTranslatedText(cachedData.content_translated || '');
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
       setLoadingContent(true);
       try {
         const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${ch.id}`), {
@@ -474,15 +514,19 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
         });
         if (!res.ok) throw new Error('Failed to fetch chapter content');
         const data: ChapterContent = await res.json();
-        
+
         lastFetchedIdRef.current = ch.id;
         lastFetchedStatusRef.current = ch.translation_status || data.translation_status || null;
         setChapterContent(data);
         setTranslatedText(data.content_translated || '');
         setLastReadId(ch.id);
+
+        try {
+          sessionStorage.setItem(CH_CACHE_KEY, JSON.stringify(data));
+        } catch { /* quota exceeded — ignore */ }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== 'AbortError') {
-          setChapterContent(null);
+          // Do not set chapterContent to null on abort/error if we already have cached content!
           lastFetchedIdRef.current = null;
           lastFetchedStatusRef.current = null;
         }
@@ -490,10 +534,33 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
         setLoadingContent(false);
       }
     };
-    
+
     fetchContent();
     return () => abortController.abort();
   }, [selectedChapterIdx, threadId, thread]);
+
+  // Mobile Screen Lock/Wake recovery: re-verify chapter content when document becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && !showChapterList && selectedChapterIdx !== null && thread) {
+        const ch = thread.chapters[selectedChapterIdx];
+        if (ch && (!chapterContent || chapterContent.id !== ch.id)) {
+          // Force reset lastFetchedIdRef to trigger fetchContent
+          lastFetchedIdRef.current = null;
+          lastFetchedStatusRef.current = null;
+          fetchThread({ silent: true });
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [showChapterList, selectedChapterIdx, thread, chapterContent, fetchThread]);
 
   // Auto-translate on fetch next chapter
   useEffect(() => {
@@ -501,7 +568,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
       autoTranslatePendingRef.current = false;
       // Small delay ensures UI has rendered the chapter view before kicking off the heavy translation stream
       setTimeout(() => {
-        handleTranslateChapter(false, '', chapterContent.content_original, chapterContent.id, false);
+        handleTranslateChapter(false, '', chapterContent.content_original ?? undefined, chapterContent.id, false);
       }, 100);
     }
   }, [chapterContent, handleTranslateChapter, isTranslating]);
@@ -510,10 +577,85 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   const getAutoStartNum = useCallback(() => {
     if (!thread || !thread.chapters || thread.chapters.length === 0) return 1;
     const firstTitle = thread.chapters[0].title_original || '';
-    const match = firstTitle.match(/(?:chapter|bab|vol|volume|ch|第)\s*(\d+)/i);
-    if (match) return parseInt(match[1], 10);
-    const digitMatch = firstTitle.match(/\d+/);
+
+    const parseChineseNumerals = (cn: string): number => {
+      if (!cn) return 0;
+      cn = cn.trim();
+
+      const cnNums: { [key: string]: number } = {
+        '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+        '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+        '壹': 1, '贰': 2, '叁': 3, '肆': 4, '伍': 5, '陆': 6, '柒': 7, '捌': 8, '玖': 9, '两': 2, '倆': 2
+      };
+      const cnUnits: { [key: string]: number } = {
+        '十': 10, '拾': 10,
+        '百': 100, '佰': 100,
+        '千': 1000, '仟': 1000,
+        '万': 10000, '萬': 10000,
+        '亿': 100000000, '億': 100000000
+      };
+
+      const chars = Array.from(cn);
+      const hasUnit = chars.some(char => char in cnUnits);
+      if (!hasUnit) {
+        let valStr = "";
+        for (const char of chars) {
+          if (char in cnNums) {
+            valStr += cnNums[char].toString();
+          }
+        }
+        return valStr ? parseInt(valStr, 10) : 0;
+      }
+
+      let total = 0;
+      let currentSection = 0;
+      let currentValue = 0;
+
+      for (const char of chars) {
+        if (char in cnNums) {
+          currentValue = cnNums[char];
+        } else if (char in cnUnits) {
+          const unitVal = cnUnits[char];
+          if (unitVal === 10000 || unitVal === 100000000) {
+            let sectionVal = currentSection + currentValue;
+            if (sectionVal === 0) {
+              sectionVal = 1;
+            }
+            total += sectionVal * unitVal;
+            currentSection = 0;
+            currentValue = 0;
+          } else {
+            if (currentValue === 0) {
+              currentValue = 1;
+            }
+            currentSection += currentValue * unitVal;
+            currentValue = 0;
+          }
+        }
+      }
+
+      return total + currentSection + currentValue;
+    };
+
+    // Strip common volume prefixes like v\d+[-_]? (case-insensitive) to prevent matching the volume number
+    const titleToParse = firstTitle.replace(/^[vV]\d+[-_]?/, '').trim();
+
+    // 1. Try standard Arabic digit pattern with prefix
+    const arabicMatch = titleToParse.match(/(?:chapter|bab|vol|volume|ch|第)\s*(\d+)/i);
+    if (arabicMatch) return parseInt(arabicMatch[1], 10);
+
+    // 2. Try standard Arabic digit pattern without prefix
+    const digitMatch = titleToParse.match(/\d+/);
     if (digitMatch) return parseInt(digitMatch[0], 10);
+
+    // 3. Try Chinese numeral pattern with prefix
+    const cnMatch = titleToParse.match(/(?:chapter|bab|vol|volume|ch|第)\s*([一二三四五六七八九十百千万零两]+)/i);
+    if (cnMatch) return parseChineseNumerals(cnMatch[1]);
+
+    // 4. Try Chinese numeral pattern without prefix
+    const cnDigitMatch = titleToParse.match(/[一二三四五六七八九十百千万零两]+/);
+    if (cnDigitMatch) return parseChineseNumerals(cnDigitMatch[0]);
+
     return 1;
   }, [thread]);
 
@@ -588,6 +730,18 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
 
       const res = await fetch(url, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
+      
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          // Decode chunk to keep connection alive and prevent timeout
+          decoder.decode(value, { stream: true });
+        }
+      }
+
       await fetchThread();
       toast.success('Titles polished successfully.');
     } catch (err) {

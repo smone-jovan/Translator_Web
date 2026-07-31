@@ -6,7 +6,7 @@ POST /api/lorebook/{entry_id}/lock
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from sqlalchemy import select, func
@@ -32,8 +32,7 @@ class LorebookOut(BaseModel):
     is_locked: bool
     is_archived: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LockToggle(BaseModel):
@@ -207,3 +206,30 @@ def toggle_lorebook_lock(
     db.refresh(entry)
     return entry
 
+
+# ---------------------------------------------------------------------------
+# Genre Preset Endpoints (ADR-073)
+# ---------------------------------------------------------------------------
+
+@router.get("/presets")
+def list_presets():
+    """List all available genre presets (cultivation ranks, wuxia terms, etc.)."""
+    from services.genre_presets import list_presets as _list_presets
+    return _list_presets()
+
+
+@router.post("/threads/{thread_id}/presets/{preset_key}")
+def apply_preset(thread_id: int, preset_key: str, db: Session = Depends(get_db)):
+    """Apply a genre preset to a thread's lorebook. Additive — does not overwrite existing entries."""
+    from services.genre_presets import apply_preset as _apply_preset
+
+    # Verify thread exists
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, f"Thread {thread_id} not found")
+
+    result = _apply_preset(db, thread_id, preset_key)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+
+    return result

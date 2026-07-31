@@ -473,7 +473,7 @@ export default function BulkTranslateModal({
                 <Virtuoso
                   style={{ height: '100%' }}
                   data={chapters}
-                  itemContent={(index, ch) => (
+                  itemContent={(_index, ch) => (
                     <ChapterItem 
                       key={ch.id} 
                       ch={ch} 
@@ -562,12 +562,14 @@ export default function BulkTranslateModal({
                   if (provider === 'gemini') {
                     const rpmMap: Record<string, number> = {
                       'gemini-3.1-flash-lite': 15,
-                      'gemini-2.5-flash-lite': 10,
-                      'gemini-2.5-flash': 5,
-                      'gemini-3-flash': 5,
+                      'gemini-3.5-flash-lite': 15,
+                      'gemma-4-31b': 30,
+                      'gemma-4-26b': 30,
+                      'gemini-3.6-flash': 5,
                       'gemini-3.5-flash': 5,
-                      'gemma-4-31b': 15,
-                      'gemma-4-26b': 15,
+                      'gemini-3-flash': 5,
+                      'gemini-2.5-flash': 5,
+                      'gemini-2.5-flash-lite': 10,
                     };
                     const rpm = rpmMap[model] || 0;
                     return `Gemini • ${rpm} RPM${rpm > 0 ? ' (free)' : ''}`;

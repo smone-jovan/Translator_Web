@@ -26,6 +26,7 @@ class TOCBulkImportRequest(BaseModel):
     thread_id: Optional[int] = None
     title: Optional[str] = None
     base_url: Optional[str] = None
+    genres: Optional[str] = None
     chapters: List[TOCChapterInfo]
 
 async def fetch_and_extract_links(url: str, client: httpx.AsyncClient):
@@ -159,6 +160,7 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
             author=author,
             synopsis=synopsis,
             cover_image=cover_image,
+            genres=req.genres,
             source_type="url",
             source_url=req.base_url or (req.chapters[0].url if req.chapters else "")
         )

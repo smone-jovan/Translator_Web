@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser, RotateCcw } from 'lucide-react';
+import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser, RotateCcw, Pencil } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -76,11 +76,12 @@ interface LibraryBookCardProps {
     onRunEpubCleaner: () => void;
     onDeleteTranslations: () => void;
     onFixTruncated: () => void;
+    onEditInfo: () => void;
   };
 }
 
 const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
-  const { onOpen, onDelete, onBatchTranslate, onEditCover, onScrapeNU, onCheckHallucinate, onRunTxtCleaner, onRunEpubCleaner, onDeleteTranslations, onFixTruncated } = actions;
+  const { onOpen, onDelete, onBatchTranslate, onEditCover, onScrapeNU, onCheckHallucinate, onRunTxtCleaner, onRunEpubCleaner, onDeleteTranslations, onFixTruncated, onEditInfo } = actions;
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -195,6 +196,10 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
                 <Sparkles size={16} className="text-[var(--primary)]" />
                 Customize Cover
               </MenuItem>
+              <MenuItem onClick={() => { onEditInfo(); handleClose(); }}>
+                <Pencil size={16} className="text-[var(--primary)]" />
+                Edit Info
+              </MenuItem>
               <MenuItem onClick={() => { onScrapeNU(); handleClose(); }}>
                 <Globe size={16} className="text-[var(--primary)]" />
                 Scrape from NU
@@ -290,6 +295,9 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditResult, setAuditResult] = useState<ThreadHallucinationAudit | null>(null);
   const [auditError, setAuditError] = useState('');
+  const [editThread, setEditThread] = useState<ThreadItem | null>(null);
+  const [editForm, setEditForm] = useState({ title: '', genres: '', author: '' });
+  const [editSaving, setEditSaving] = useState(false);
   const { confirm } = useConfirm();
 
   const handleSaveCover = async (coverValue: string | null) => {
@@ -621,6 +629,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
               onRunEpubCleaner: () => runCleanerTool(thread, 'epub-cleaner'),
               onDeleteTranslations: () => handleDeleteTranslations(thread),
               onFixTruncated: () => handleFixTruncated(thread),
+              onEditInfo: () => {
+                setEditThread(thread);
+                setEditForm({ title: thread.title, genres: thread.genres || '', author: thread.author || '' });
+              },
             }}
           />
         ))}
@@ -784,6 +796,81 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Info Modal */}
+      {editThread && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setEditThread(null)}>
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-lg font-black text-[var(--foreground)]">Edit Book Info</h2>
+              <button onClick={() => setEditThread(null)} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">Title</label>
+                <input
+                  type="text"
+                  value={editForm.title}
+                  onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">Genres (comma separated)</label>
+                <input
+                  type="text"
+                  value={editForm.genres}
+                  onChange={e => setEditForm(f => ({ ...f, genres: e.target.value }))}
+                  placeholder="e.g. romance, cultivation, urban"
+                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">Author</label>
+                <input
+                  type="text"
+                  value={editForm.author}
+                  onChange={e => setEditForm(f => ({ ...f, author: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <Button variant="outline" className="rounded-xl" onClick={() => setEditThread(null)}>Cancel</Button>
+              <Button
+                className="rounded-xl"
+                disabled={editSaving || !editForm.title.trim()}
+                onClick={async () => {
+                  setEditSaving(true);
+                  try {
+                    const res = await fetch(getApiUrl(`/api/threads/${editThread.id}`), {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        title: editForm.title.trim(),
+                        genres: editForm.genres.trim() || null,
+                        author: editForm.author.trim() || null,
+                      }),
+                    });
+                    if (!res.ok) throw new Error('Failed');
+                    toast.success('Book info updated!');
+                    setEditThread(null);
+                    fetchThreads();
+                  } catch {
+                    toast.error('Failed to update book info');
+                  } finally {
+                    setEditSaving(false);
+                  }
+                }}
+              >
+                {editSaving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+              </Button>
             </div>
           </div>
         </div>

@@ -3,6 +3,7 @@ POST /api/upload-epub — Parse EPUB file, split into chapters, save to DB.
 """
 
 import io
+import os
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -35,7 +36,7 @@ class EpubResponse(BaseModel):
     chapters: list[ChapterInfo]
 
 
-def extract_text_from_html(html_content: bytes | str) -> str:
+def extract_text_from_html(html_content: bytes | str, image_map: dict[str, str] = None) -> str:
     """Strip HTML tags, return clean text. Falls back to raw HTML if text is empty."""
     if isinstance(html_content, bytes):
         # Try to detect encoding or fallback to utf-8
@@ -51,6 +52,19 @@ def extract_text_from_html(html_content: bytes | str) -> str:
     # Remove script/style
     for tag in soup.find_all(["script", "style", "nav", "footer"]):
         tag.decompose()
+
+    # Process images if map provided
+    if image_map:
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if src:
+                basename = os.path.basename(src)
+                if basename in image_map:
+                    img_url = image_map[basename]
+                    alt = img.get("alt", "Image")
+                    # Replace the img tag with markdown representation
+                    # We wrap it in a custom text node so get_text() picks it up
+                    img.replace_with(f"\n![{alt}]({img_url})\n")
 
     # Try structured extraction
     text = soup.get_text(separator="\n", strip=True)
@@ -129,10 +143,34 @@ async def upload_epub(
         if item and item.get_type() == ebooklib.ITEM_DOCUMENT:
             spine_items.append(item)
 
+    # Extract images and store them
+    image_map = {}
+    thread_img_dir = os.path.join("uploads", "images", f"thread_{thread.id}")
+    
+    # Only create the directory if there are images
+    image_items = list(book.get_items_of_type(ebooklib.ITEM_IMAGE)) + list(book.get_items_of_type(ebooklib.ITEM_COVER))
+    
+    if image_items:
+        os.makedirs(thread_img_dir, exist_ok=True)
+        for img_item in image_items:
+            img_name = os.path.basename(img_item.get_name())
+            if not img_name:
+                continue
+                
+            img_path = os.path.join(thread_img_dir, img_name)
+            try:
+                with open(img_path, "wb") as f:
+                    f.write(img_item.get_content())
+                # Add to map (public url)
+                image_map[img_name] = f"/images/thread_{thread.id}/{img_name}"
+                print(f"🖼️ Extracted image: {img_name}")
+            except Exception as e:
+                print(f"⚠️ Failed to save image {img_name}: {e}")
+
     for item in spine_items:
         try:
             raw_html = item.get_content()
-            text = extract_text_from_html(raw_html)
+            text = extract_text_from_html(raw_html, image_map=image_map)
 
             # Skip very short items (TOC, cover, title page, etc.)
             # But be more lenient: some short chapters might exist

@@ -7,12 +7,20 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, Chapter, GlobalSetting, Thread
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
-from routers.scrape import html_to_markdown
-import httpx
-from services.context_engine import ContextEngine
-from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 from services.ai.base import TRUNCATED_MARKER, PROHIBITED_MARKER
+from services.fidelity_checker import verify_translation_fidelity
+from services.prompt_templates import (
+    MAX_CONTINUATIONS,
+    CONTINUATION_TAIL_CHARS,
+    LOOP_DETECTION_TAIL_CHARS,
+    LOOP_DETECTION_WINDOW,
+    LOOP_DETECTION_THRESHOLD,
+    STREAM_SAVE_INTERVAL,
+    build_continuation_prompt,
+)
+from routers.scrape import html_to_markdown
+import httpx
 
 # Registry for active chapter translations to prevent duplicates
 # chapter_id -> Task
@@ -45,6 +53,7 @@ class ActiveBatch:
         self.translation_mode = translation_mode
         self.fetch_only = fetch_only
         self.is_stopped = False
+        self.extract_count = 0  # Track how many chapters have had glossary extraction
         self.quota_exhausted = False
         self.active_task = None
         self.is_waiting = True
@@ -286,12 +295,20 @@ class BackgroundTranslator:
 
                 # Ambil konten aslinya dan set status ke processing
                 content_original = chapter.content_original
+
+                image_pattern = re.compile(r"(!\[.*?\]\(.*?\))")
+                protected_images = image_pattern.findall(content_original)
+                protected_content = content_original
+                for i, img_md in enumerate(protected_images):
+                    protected_content = protected_content.replace(img_md, f"\n❖IMAGE_{i}❖\n")
+
                 chapter.translation_status = "processing"
                 db.commit()
 
                 # 2. Rakit prompt-nya lewat ContextEngine
                 system_prompt = ContextEngine.build_translation_prompt(
-                    db, thread_id, target_lang, content_original, translation_mode
+                    db, thread_id, target_lang, content_original, translation_mode,
+                    model=model
                 )
                 print(f"[DEBUG] Chapter {chapter_id} - System Prompt Length: {len(system_prompt)} chars, Original Content Length: {len(content_original)} chars")
 
@@ -321,26 +338,23 @@ class BackgroundTranslator:
                     r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?)", 
                     re.IGNORECASE
                 )
-
-                MAX_CONTINUATIONS = 3
                 continuation_round = 0
-
                 while continuation_round <= MAX_CONTINUATIONS:
                     # Build messages: first round uses original prompt, continuation rounds use "continue" prompt
                     if continuation_round == 0:
                         messages = [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": content_original},
+                            {"role": "user", "content": protected_content},
                         ]
                     else:
                         print(f"[CONTINUE] Chapter {chapter_id} was truncated. Auto-continuing (round {continuation_round}/{MAX_CONTINUATIONS})...")
-                        # Send the last 500 chars as context so the AI knows where it left off
-                        tail = full_content[-500:] if len(full_content) > 500 else full_content
+                        # Send the last CONTINUATION_TAIL_CHARS as context so the AI knows where it left off
+                        tail = full_content[-CONTINUATION_TAIL_CHARS:] if len(full_content) > CONTINUATION_TAIL_CHARS else full_content
                         messages = [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": content_original},
+                            {"role": "user", "content": protected_content},
                             {"role": "assistant", "content": f"... {tail}"},
-                            {"role": "user", "content": "Your previous translation was cut off mid-sentence. Continue translating from exactly where you stopped. Do NOT repeat any already-translated text. Just continue the translation naturally."},
+                            {"role": "user", "content": build_continuation_prompt()},
                         ]
 
                     round_truncated = False
@@ -384,14 +398,17 @@ class BackgroundTranslator:
                                         sent_clean_content = clean_content
 
                         # Simpan berkala tiap 20 chunk biar kalau putus gak ilang semua
-                        if chunk_count % 20 == 0:
+                        if chunk_count % STREAM_SAVE_INTERVAL == 0:
                             with SessionLocal() as db:
                                 ch = db.get(Chapter, chapter_id)
                                 if ch:
-                                    ch.content_translated = ContextEngine.clean_final_translation(
+                                    clean_partial = ContextEngine.clean_final_translation(
                                         full_content,
                                         always_hide_thoughts=bool(always_hide_thoughts)
                                     )
+                                    for i, img_md in enumerate(protected_images):
+                                        clean_partial = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_partial, flags=re.IGNORECASE)
+                                    ch.content_translated = clean_partial
                                     db.commit()
 
                     # Handle prohibited/filtered response — skip this chapter entirely
@@ -413,11 +430,11 @@ class BackgroundTranslator:
 
                     # ----- ANTI 40K TOKEN LEAK -----
                     # Prevent LLM from continuing an infinite hallucination loop
-                    tail = full_content[-2000:]
+                    tail = full_content[-LOOP_DETECTION_TAIL_CHARS:]
                     is_looping = False
-                    for i in range(len(tail) - 50):
-                        substr = tail[i:i+50]
-                        if tail.count(substr) > 5:
+                    for i in range(len(tail) - LOOP_DETECTION_WINDOW):
+                        substr = tail[i:i+LOOP_DETECTION_WINDOW]
+                        if tail.count(substr) > LOOP_DETECTION_THRESHOLD:
                             is_looping = True
                             break
                     
@@ -447,12 +464,34 @@ class BackgroundTranslator:
                             always_hide_thoughts=bool(always_hide_thoughts)
                         )
 
+                        for i, img_md in enumerate(protected_images):
+                            clean_to_save = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_to_save, flags=re.IGNORECASE)
+                            if img_md not in clean_to_save:
+                                clean_to_save += f"\n\n{img_md}\n\n"
+
                         if not clean_to_save:
                             raise ValueError(
                                 f"AI provider returned an empty translation for chapter {chapter_id}."
                             )
 
                         ContextEngine.auto_save_glossary(db, thread_id, full_content)
+
+                        # Post-translation fidelity check (ADR-072)
+                        fidelity = verify_translation_fidelity(
+                            content_original, clean_to_save, chapter_id=chapter_id
+                        )
+                        if fidelity["is_suspicious"]:
+                            print(f"[FIDELITY] Chapter {chapter_id}: Translation may be incomplete. "
+                                  f"Original: {fidelity['original_paragraphs']} paragraphs, "
+                                  f"Translated: {fidelity['translated_paragraphs']} paragraphs "
+                                  f"(ratio: {fidelity['paragraph_ratio']})")
+                            ch.fidelity_warning = (
+                                f"Suspicious translation structure: Original has {fidelity['original_paragraphs']} paragraphs, "
+                                f"Translated has {fidelity['translated_paragraphs']} paragraphs (ratio: {fidelity['paragraph_ratio']:.2f})."
+                            )
+                        else:
+                            ch.fidelity_warning = None
+
                         ch.content_translated = clean_to_save
                         ch.translation_status = "done"
                         db.commit()
@@ -570,6 +609,19 @@ class BackgroundTranslator:
             active_batches.pop(thread_id, None)
 
     @staticmethod
+    async def stop_all_batches():
+        """Hentikan SEMUA batch translation yang sedang berjalan (untuk workspace switch)."""
+        for t_id in list(active_batches.keys()):
+            await BackgroundTranslator.stop_batch(t_id)
+            
+        while not master_batch_queue.empty():
+            try:
+                master_batch_queue.get_nowait()
+                master_batch_queue.task_done()
+            except Exception:
+                pass
+
+    @staticmethod
     async def _master_loop():
         """Master worker that processes batches sequentially across all threads."""
         while True:
@@ -629,18 +681,14 @@ class BackgroundTranslator:
         required_delay = 1.0
         if llm_provider == "gemini":
             m_lower = (resolved_model or "").lower()
-            if "gemini-3.1-flash-lite" in m_lower:
+            if "gemini-3.1-flash-lite" in m_lower or "gemini-3.5-flash-lite" in m_lower:
                 required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
+            elif "gemma-4-31b" in m_lower or "gemma-4-26b" in m_lower:
+                required_delay = 2.2  # 30 RPM = 2.0s (Safety margin: 2.2s)
             elif "gemini-2.5-flash-lite" in m_lower:
                 required_delay = 6.2  # 10 RPM = 6.0s (Safety margin: 6.2s)
-            elif "gemini-2.5-flash" in m_lower:
-                required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
-            elif "gemini-3-flash" in m_lower:
-                required_delay = 12.2  # 5 RPM = 12.0s (Safety margin: 12.2s)
-            elif "gemma-4-31b" in m_lower:
-                required_delay = 4.2  # 15 RPM = 4.0s (Safety margin: 4.2s)
             else:
-                required_delay = 12.2
+                required_delay = 12.2  # 5 RPM models (gemini-3.6-flash, gemini-3.5-flash, gemini-3-flash, gemini-2.5-flash, etc.)
                 
         # Divide delay by number of active API keys to multiply RPM
         required_delay = required_delay / num_keys
@@ -735,10 +783,23 @@ class BackgroundTranslator:
                             batch.current_chapter_title = f"Chapter {ch_id}"
                             
                     try:
+                        # Only run glossary extraction on the first N chapters (extract_chapter_count)
+                        # After that, disable to prevent 300+ term accumulation
+                        should_extract = False
+                        if batch.force_extract:
+                            with SessionLocal() as db:
+                                gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+                                extract_limit = gs.extract_chapter_count if gs else 12
+                            if batch.extract_count < extract_limit:
+                                should_extract = True
+                                batch.extract_count += 1
+                                if batch.extract_count >= extract_limit:
+                                    print(f"[EXTRACT] Reached extraction limit ({extract_limit} chapters). Disabling glossary scan for remaining chapters.")
+
                         success = await BackgroundTranslator._do_translate(
                             chapter_id=ch_id, thread_id=batch.thread_id,
                             target_lang=batch.target_lang, model=batch.model,
-                            lm_url=batch.lm_url, force_extract=batch.force_extract,
+                            lm_url=batch.lm_url, force_extract=should_extract,
                             force_overwrite=batch.force_overwrite,
                             translation_mode=batch.translation_mode, fetch_only=batch.fetch_only
                         )
@@ -763,7 +824,7 @@ class BackgroundTranslator:
                         raise
                     except Exception as e:
                         if isinstance(e, QuotaExhaustedError):
-                            fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']
+                            fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemma-4-31b', 'gemma-4-26b', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
                             with SessionLocal() as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 current_model = gs_fresh.gemini_model if (gs_fresh and gs_fresh.gemini_model) else ""
@@ -798,7 +859,7 @@ class BackgroundTranslator:
                             print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/15). Re-queuing after {delay:.0f}s. Error: {e}")
                             is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted"])
                             
-                            from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key
+                            from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key, QuotaExhaustedError
                             with SessionLocal() as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 if gs_fresh and gs_fresh.llm_provider:

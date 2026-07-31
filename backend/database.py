@@ -9,19 +9,37 @@ from sqlalchemy import create_engine, event, String, Text, DateTime, ForeignKey,
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 DATABASE_URL = "sqlite:///./app.db"
+DATABASE_URL_GHOST = "sqlite:///./ghost.db"
 
-engine = create_engine(
+engine_main = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}
 )
+engine_ghost = create_engine(
+    DATABASE_URL_GHOST, connect_args={"check_same_thread": False}
+)
 
-# Activate WAL mode for concurrent read/write safety across multi-device sessions (ADR-008)
-@event.listens_for(engine, "connect")
-def _set_sqlite_wal(dbapi_conn, connection_record):
+# Activate WAL mode for concurrent read/write safety across multi-device sessions
+@event.listens_for(engine_main, "connect")
+def _set_sqlite_wal_main(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+@event.listens_for(engine_ghost, "connect")
+def _set_sqlite_wal_ghost(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
+SessionLocalMain = sessionmaker(autocommit=False, autoflush=False, bind=engine_main)
+SessionLocalGhost = sessionmaker(autocommit=False, autoflush=False, bind=engine_ghost)
+
+ACTIVE_WORKSPACE = "main"
+
+def SessionLocal():
+    if ACTIVE_WORKSPACE == "ghost":
+        return SessionLocalGhost()
+    return SessionLocalMain()
 
 
 class Base(DeclarativeBase):
@@ -55,13 +73,19 @@ class GlobalSetting(Base):
     openai_url: Mapped[str] = mapped_column(String(500), default="https://api.openai.com/v1")
     openai_model: Mapped[str] = mapped_column(String(200), default="gpt-4o")
     gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
+    openrouter_model: Mapped[str] = mapped_column(String(200), default="deepseek/deepseek-chat")
     openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
+    openrouter_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     # Multiple API keys (JSON arrays) for key rotation on rate limits
     openai_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
     openai_active_key_index: Mapped[int] = mapped_column(default=0)
     gemini_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
     gemini_active_key_index: Mapped[int] = mapped_column(default=0)
+    openrouter_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
+    openrouter_active_key_index: Mapped[int] = mapped_column(default=0)
+    # Ghost Mode PIN authentication
+    ghost_pin: Mapped[str] = mapped_column(String(100), default="03697")
 
 
 class Thread(Base):
@@ -95,7 +119,7 @@ class Chapter(Base):
     __tablename__ = "chapters"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False, index=True)
     order: Mapped[int] = mapped_column(default=0)
     title_original: Mapped[Optional[str]] = mapped_column(String(500))
     title_translated: Mapped[Optional[str]] = mapped_column(String(500))
@@ -104,6 +128,7 @@ class Chapter(Base):
     source_url: Mapped[Optional[str]] = mapped_column(String(1000))
     translation_status: Mapped[str] = mapped_column(String(20), default="idle")
     is_bookmarked: Mapped[bool] = mapped_column(default=False)
+    fidelity_warning: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     thread: Mapped["Thread"] = relationship(back_populates="chapters")
@@ -115,7 +140,7 @@ class TranslationSegment(Base):
     __tablename__ = "translation_segments"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False, index=True)
     order: Mapped[int] = mapped_column(default=0)
     original_text: Mapped[Optional[str]] = mapped_column(Text)
     translated_text: Mapped[Optional[str]] = mapped_column(Text)
@@ -129,8 +154,8 @@ class UserBookmark(Base):
     __tablename__ = "user_bookmarks"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
-    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False, index=True)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id"), nullable=False, index=True)
     scroll_progress: Mapped[float] = mapped_column(default=0.0)
     last_read_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -142,7 +167,7 @@ class CharacterRelationship(Base):
     __tablename__ = "character_relationships"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False, index=True)
     source_term: Mapped[str] = mapped_column(String(200), nullable=False)
     target_term: Mapped[str] = mapped_column(String(200), nullable=False)
     relationship_type: Mapped[str] = mapped_column(String(100)) # e.g., "Friend", "Enemy", "Master"
@@ -157,7 +182,7 @@ class LorebookEntry(Base):
     __tablename__ = "lorebook_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False, index=True)
     original_term: Mapped[str] = mapped_column(String(200), nullable=False)
     translated_term: Mapped[str] = mapped_column(String(200), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text)
@@ -178,7 +203,12 @@ def get_db():
         db.close()
 
 
+def _get_active_engine():
+    return engine_ghost if ACTIVE_WORKSPACE == "ghost" else engine_main
+
+
 def init_db():
+    engine = _get_active_engine()
     Base.metadata.create_all(bind=engine)
     
     # Auto-migration: check for missing columns in global_settings, lorebook_entries, and threads
@@ -201,6 +231,11 @@ def init_db():
         if 'source_url' not in columns_ch:
             print("[MIGRASI] Menambahkan kolom 'source_url' ke dalam tabel chapters...")
             conn.execute(text("ALTER TABLE chapters ADD COLUMN source_url VARCHAR(1000)"))
+            conn.commit()
+
+        if 'fidelity_warning' not in columns_ch:
+            print("[MIGRASI] Menambahkan kolom 'fidelity_warning' ke dalam tabel chapters...")
+            conn.execute(text("ALTER TABLE chapters ADD COLUMN fidelity_warning TEXT"))
             conn.commit()
 
         if 'author' not in columns_th:
@@ -352,6 +387,31 @@ def init_db():
             print("[MIGRASI] Menambahkan kolom 'translation_mode' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN translation_mode VARCHAR(20) DEFAULT 'quality'"))
             conn.commit()
+
+        if 'openrouter_model' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openrouter_model' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openrouter_model VARCHAR(200) DEFAULT 'deepseek/deepseek-chat'"))
+            conn.commit()
+
+        if 'openrouter_api_key' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openrouter_api_key' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openrouter_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+
+        if 'openrouter_api_keys' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openrouter_api_keys' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openrouter_api_keys TEXT DEFAULT '[]'"))
+            conn.commit()
+
+        if 'openrouter_active_key_index' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'openrouter_active_key_index' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN openrouter_active_key_index INTEGER DEFAULT 0"))
+            conn.commit()
+
+        if 'ghost_pin' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'ghost_pin' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN ghost_pin VARCHAR(100) DEFAULT '03697'"))
+            conn.commit()
             
         if 'is_locked' not in columns_lb:
             print("[MIGRASI] Menambahkan kolom 'is_locked' ke dalam tabel lorebook_entries...")
@@ -368,4 +428,53 @@ def init_db():
             conn.execute(text("ALTER TABLE user_bookmarks ADD COLUMN scroll_progress REAL DEFAULT 0.0"))
             conn.commit()
             
-    print("[SUKSES] Inisialisasi basis data selesai - app.db siap digunakan.")
+    print(f"[SUKSES] Inisialisasi basis data selesai - {'ghost.db' if ACTIVE_WORKSPACE == 'ghost' else 'app.db'} siap digunakan.")
+
+
+def switch_workspace(target: str):
+    """
+    Switches the active workspace globally.
+    If switching to ghost, it copies the settings from main to ghost so API keys are shared.
+    """
+    global ACTIVE_WORKSPACE
+    if target not in ["main", "ghost"]:
+        raise ValueError("Invalid workspace target")
+        
+    ACTIVE_WORKSPACE = target
+    print(f"[WORKSPACE] Switched to {target} workspace.")
+    
+    # Initialize the target DB if it doesn't exist
+    init_db()
+    
+    # Sync settings if moving to ghost
+    if target == "ghost":
+        with SessionLocalMain() as db_main:
+            gs_main = db_main.query(GlobalSetting).first()
+            if gs_main:
+                with SessionLocalGhost() as db_ghost:
+                    gs_ghost = db_ghost.query(GlobalSetting).first()
+                    if not gs_ghost:
+                        # Copy all fields from gs_main
+                        new_gs = GlobalSetting()
+                        for col in gs_main.__table__.columns:
+                            setattr(new_gs, col.name, getattr(gs_main, col.name))
+                        # Wipe the ID so it inserts as new
+                        new_gs.id = None
+                        db_ghost.add(new_gs)
+                        db_ghost.commit()
+                        print("[WORKSPACE] Initialized ghost.db settings from app.db")
+                    else:
+                        # Always keep API keys & PIN synced from main to ghost
+                        gs_ghost.openai_api_key = gs_main.openai_api_key
+                        gs_ghost.gemini_api_key = gs_main.gemini_api_key
+                        gs_ghost.openrouter_api_key = gs_main.openrouter_api_key
+                        gs_ghost.openai_api_keys = gs_main.openai_api_keys
+                        gs_ghost.gemini_api_keys = gs_main.gemini_api_keys
+                        gs_ghost.openrouter_api_keys = gs_main.openrouter_api_keys
+                        gs_ghost.llm_provider = gs_main.llm_provider
+                        gs_ghost.openai_model = gs_main.openai_model
+                        gs_ghost.gemini_model = gs_main.gemini_model
+                        gs_ghost.openrouter_model = gs_main.openrouter_model
+                        gs_ghost.ghost_pin = gs_main.ghost_pin
+                        db_ghost.commit()
+                        print("[WORKSPACE] Synced API keys & PIN to ghost.db")

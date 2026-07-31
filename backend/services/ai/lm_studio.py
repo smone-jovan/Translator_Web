@@ -26,9 +26,8 @@ class LMStudioAdapter(BaseAIProviderAdapter):
             "temperature": temperature,
             "stream": False
         }
-        if max_tokens is not None:
-            # Prevent LM Studio context crash: if max_tokens is huge, let the server auto-fill to the context edge by using -1
-            payload["max_tokens"] = -1 if max_tokens > 4096 else max_tokens
+        if max_tokens is not None and max_tokens > 0:
+            payload["max_tokens"] = max_tokens
         else:
             payload["max_tokens"] = -1
         if self.model:
@@ -60,7 +59,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
             "temperature": temperature,
             "stream": True
         }
-        if max_tokens is not None and max_tokens <= 4096:
+        if max_tokens is not None and max_tokens > 0:
             payload["max_tokens"] = max_tokens
         # If max_tokens is huge or None, omit it entirely so LM Studio handles it natively
         if self.model:

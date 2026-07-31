@@ -60,7 +60,8 @@ def load_secrets() -> dict:
     """
     secrets = {
         "openai_api_key": "",
-        "gemini_api_key": ""
+        "gemini_api_key": "",
+        "openrouter_api_key": ""
     }
     if os.path.exists(ENV_FILE_PATH):
         try:
@@ -77,6 +78,8 @@ def load_secrets() -> dict:
                             secrets["openai_api_key"] = val
                         elif key == "GEMINI_API_KEY":
                             secrets["gemini_api_key"] = val
+                        elif key == "OPENROUTER_API_KEY":
+                            secrets["openrouter_api_key"] = val
         except Exception as e:
             print(f"[SECRETS] Failed to read {ENV_FILE_PATH}: {e}")
     
@@ -85,11 +88,13 @@ def load_secrets() -> dict:
         secrets["openai_api_key"] = os.environ.get("OPENAI_API_KEY", "")
     if not secrets["gemini_api_key"]:
         secrets["gemini_api_key"] = os.environ.get("GEMINI_API_KEY", "")
+    if not secrets["openrouter_api_key"]:
+        secrets["openrouter_api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
         
     return secrets
 
 
-def save_secrets(openai_api_key: str | None, gemini_api_key: str | None):
+def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None = None, openrouter_api_key: str | None = None):
     """
     Save API keys safely to backend/.env.
     """
@@ -98,6 +103,8 @@ def save_secrets(openai_api_key: str | None, gemini_api_key: str | None):
         secrets["openai_api_key"] = openai_api_key
     if gemini_api_key is not None:
         secrets["gemini_api_key"] = gemini_api_key
+    if openrouter_api_key is not None:
+        secrets["openrouter_api_key"] = openrouter_api_key
         
     try:
         # Write back to backend/.env safely
@@ -105,6 +112,7 @@ def save_secrets(openai_api_key: str | None, gemini_api_key: str | None):
             f.write("# LLM Provider API Keys (Do not commit this file to Git!)\n")
             f.write(f"OPENAI_API_KEY={secrets['openai_api_key']}\n")
             f.write(f"GEMINI_API_KEY={secrets['gemini_api_key']}\n")
+            f.write(f"OPENROUTER_API_KEY={secrets['openrouter_api_key']}\n")
         print(f"[SECRETS] API keys saved successfully to {ENV_FILE_PATH}")
     except Exception as e:
         print(f"[SECRETS] Failed to write to {ENV_FILE_PATH}: {e}")
@@ -153,6 +161,14 @@ def get_active_api_key(provider: str, gs=None) -> str:
                 idx = gs.openai_active_key_index if gs.openai_active_key_index < len(keys) else 0
                 return keys[idx]
         return secrets.get("openai_api_key", "")
+
+    elif provider == "openrouter":
+        if gs and gs.openrouter_api_keys:
+            keys = json.loads(gs.openrouter_api_keys)
+            if keys:
+                idx = gs.openrouter_active_key_index if gs.openrouter_active_key_index < len(keys) else 0
+                return keys[idx]
+        return secrets.get("openrouter_api_key", "")
     
     return ""
 
@@ -184,6 +200,13 @@ def rotate_api_key(provider: str, gs) -> str:
             gs.openai_active_key_index = (gs.openai_active_key_index + 1) % len(keys)
             print(f"[KEY ROTATE] OpenAI: switched to key #{gs.openai_active_key_index}")
             return keys[gs.openai_active_key_index]
+
+    elif provider == "openrouter" and gs.openrouter_api_keys:
+        keys = json.loads(gs.openrouter_api_keys)
+        if len(keys) > 1:
+            gs.openrouter_active_key_index = (gs.openrouter_active_key_index + 1) % len(keys)
+            print(f"[KEY ROTATE] OpenRouter: switched to key #{gs.openrouter_active_key_index}")
+            return keys[gs.openrouter_active_key_index]
     
     # No rotation possible, return current key
     return get_active_api_key(provider, gs)

@@ -7,6 +7,11 @@ import re
 
 from database import get_db, Thread, Chapter, GlobalSetting
 from services.ai.factory import AIProviderFactory
+from services.prompt_templates import (
+    build_title_cleaning_prompt,
+    build_synopsis_translation_prompt,
+    build_title_translation_prompt
+)
 
 router = APIRouter(prefix="/api", tags=["Polish"])
 
@@ -63,6 +68,62 @@ def clean_and_format_chapter_title(title: str, order_num: int, total_chapters: i
     return f"{padded}. {t}"
 
 
+def parse_chinese_numerals(cn: str) -> int:
+    """
+    Converts a Chinese numeral string to an Arabic integer.
+    Supports both traditional/simplified and standard unit/positional numerals.
+    """
+    if not cn:
+        return 0
+    cn = cn.strip()
+    
+    CN_NUMS = {
+        '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+        '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+        '壹': 1, '贰': 2, '叁': 3, '肆': 4, '伍': 5, '陆': 6, '柒': 7, '捌': 8, '玖': 9, '两': 2, '倆': 2
+    }
+    CN_UNITS = {
+        '十': 10, '拾': 10,
+        '百': 100, '佰': 100,
+        '千': 1000, '仟': 1000,
+        '万': 10000, '萬': 10000,
+        '亿': 100000000, '億': 100000000
+    }
+    
+    # Check if there are any units
+    has_unit = any(char in CN_UNITS for char in cn)
+    if not has_unit:
+        val_str = ""
+        for char in cn:
+            if char in CN_NUMS:
+                val_str += str(CN_NUMS[char])
+        return int(val_str) if val_str else 0
+
+    total = 0
+    current_section = 0
+    current_value = 0
+    
+    for char in cn:
+        if char in CN_NUMS:
+            current_value = CN_NUMS[char]
+        elif char in CN_UNITS:
+            unit_val = CN_UNITS[char]
+            if unit_val == 10000 or unit_val == 100000000:
+                section_val = current_section + current_value
+                if section_val == 0:
+                    section_val = 1
+                total += section_val * unit_val
+                current_section = 0
+                current_value = 0
+            else:
+                if current_value == 0:
+                    current_value = 1
+                current_section += current_value * unit_val
+                current_value = 0
+            
+    return total + current_section + current_value
+
+
 @router.post("/threads/{thread_id}/translate-titles")
 async def translate_titles(
     thread_id: int, 
@@ -103,17 +164,7 @@ async def translate_titles(
         # A. Clean Original Title (ADR-020 Compliance)
         if thread.original_title and contains_chinese(thread.original_title):
             print(f"🔄 [ADR-020] Cleansing original title: {thread.original_title}")
-            sys_prompt_clean = (
-                "You are an expert Chinese web novel database assistant.\n"
-                "Your task is to take a raw, messy Chinese novel title (which may contain extra words, descriptive text, "
-                "parentheses, tags, or chapter details) and return ONLY the clean, official Chinese title of the novel.\n"
-                "Rules:\n"
-                "1. Strip all annotations, brackets like 【】, tags like (无女主) or (轻松) or (变百), and ads.\n"
-                "2. Respond with ONLY the cleaned Chinese title characters. Do not include any greeting, markdown, note, or translation.\n"
-                "3. If the input is already clean or contains English, return it clean without explaining.\n"
-                "Example Input: 我怎么可能是圣女？（无女主，变百，轻松）\n"
-                "Example Output: 我怎么可能是圣女？"
-            )
+            sys_prompt_clean = build_title_cleaning_prompt()
             user_prompt_clean = f"Please clean this title: {thread.original_title}"
             try:
                 provider = AIProviderFactory.get_provider(base_url=lm_url)
@@ -132,11 +183,7 @@ async def translate_titles(
         # B. Translate Synopsis if still in Chinese
         if thread.synopsis and contains_chinese(thread.synopsis):
             print(f"🔄 Translating Chinese synopsis/description...")
-            sys_prompt_syn = (
-                f"You are a professional literary translator specializing in {target_lang}. "
-                "Translate the following novel synopsis/description accurately and elegantly. "
-                "Ensure the translation is natural and highly readable, retaining the original meaning and tone."
-            )
+            sys_prompt_syn = build_synopsis_translation_prompt(target_lang)
             user_prompt_syn = thread.synopsis
             try:
                 provider = AIProviderFactory.get_provider(base_url=lm_url)
@@ -173,7 +220,34 @@ async def translate_titles(
     # Count total chapters in the thread for padding width calculation
     total_chapters = len(all_chapters)
 
-    start_num_offset = start_number
+    # Auto-detect starting chapter number
+    detected_start = 1
+    first_ch_stmt = select(Chapter).where(Chapter.thread_id == thread_id).order_by(Chapter.order).limit(1)
+    first_ch = db.execute(first_ch_stmt).scalar_one_or_none()
+    if first_ch and first_ch.title_original:
+        # Strip common volume prefixes like v\d+[-_]? or Volume \d+ (case-insensitive) to prevent matching the volume number
+        title_to_parse = re.sub(r'(?i)^(?:vol(?:ume)?\s*\d+[-_.]?\s*|v\d+[-_.]?\s*)', '', first_ch.title_original).strip()
+        # Standard Arabic digit patterns first (prioritize chapter markers over volume markers)
+        match = re.search(r'(?i)(?:chapter|bab|ch|第)\s*(\d+)', title_to_parse)
+        if not match:
+            match = re.search(r'(?i)(?:vol|volume)\s*(\d+)', title_to_parse)
+        if match:
+            detected_start = int(match.group(1))
+        else:
+            match = re.search(r'\d+', title_to_parse)
+            if match:
+                detected_start = int(match.group(0))
+            else:
+                # Chinese numeral patterns (using helper)
+                match = re.search(r'(?i)(?:chapter|bab|vol|volume|ch|第)\s*([一二三四五六七八九十百千万零两]+)', title_to_parse)
+                if match:
+                    detected_start = parse_chinese_numerals(match.group(1))
+                else:
+                    match = re.search(r'[一二三四五六七八九十百千万零两]+', title_to_parse)
+                    if match:
+                        detected_start = parse_chinese_numerals(match.group(0))
+
+    start_num_offset = start_number if start_number is not None else detected_start
 
     chapter_metrics = {}
     if volume_mode:
@@ -187,7 +261,7 @@ async def translate_titles(
                 pass
         
         current_vol = start_volume
-        current_ch = start_num_offset if start_num_offset is not None else 1
+        current_ch = start_num_offset
         prev_raw_num = 0
         volume_just_incremented = False
         
@@ -253,18 +327,6 @@ async def translate_titles(
             if raw_num > 0:
                 prev_raw_num = raw_num
     else:
-        detected_start = 1
-        first_ch_stmt = select(Chapter).where(Chapter.thread_id == thread_id).order_by(Chapter.order).limit(1)
-        first_ch = db.execute(first_ch_stmt).scalar_one_or_none()
-        if first_ch and first_ch.title_original:
-            match = re.search(r'(?i)(?:chapter|bab|vol|volume|ch|第)\s*(\d+)', first_ch.title_original)
-            if match:
-                detected_start = int(match.group(1))
-            else:
-                match = re.search(r'\d+', first_ch.title_original)
-                if match:
-                    detected_start = int(match.group(0))
-        start_num_offset = start_num_offset if start_num_offset is not None else detected_start
         max_chapter_num = start_num_offset + total_chapters - 1
 
     titles_to_process = []
@@ -272,8 +334,11 @@ async def translate_titles(
 
     # If full thread polishing and not specific chapter
     if not chapter_id:
-        if thread.title and any(ord(char) > 127 for char in thread.title):
-            titles_to_process.append(thread.title)
+        needs_repolish = any(ord(char) > 127 for char in (thread.title or ""))
+        if thread.title and (needs_repolish or repolish):
+            # Send the original title if available, otherwise fallback to the current title
+            source_title = thread.original_title if thread.original_title else thread.title
+            titles_to_process.append(source_title)
             indices.append(-1)
 
     for i, c in enumerate(chapters):
@@ -294,118 +359,99 @@ async def translate_titles(
 
     # Chunking logic optimized for ~8000 context window
     CHUNK_SIZE = 50
-    total_count = 0
-    
-    for start_idx in range(0, len(titles_to_process), CHUNK_SIZE):
-        if start_idx > 0:
-            await asyncio.sleep(1.0) # Breath for LM Studio
-            
-        end_idx = start_idx + CHUNK_SIZE
-        chunk_titles = titles_to_process[start_idx:end_idx]
-        chunk_indices = indices[start_idx:end_idx]
+    total_chunks = (len(titles_to_process) + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+    async def stream_generator():
+        nonlocal start_num_offset
+        total_count = 0
         
-        prompt_lines = []
-        for i, title in enumerate(chunk_titles):
-            # We use the relative index within the chunk for the prompt label
-            # But the label must match the absolute index in chunk_indices
-            abs_idx = chunk_indices[i]
-            label = "BOOK_TITLE" if abs_idx == -1 else f"CHAPTER_{abs_idx}"
-            prompt_lines.append(f"[{label}]: {title}")
-
-        sys_prompt = (
-            f"You are a professional literary editor and translator specializing in {target_lang}. \n"
-            f"Task: Translate and creatively polish these chapter titles into {target_lang}.\n\n"
-            "Requirements:\n"
-            "1. Maintain EXACT label format (e.g., [BOOK_TITLE]: or [CHAPTER_0]:).\n"
-            f"2. All polished titles MUST be written in {target_lang}. Do NOT output Chinese characters.\n"
-            "3. Titles should feel 'Polished' and 'Cool', not just literal translations.\n"
-            "4. Remove excessive Pinyin or redundant chapter numbers if they exist in the text.\n"
-            "5. Return one polished title per line."
-        )
-        user_prompt = "\n".join(prompt_lines)
-
-        try:
-            print(f"🔄 Processing title batch {start_idx//CHUNK_SIZE + 1}...")
-            provider = AIProviderFactory.get_provider(base_url=lm_url)
-            messages = [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-            response = await provider.chat_completion(messages=messages, temperature=0.3)
-            translated_lines = [line.strip() for line in response.split("\n") if line.strip()]
+        for start_idx in range(0, len(titles_to_process), CHUNK_SIZE):
+            if start_idx > 0 and polish_mode == "soft":
+                await asyncio.sleep(1.0) # Breath for LM Studio
+                
+            chunk_num = start_idx // CHUNK_SIZE + 1
+            yield f'{{"status": "processing", "chunk": {chunk_num}, "total": {total_chunks}}}\n'
             
-            for line in translated_lines:
-                if ":" not in line: continue
-                # Handle cases where label might have square brackets
-                parts = line.split(":", 1)
-                label = parts[0].strip()
-                translated_title = parts[1].strip()
-
-                if "BOOK_TITLE" in label:
-                    thread.title = translated_title
-                    total_count += 1
-                elif "CHAPTER_" in label:
-                    try:
-                        # Extract digit from CHAPTER_X
-                        match = re.search(r"CHAPTER_(\d+)", label)
-                        if match:
-                            ch_idx = int(match.group(1))
-                            if 0 <= ch_idx < len(chapters):
-                                target_ch = chapters[ch_idx]
-                                if volume_mode:
-                                    v_num, c_num = chapter_metrics.get(target_ch.id, (start_volume, 1))
-                                    formatted_title = clean_and_format_chapter_title(
-                                        translated_title,
-                                        c_num,
-                                        total_chapters,
-                                        volume_num=v_num
-                                    )
-                                else:
-                                    order_num = start_num_offset + target_ch.order
-                                    formatted_title = clean_and_format_chapter_title(
-                                        translated_title,
-                                        order_num,
-                                        max_chapter_num
-                                    )
-                                target_ch.title_translated = formatted_title
-                                total_count += 1
-                    except Exception as e:
-                        print(f"⚠️ Skip line '{line}': {e}")
+            end_idx = start_idx + CHUNK_SIZE
+            chunk_titles = titles_to_process[start_idx:end_idx]
+            chunk_indices = indices[start_idx:end_idx]
             
-            db.commit() # Commit each chunk
-        except Exception as e:
-            print(f"❌ Batch Error at chunk {start_idx}: {e}")
-            raise HTTPException(500, f"AI Error at chunk {start_idx}: {str(e)}")
+            prompt_lines = []
+            for i, title in enumerate(chunk_titles):
+                abs_idx = chunk_indices[i]
+                label = "BOOK_TITLE" if abs_idx == -1 else f"CHAPTER_{abs_idx}"
+                prompt_lines.append(f"[{label}]: {title}")
 
-    # Sweep and apply volume/sequential formatting to ALL chapters in the thread that have translated titles
-    for target_ch in all_chapters:
-        if target_ch.title_translated:
-            # Skip TOC/metadata pages - don't polish their titles
-            content_preview = (target_ch.content_original or "").strip()
-            toc_indicators = ["简介", "目录", "第一章", "第二章", "第三章", "第四章", "第五章",
-                              "第六章", "第七章", "第八章", "第九章", "第十章"]
-            toc_count = sum(1 for indicator in toc_indicators if indicator in content_preview)
-            is_toc_page = len(content_preview) < 5000 and toc_count >= 5
-            if is_toc_page:
-                continue
+            sys_prompt = build_title_translation_prompt(target_lang)
+            user_prompt = "\n".join(prompt_lines)
 
-            if volume_mode:
-                v_num, c_num = chapter_metrics.get(target_ch.id, (start_volume, 1))
-                formatted_title = clean_and_format_chapter_title(
-                    target_ch.title_translated,
-                    c_num,
-                    total_chapters,
-                    volume_num=v_num
-                )
-            else:
-                order_num = start_num_offset + target_ch.order
-                formatted_title = clean_and_format_chapter_title(
-                    target_ch.title_translated,
-                    order_num,
-                    max_chapter_num
-                )
-            target_ch.title_translated = formatted_title
-    
-    db.commit()
+            try:
+                print(f"🔄 Processing title batch {chunk_num}...")
+                provider = AIProviderFactory.get_provider(base_url=lm_url)
+                messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                response = await provider.chat_completion(messages=messages, temperature=0.3)
+                translated_lines = [line.strip() for line in response.split("\n") if line.strip()]
+                
+                for line in translated_lines:
+                    match = re.search(r'(BOOK_TITLE|CHAPTER_\d+)[\]\-\:\s]*(.*)', line, re.IGNORECASE)
+                    if not match:
+                        continue
+                        
+                    label = match.group(1).upper()
+                    translated_title = match.group(2).strip()
 
-    return {"count": total_count}
+                    if "BOOK_TITLE" in label:
+                        if -1 in chunk_indices:
+                            thread.title = translated_title
+                            total_count += 1
+                            chunk_indices[chunk_indices.index(-1)] = -999
+                    elif "CHAPTER_" in label:
+                        try:
+                            match = re.search(r"CHAPTER_(\d+)", label)
+                            if match:
+                                ch_idx = int(match.group(1))
+                                if 0 <= ch_idx < len(chapters):
+                                    target_ch = chapters[ch_idx]
+                                    if volume_mode:
+                                        v_num, c_num = chapter_metrics.get(target_ch.id, (start_volume, 1))
+                                        formatted_title = clean_and_format_chapter_title(translated_title, c_num, total_chapters, volume_num=v_num)
+                                    else:
+                                        order_num = start_num_offset + target_ch.order
+                                        formatted_title = clean_and_format_chapter_title(translated_title, order_num, max_chapter_num)
+                                    target_ch.title_translated = formatted_title
+                                    total_count += 1
+                        except Exception as e:
+                            print(f"⚠️ Skip line '{line}': {e}")
+                
+                db.commit()
+            except Exception as e:
+                print(f"❌ Batch Error at chunk {start_idx}: {e}")
+                yield f'{{"status": "error", "message": "AI Error at chunk {start_idx}: {str(e)}"}}\n'
+                return
+
+        # Sweep and apply volume/sequential formatting to ALL chapters in the thread that have translated titles
+        for target_ch in all_chapters:
+            if target_ch.title_translated:
+                content_preview = (target_ch.content_original or "").strip()
+                toc_indicators = ["简介", "目录", "第一章", "第二章", "第三章", "第四章", "第五章", "第六章", "第七章", "第八章", "第九章", "第十章"]
+                toc_count = sum(1 for indicator in toc_indicators if indicator in content_preview)
+                is_toc_page = len(content_preview) < 5000 and toc_count >= 5
+                if is_toc_page:
+                    continue
+
+                if volume_mode:
+                    v_num, c_num = chapter_metrics.get(target_ch.id, (start_volume, 1))
+                    formatted_title = clean_and_format_chapter_title(target_ch.title_translated, c_num, total_chapters, volume_num=v_num)
+                else:
+                    order_num = start_num_offset + target_ch.order
+                    formatted_title = clean_and_format_chapter_title(target_ch.title_translated, order_num, max_chapter_num)
+                target_ch.title_translated = formatted_title
+        
+        db.commit()
+        yield f'{{"status": "done", "count": {total_count}}}\n'
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")

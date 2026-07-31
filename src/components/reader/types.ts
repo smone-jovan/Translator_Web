@@ -7,6 +7,7 @@ export interface Chapter {
   has_translation: boolean;
   translation_status?: string;
   is_bookmarked?: boolean;
+  fidelity_warning?: string | null;
 }
 
 export interface ThreadDetail {
@@ -23,6 +24,7 @@ export interface ThreadDetail {
   status_coo?: string | null;
   synopsis?: string | null;
   author?: string | null;
+  source_url?: string | null;
 }
 
 export interface ChapterContent {
@@ -35,4 +37,6 @@ export interface ChapterContent {
   translation_status: string | null;
   scroll_progress?: number;
   is_bookmarked?: boolean;
+  fidelity_warning?: string | null;
+  source_url?: string | null;
 }

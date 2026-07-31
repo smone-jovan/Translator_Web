@@ -42,16 +42,34 @@ def remove_thoughts(text: str) -> str:
     cleaned = re.sub(r'<(think|thought)\b[^>]*>.*$', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
     return cleaned.strip()
 
+def guess_image_ext(file_path: str) -> str:
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(12)
+        if header.startswith(b"\xff\xd8"): return "jpeg"
+        if header.startswith(b"\x89PNG\r\n\x1a\n"): return "png"
+        if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"): return "gif"
+        if header.startswith(b"RIFF") and header[8:12] == b"WEBP": return "webp"
+    except Exception:
+        pass
+    return ""
+
 def clean_html_content(text: str) -> str:
     """Simple converter from plain text to basic HTML for EPUB chapters."""
     # Escape basic HTML chars
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Re-enable <img> tags that were escaped
+    text = re.sub(r'&lt;img([^&]+)&gt;', r'<img\1>', text)
 
     # Process basic markdown-like formatting (non-greedy matching)
     # **bold** -> <strong>bold</strong>
     text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
     # *italic* -> <em>italic</em>
     text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
+    
+    # ![alt](url) -> <img src="url" alt="alt" />
+    text = re.sub(r'!\[(.*?)\]\((.*?)\)', r'<img src="\2" alt="\1" />', text)
 
     # Convert newlines to <p> tags
     paragraphs = text.split("\n")
@@ -125,6 +143,7 @@ async def export_thread(
         spine = ["nav"]
         epub_chapters = []
         toc_entries = []
+        added_images = {}
 
         for i, ch in enumerate(chapters):
             ch_title = ch.title_translated or ch.title_original or f"Chapter {i+1}"
@@ -143,6 +162,47 @@ async def export_thread(
             """
 
             html_body = f"<h1>{ch_title}</h1>\n" + clean_html_content(ch_content)
+            
+            # Extract and bundle local images
+            def process_image(match):
+                full_tag = match.group(0)
+                img_path = match.group(1) # e.g. /images/thread_31/img
+                if img_path.startswith("/images/"):
+                    local_relative = img_path.replace("/images/", "", 1)
+                    local_fs_path = os.path.join("uploads", "images", local_relative)
+                    
+                    if os.path.exists(local_fs_path):
+                        internal_epub_path = f"images/{local_relative.replace('/', '_')}"
+                        
+                        if internal_epub_path not in added_images:
+                            with open(local_fs_path, "rb") as f:
+                                img_data = f.read()
+                            epub_img = epub.EpubItem(
+                                uid=internal_epub_path,
+                                file_name=internal_epub_path,
+                                media_type="", 
+                                content=img_data
+                            )
+                            ext = guess_image_ext(local_fs_path)
+                            if ext:
+                                epub_img.media_type = f"image/{ext}"
+                                if "." not in internal_epub_path:
+                                    internal_epub_path += f".{ext}"
+                                    epub_img.file_name = internal_epub_path
+                            else:
+                                epub_img.media_type = "image/jpeg"
+                                if "." not in internal_epub_path:
+                                    internal_epub_path += ".jpg"
+                                    epub_img.file_name = internal_epub_path
+                                    
+                            book.add_item(epub_img)
+                            added_images[internal_epub_path] = True
+                            
+                        return full_tag.replace(img_path, internal_epub_path)
+                return full_tag
+                
+            html_body = re.sub(r'<img[^>]+src=["\'](.*?)["\'][^>]*>', process_image, html_body)
+
             epub_ch.content = f'<html xmlns="http://www.w3.org/1999/xhtml"><head><style>{style}</style></head><body>{html_body}</body></html>'
 
             book.add_item(epub_ch)

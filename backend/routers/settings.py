@@ -33,13 +33,19 @@ class GlobalSettingsUpdate(BaseModel):
     openai_url: str | None = None
     openai_model: str | None = None
     gemini_model: str | None = None
+    openrouter_model: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    openrouter_api_key: str | None = None
     # Multiple API keys
     openai_api_keys: list[str] | None = None
     openai_active_key_index: int | None = None
     gemini_api_keys: list[str] | None = None
     gemini_active_key_index: int | None = None
+    openrouter_api_keys: list[str] | None = None
+    openrouter_active_key_index: int | None = None
+    # Ghost Mode PIN authentication
+    ghost_pin: str | None = None
 
 @router.get("/global-context")
 def get_global_context(db: Session = Depends(get_db)):
@@ -72,13 +78,18 @@ def get_global_context(db: Session = Depends(get_db)):
         "openai_url": gs.openai_url if gs else "https://api.openai.com/v1",
         "openai_model": gs.openai_model if gs else "gpt-4o",
         "gemini_model": gs.gemini_model if gs else "gemini-2.5-flash",
+        "openrouter_model": gs.openrouter_model if gs else "deepseek/deepseek-chat",
         "openai_api_key": secrets.get("openai_api_key", ""),
         "gemini_api_key": secrets.get("gemini_api_key", ""),
+        "openrouter_api_key": secrets.get("openrouter_api_key", ""),
         # Multiple API keys
         "openai_api_keys": json.loads(gs.openai_api_keys) if gs and gs.openai_api_keys else [],
         "openai_active_key_index": gs.openai_active_key_index if gs else 0,
         "gemini_api_keys": json.loads(gs.gemini_api_keys) if gs and gs.gemini_api_keys else [],
         "gemini_active_key_index": gs.gemini_active_key_index if gs else 0,
+        "openrouter_api_keys": json.loads(gs.openrouter_api_keys) if gs and gs.openrouter_api_keys else [],
+        "openrouter_active_key_index": gs.openrouter_active_key_index if gs else 0,
+        "ghost_pin": gs.ghost_pin if gs else "03697",
     }
 
 @router.post("/global-context")
@@ -121,10 +132,16 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.openai_url is not None: gs.openai_url = req.openai_url
     if req.openai_model is not None: gs.openai_model = req.openai_model
     if req.gemini_model is not None: gs.gemini_model = req.gemini_model
+    if req.openrouter_model is not None: gs.openrouter_model = req.openrouter_model
+    if req.ghost_pin is not None: gs.ghost_pin = req.ghost_pin
     
     # Save secret keys safely to .env
-    if req.openai_api_key is not None or req.gemini_api_key is not None:
-        save_secrets(openai_api_key=req.openai_api_key, gemini_api_key=req.gemini_api_key)
+    if req.openai_api_key is not None or req.gemini_api_key is not None or req.openrouter_api_key is not None:
+        save_secrets(
+            openai_api_key=req.openai_api_key,
+            gemini_api_key=req.gemini_api_key,
+            openrouter_api_key=req.openrouter_api_key
+        )
     
     # Save multiple API keys
     if req.openai_api_keys is not None:
@@ -135,6 +152,10 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
         gs.gemini_api_keys = json.dumps(req.gemini_api_keys)
     if req.gemini_active_key_index is not None:
         gs.gemini_active_key_index = req.gemini_active_key_index
+    if req.openrouter_api_keys is not None:
+        gs.openrouter_api_keys = json.dumps(req.openrouter_api_keys)
+    if req.openrouter_active_key_index is not None:
+        gs.openrouter_active_key_index = req.openrouter_active_key_index
     
     db.commit()
     return {"status": "ok"}

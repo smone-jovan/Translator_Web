@@ -2,6 +2,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import LorebookEntry, Thread, GlobalSetting
 from services.hallucination_detector import HallucinationDetector
+from services.fidelity_checker import verify_translation_fidelity
+from services.prompt_templates import (
+    build_core_translation_guidelines,
+    build_translator_notes_instruction,
+    build_glossary_extraction_prompt,
+    build_relationship_extraction_prompt,
+    detect_primary_genre,
+    GLOBAL_CONTEXT_MAX_CHARS,
+    THREAD_CONTEXT_MAX_CHARS,
+    STYLE_GUIDE_MAX_CHARS,
+    GLOSSARY_NOTE_MAX_CHARS,
+    GLOSSARY_TERM_MAX_LENGTH,
+    GLOSSARY_MIN_TERM_LENGTH,
+)
+from services.ai.settings import get_context_scale_for_model
 
 class ContextEngine:
     """
@@ -9,12 +24,61 @@ class ContextEngine:
     """
 
     @staticmethod
+    def is_garbage_lorebook_entry(original_term: str | None, translated_term: str | None) -> bool:
+        """
+        Deteksi apakah entri glosarium tergolong berkualitas rendah / ampas.
+        Mengembalikan True jika entri harus diabaikan/disaring dari context prompt dan database.
+        """
+        if not original_term or not translated_term:
+            return True
+
+        orig = original_term.strip()
+        trans = translated_term.strip()
+
+        if not orig or not trans:
+            return True
+
+        orig_clean = orig.lower()
+        trans_clean = trans.lower()
+
+        # 1. Istilah terjemahan berupa teks placeholder / junk
+        junk_translations = {
+            "n/a", "none", "unknown", "null", "undefined", "no new terms",
+            "not specified", "not present", "not found", "no translation",
+            "same as original", "same", "no change", "tidak ada", "bukan di bab ini",
+            "context required", "no terms found", "untranslated", "n / a", "n/a."
+        }
+        if trans_clean in junk_translations or any(jk in trans_clean for jk in ["no new terms", "no terms found", "not specified"]):
+            return True
+
+        # 2. Istilah orisinil mengandung kata meta / instruksi AI
+        junk_originals = [
+            "translator note", "translator's note", "final list", "chapter title",
+            "author's note", "important note", "as requested", "see below", "notes", "summary"
+        ]
+        if any(jo in orig_clean for jo in junk_originals):
+            return True
+
+        # 3. Istilah Mandarin yang tidak diterjemahkan sama sekali (original == translated)
+        import re
+        chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
+        if chinese_pattern.search(orig) and orig == trans:
+            return True
+
+        # 4. Istilah hanya berisi angka
+        if orig.isdigit() or trans.isdigit():
+            return True
+
+        return False
+
+    @staticmethod
     def build_translation_prompt(
         db: Session,
         thread_id: int | None,
         target_lang: str,
         original_text: str | None = None,
-        translation_mode: str = "quality"
+        translation_mode: str = "quality",
+        model: str | None = None
     ) -> str:
         # Atur bahasa target (Indo atau Inggris)
         is_indo = target_lang.lower() == "indonesian"
@@ -22,80 +86,35 @@ class ContextEngine:
 
         # Mode-aware settings
         is_quality = translation_mode == "quality"
-        
-        guidelines = f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Chinese characters or pinyin allowed in the story output. (Exception: You MAY use Chinese characters in the Translator Notes at the very end if requested).
 
-Role:
-You are an expert translator of Chinese web novels (urban / system / transmigration).
-You must translate only the chapter body and title provided by the user.
-Do not add, remove, or summarize content. **DONT SUMMARY NOR CUT THE CHAPTER**.
-Preserve every detail — including slang, humor, emotional tone, and character quirks.
+        # Detect genre from thread (ADR-071)
+        genre = "default"
+        if thread_id:
+            thread_stmt = select(Thread).where(Thread.id == thread_id)
+            thread_obj = db.execute(thread_stmt).scalar_one_or_none()
+            if thread_obj:
+                genre = detect_primary_genre(thread_obj.genres, thread_obj.tags)
 
-IMPORTANT: Translate ALL story text to {lang_name}. Do NOT output Chinese, do NOT leave raw pinyin in the story.
+        # Build core guidelines from centralized templates (ADR-074)
+        guidelines = build_core_translation_guidelines(lang_name, genre)
 
-Objective:
-Translate the text from Chinese to natural, engaging, immersive {lang_name} — as if written by a native web novel author.
-Keep the original point of view, tense, and voice.
-Translate Chinese slang naturally, not literally.
-Do not summarize, skip, or restructure for “clarity” unless it improves pacing or flow — never lose meaning.
-
-[CORE ETHICS & RULES]:
-1. Context over Dictionary: Always deduce the entity type and domain from the provided context (e.g., surrounding text, sibling terms in a cluster). Prioritize structural alignment with existing translations over generic dictionary lookups.
-2. Translate vs Transliterate: Fully translate objects, artifacts, techniques, and fictional organizations into English. Keep character names and established real-world proper nouns romanized.
-3. World-Building Context: Do not blindly map terms to real-world locations if the text is a fantasy or historical setting (e.g., translate 京都 as 'The Capital' or 'Imperial Capital' rather than 'Kyoto' unless the context explicitly refers to the real-world city).
-4. Honorifics & Address: Follow source language norms. Translate Chinese honorifics to English (e.g., Senior Brother, Elder, Young Master). Retain common Japanese (e.g., -san, -senpai) and Korean (e.g., -ssi, sunbae) honorifics as romanized suffixes/words.
-
-Style Reference:
-- Translate Chinese slang to natural, immersive {lang_name} equivalents (e.g., system terms, cultivation ranks, or urban slang).
-- Maintain consistent character voices and mechanical system notifications.
-- Use standard novel formatting for dialogue and internal monologues.
-
-Style:
-Use smooth, active, web-novel {lang_name} — vivid, immersive, emotional.
-Preserve paragraph breaks where natural — don’t force them.
-Avoid machine-like long sentences. Break long Chinese sentences into 2–3 {lang_name} sentences if needed — preserve all meaning.
-
-Chinese Text Handling:
-Translate ALL Chinese characters and words to {lang_name} in the story.
-Do NOT leave any Chinese characters or raw pinyin in the main story text.
-
-Consistency & Glossary Priority:
-**STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
-- The Glossary is the ABSOLUTE LAW for this translation.
-- Even if a term has similar pinyin to something else, or if you think a different word fits better, you MUST use the exact translation from the Glossary.
-- Do NOT hallucinate or change established translations.
-
-Output Rules:
-Output ONLY the {lang_name} translation.
-No extra commentary, no summary, no conversational filler.
-Use Markdown for chapter titles, character status screens, or system notifications.
-Ensure double newlines between paragraphs for clear readability.
-If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
-Never output malformed token soup, mixed-script noise, isolated symbol clusters, or analysis phrases pretending to be translation.
-"""
-
-        # Tambahkan instruksi Translator Notes jika di mode Quality
-        if is_quality:
-            guidelines += f"""
-**ZERO TOLERANCE**: DO NOT include any term in "Translator Notes" that does not appear in the current chapter text. DO NOT mention terms to say they are "not present". If it's not in the chapter, it MUST NOT be in the notes.
-After the chapter, if needed, add a section starting EXACTLY with the phrase "### TRANSLATOR NOTES:" for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
-**FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
-Do NOT include terms from the Style Reference examples unless they are in the chapter.
-If no new terms, skip.
-STOP GENERATING immediately after you finish the Translator Notes list. Do NOT output anything else.
-"""
-        else:
-            guidelines += f"""
-Do NOT output any Translator Notes. STOP GENERATING immediately after the story ends. Do NOT output anything else.
-"""
+        # Tambahkan instruksi Translator Notes berdasarkan mode
+        guidelines += build_translator_notes_instruction(is_quality, lang_name)
 
         # Gabungkan semua context tambahan (Global & Thread-specific)
         full_prompt = guidelines + "\n\n### ADDITIONAL CONTEXT & KNOWLEDGE\n"
         
         gs_stmt = select(GlobalSetting)
         gs = db.execute(gs_stmt).scalar_one_or_none()
+
+        # Model-aware context scaling (ADR-075)
+        scale = get_context_scale_for_model(model)
+        gc_max = int(GLOBAL_CONTEXT_MAX_CHARS * scale)
+        tc_max = int(THREAD_CONTEXT_MAX_CHARS * scale)
+        sg_max = int(STYLE_GUIDE_MAX_CHARS * scale)
+
         if gs and gs.global_context:
-            gc_trunc = gs.global_context[:1000] + "... (truncated)" if len(gs.global_context) > 1000 else gs.global_context
+            gc_trunc = gs.global_context[:gc_max] + "... (truncated)" if len(gs.global_context) > gc_max else gs.global_context
             full_prompt += f"\n[Global Literary Style]:\n{gc_trunc}\n"
 
         if thread_id:
@@ -105,12 +124,12 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
             thread_stmt = select(Thread).where(Thread.id == thread_id)
             thread = db.execute(thread_stmt).scalar_one_or_none()
             if thread and thread.thread_context:
-                tc_trunc = thread.thread_context[:2000] + "... (truncated)" if len(thread.thread_context) > 2000 else thread.thread_context
+                tc_trunc = thread.thread_context[:tc_max] + "... (truncated)" if len(thread.thread_context) > tc_max else thread.thread_context
                 full_prompt += f"\n[Thread-Specific Context]:\n{tc_trunc}\n"
 
             # Style guide injection (Quality mode only)
             if is_quality and thread and thread.style_guide:
-                sg_trunc = thread.style_guide[:1000] + "... (truncated)" if len(thread.style_guide) > 1000 else thread.style_guide
+                sg_trunc = thread.style_guide[:sg_max] + "... (truncated)" if len(thread.style_guide) > sg_max else thread.style_guide
                 full_prompt += f"\n[Style Guide for This Novel]:\n{sg_trunc}\n"
 
             # Mode-aware glossary limit:
@@ -142,13 +161,16 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
             if entries:
                 terms_list = []
                 for e in entries:
+                    if ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term):
+                        continue
                     note = e.notes if e.notes else ""
-                    if note and len(note) > 150:
-                        note = note[:147] + "..."
+                    if note and len(note) > GLOSSARY_NOTE_MAX_CHARS:
+                        note = note[:GLOSSARY_NOTE_MAX_CHARS - 3] + "..."
                     terms_list.append(f"- {e.original_term} → {e.translated_term}" + (f" ({note})" if note else ""))
                 
-                terms = "\n".join(terms_list)
-                full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
+                if terms_list:
+                    terms = "\n".join(terms_list)
+                    full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
 
         return full_prompt
 
@@ -395,21 +417,29 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
-                # STRICT: Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
-                # dan panjangnya tidak boleh lebih dari 30 karakter. Ini 100% mencegah kalimat Bahasa Inggris tersimpan.
+                # Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
+                # ATAU merupakan pinyin term yang valid (2+ Latin words, maks 30 chars).
+                # Ini mencegah kalimat Bahasa Inggris panjang tersimpan, tapi mengizinkan
+                # nama-nama pinyin seperti "Ye Xiu", "Meng Hao" (penting untuk konsistensi novel kelas atas).
                 chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-                if not chinese_pattern.search(term) or len(term) > 30:
+                has_chinese = chinese_pattern.search(term)
+                # Pinyin heuristic: 2-4 short words, each capitalized, total <= 30 chars
+                pinyin_pattern = re.compile(r"^[A-Z][a-z]{0,8}(\s[A-Z][a-z]{0,8}){0,3}$")
+                is_valid_pinyin = bool(pinyin_pattern.match(term)) and len(term) <= GLOSSARY_TERM_MAX_LENGTH
+                if not has_chinese and not is_valid_pinyin:
+                    continue
+                if len(term) > GLOSSARY_TERM_MAX_LENGTH:
                     continue
 
-                if len(term) > 1:
+                if len(term) >= GLOSSARY_MIN_TERM_LENGTH:
                     term_clean = term.lower()
                     
                     # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
                     if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
                         continue
                         
-                    # Skip jika term merupakan metadata / teks instruksi AI
-                    if any(gk in term_clean for gk in garbage_keywords):
+                    # Skip jika term merupakan metadata / teks instruksi AI atau ampas
+                    if any(gk in term_clean for gk in garbage_keywords) or ContextEngine.is_garbage_lorebook_entry(term, desc):
                         continue
                         
                     # Cegah duplikasi di dalam respon AI yang sama (internal deduplication)
@@ -429,10 +459,12 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
                         final_translated = desc
                         final_notes = f"Auto-extracted: {term}"
 
-                        if "(" in desc and desc.endswith(")"):
-                            p_start = desc.rfind("(")
-                            final_translated = desc[:p_start].strip()
-                            final_notes = f"{desc[p_start+1:-1].strip()} (Auto-extracted)"
+                        # Strip trailing punctuation sebelum cek kurung tutup
+                        desc_check = desc.rstrip('.!;,。！ ')
+                        if "(" in desc_check and desc_check.endswith(")"):
+                            p_start = desc_check.rfind("(")
+                            final_translated = desc_check[:p_start].strip()
+                            final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
 
                         new_entry = LorebookEntry(
                             thread_id=thread_id,
@@ -455,20 +487,7 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
         from database import GlobalSetting
         from sqlalchemy import select
 
-        sys_prompt = (
-            "You are a literary analyst and terminology expert. \n"
-            "Task: Extract key names, locations, cultivation techniques, sects, clans, buildings, and unique terms from the provided Chinese text.\n"
-            f"CRITICAL LANGUAGE RULE: ALL output — translated terms, notes, and context descriptions — MUST be written in {target_lang}. NEVER output notes or descriptions in Chinese.\n"
-            "MANDATORY RULE FOR CONTEXT/NOTES: Your brief context MUST explicitly explain relationships. If it is a person, state who they are connected to. If it is a place/sect/building, state its location or affiliated faction.\n"
-            "Format your output EXACTLY starting with the header '### TRANSLATOR NOTES:', followed by a list like this:\n"
-            "### TRANSLATOR NOTES:\n"
-            f"- 原本术语 → Translated Term ({target_lang} context explicitly stating relationships/affiliations)\n"
-            "Example:\n"
-            "### TRANSLATOR NOTES:\n"
-            "- 宁凡 → Ning Fan (Main Character, Disciple of Old Demon) \n"
-            "- 天云宗 → Heavenly Cloud Sect (Rival sect located in the Northern Region)\n"
-            "If no important terms, output: '### TRANSLATOR NOTES:\nNo new terms found.'"
-        )
+        sys_prompt = build_glossary_extraction_prompt(target_lang)
         
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
@@ -496,14 +515,7 @@ Do NOT output any Translator Notes. STOP GENERATING immediately after the story 
         import json
         import re
 
-        sys_prompt = (
-            "You are an expert literary analyst mapping out character relationships in a Chinese web novel.\n"
-            "Task: Identify any interpersonal relationships, factions, or affiliations between characters mentioned in the text.\n"
-            "Format your output STRICTLY as a JSON array of objects, with no markdown formatting or extra text.\n"
-            f"CRITICAL: For 'source', 'target', 'type', and 'notes' fields, you MUST write ALL values in {target_lang}. NEVER output Chinese characters in any field. The audience reads {target_lang} only.\n"
-            'Example:\n[\n  {"source": "Ning Fan", "target": "Old Demon", "type": "Master & Disciple", "notes": "Ning Fan learns cultivation from the old demon"}\n]\n'
-            "If no relationships are found, output an empty array: []"
-        )
+        sys_prompt = build_relationship_extraction_prompt(target_lang)
 
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()

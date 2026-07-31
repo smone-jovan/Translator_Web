@@ -1,10 +1,10 @@
 # ADR-043: Centralized Settings State Management
 
 ## Status
-Accepted
+Accepted (partially implemented)
 
 ## Date
-2026-05-30
+2026-05-30 (original) / 2026-06-15 (updated to reflect current state)
 
 ## Context
 Settings values (AI provider, model, language, token caps, prefetch range, theme, etc.) are currently read from `localStorage` independently in multiple components:
@@ -33,13 +33,21 @@ SettingsContext (React Context)
 └── loading/error states
 ```
 
-### Implementation
-1. Create `src/contexts/SettingsContext.tsx` with a `SettingsProvider` component.
-2. Define a `Settings` TypeScript interface matching the backend `global_settings` schema.
-3. On mount, fetch settings from `GET /api/settings` and populate context.
-4. Expose `updateSetting()` that updates local state immediately (optimistic) and calls `PUT /api/settings` in background.
-5. Wrap the app root in `<SettingsProvider>` in `App.tsx`.
-6. Replace all direct `localStorage.getItem()` calls with `useSettings()` hook.
+### Current Implementation Status
+A React Context-based provider was **not** implemented. Instead, the codebase uses a **dual-persistence pattern**:
+- **Frontend:** Component-local `useState` hooks in `SettingsPage.tsx` (lines 129-144, 186-200) with `localStorage` as persistence via `useEffect` hooks (lines 345-352)
+- **Backend:** `POST /api/settings` (line 304-307) and `GET /api/global-context` (line 207) for server-side sync
+- **Cross-component reads:** Other components (ReaderPage, TranslatePage, ContextLibraryPage) read settings directly from `localStorage`
+
+This pattern works but has the sync limitations originally identified (components may read stale values until navigation/refresh).
+
+### Original Implementation Plan
+1. ~~Create `src/contexts/SettingsContext.tsx` with a `SettingsProvider` component.~~
+2. ~~Define a `Settings` TypeScript interface matching the backend `global_settings` schema.~~
+3. ~~On mount, fetch settings from `GET /api/settings` and populate context.~~
+4. ~~Expose `updateSetting()` that updates local state immediately (optimistic) and calls `PUT /api/settings` in background.~~
+5. ~~Wrap the app root in `<SettingsProvider>` in `App.tsx`.~~
+6. ~~Replace all direct `localStorage.getItem()` calls with `useSettings()` hook.~~
 7. Keep `localStorage` as a fallback cache for offline/fast-initial-load only.
 
 ### Settings Interface
@@ -61,17 +69,17 @@ interface Settings {
 ### Zustand / Jotai (external state library)
 - **Pros**: Purpose-built state management with devtools.
 - **Cons**: Additional dependency for a single settings context; React Context is sufficient for this use case.
-- **Rejected**: Over-engineering for a single global state slice.
+- **Status: Not chosen** — localStorage + API pattern was retained instead.
 
 ### Keep localStorage + custom hook
 - **Pros**: No context overhead, works offline by default.
 - **Cons**: Still has sync issues between components; no optimistic update pattern.
-- **Rejected**: Doesn't solve the core sync problem.
+- **Status: Current approach** — Each component reads settings from localStorage with component-local useState. Backend sync via POST/GET /api/settings.
 
 ## Consequences
-- **Positive:** Single source of truth for all settings across the app.
-- **Positive:** Type-safe settings access via `useSettings()` hook.
-- **Positive:** Settings changes propagate instantly to all consuming components.
-- **Positive:** Testable in isolation -- can mock the context for unit tests.
-- **Negative/Risk:** Requires wrapping the app in a provider (minimal boilerplate).
-- **Negative/Risk:** Need to handle the initial load state (settings not yet fetched) gracefully.
+- **Positive:** localStorage provides fast offline-first initial load
+- **Positive:** Backend API sync ensures settings persist across devices/sessions
+- **Negative:** No shared reactive state — settings changes in SettingsPage may not be immediately reflected in other components until navigation/refresh
+- **Negative:** Each component has its own localStorage.getItem() + JSON parse + fallback logic (duplicate code)
+- **Negative:** No TypeScript type safety for raw localStorage access
+- **Negative/Risk:** React Context-based centralization (original plan) remains a future improvement opportunity

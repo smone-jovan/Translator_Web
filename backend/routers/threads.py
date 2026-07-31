@@ -7,7 +7,7 @@ GET /api/threads/{id}/chapters/{chapter_id} — single chapter content
 """
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from typing import List, Optional
@@ -28,9 +28,9 @@ class ChapterOut(BaseModel):
     has_translation: bool
     translation_status: str
     is_bookmarked: bool = False
+    fidelity_warning: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ThreadItemOut(BaseModel):
@@ -65,8 +65,7 @@ class TranslationSegmentOut(BaseModel):
     translated_text: Optional[str]
     display_mode: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChapterContent(BaseModel):
@@ -80,6 +79,7 @@ class ChapterContent(BaseModel):
     source_url: Optional[str] = None
     scroll_progress: float = 0.0
     is_bookmarked: bool = False
+    fidelity_warning: Optional[str] = None
     segments: List[TranslationSegmentOut] = []
 
 class HallucinationMatchOut(BaseModel):
@@ -125,6 +125,13 @@ class CleanupPreviewResponse(BaseModel):
     deleted_chapter_ids: List[int]
     cleaned_text: str
 
+class ThreadUpdatePayload(BaseModel):
+    title: str | None = None
+    original_title: str | None = None
+    genres: str | None = None
+    tags: str | None = None
+    author: str | None = None
+    synopsis: str | None = None
 
 @router.get("/threads", response_model=List[ThreadItemOut])
 def list_threads(db: Session = Depends(get_db)):
@@ -174,6 +181,60 @@ def list_threads(db: Session = Depends(get_db)):
             progress=progress
         ))
     return result
+
+
+@router.patch("/threads/{thread_id}")
+def update_thread(thread_id: int, payload: ThreadUpdatePayload, db: Session = Depends(get_db)):
+    """Edit thread metadata: title, genres, tags, author, synopsis."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    if payload.title is not None:
+        thread.title = payload.title
+    if payload.original_title is not None:
+        thread.original_title = payload.original_title
+    if payload.genres is not None:
+        thread.genres = payload.genres
+    if payload.tags is not None:
+        thread.tags = payload.tags
+    if payload.author is not None:
+        thread.author = payload.author
+    if payload.synopsis is not None:
+        thread.synopsis = payload.synopsis
+    db.commit()
+    return {"status": "updated", "thread_id": thread_id}
+
+
+@router.get("/threads/{thread_id}/context")
+def get_thread_context(thread_id: int, db: Session = Depends(get_db)):
+    """Get thread-level context (thread_context + style_guide) for Context Library page."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    return {
+        "thread_context": thread.thread_context or "",
+        "style_guide": thread.style_guide or "",
+        "genres": thread.genres or "",
+        "tags": thread.tags or "",
+    }
+
+
+@router.post("/threads/{thread_id}/context")
+def save_thread_context(thread_id: int, body: dict, db: Session = Depends(get_db)):
+    """Save thread-level context."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    if "context" in body:
+        thread.thread_context = body["context"]
+    if "style_guide" in body:
+        thread.style_guide = body["style_guide"]
+    db.commit()
+    return {"status": "saved"}
 
 
 @router.get("/threads/active-batch")
@@ -255,7 +316,9 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
             title_translated=c.title_translated,
             word_count=len((c.content_original or "").split()),
             has_translation=bool(c.content_translated),
-            translation_status=c.translation_status
+            translation_status=c.translation_status,
+            is_bookmarked=c.is_bookmarked,
+            fidelity_warning=c.fidelity_warning
         )
         for c in chapters
     ]
@@ -628,6 +691,7 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
         source_url=chapter.source_url,
         scroll_progress=current_scroll_progress,
         is_bookmarked=chapter.is_bookmarked,
+        fidelity_warning=chapter.fidelity_warning,
         segments=[
             TranslationSegmentOut(
                 id=s.id,
@@ -642,7 +706,10 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
 
 @router.post("/threads/{thread_id}/fix-truncated")
 def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
-    """Detect and reset translations that were cut off mid-sentence."""
+    """Detect and reset translations that were cut off mid-sentence.
+    Uses fidelity_checker.is_truncated_mid_sentence as the single source of truth."""
+    from services.fidelity_checker import is_truncated_mid_sentence
+
     stmt = select(Thread).where(Thread.id == thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
@@ -656,10 +723,7 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
         if not trans.strip() or len(orig) == 0:
             continue
 
-        last = trans.rstrip()[-1:] if trans.strip() else ''
-        ends_properly = last in '.!??"」』~*-)\u2026'
-
-        if not ends_properly:
+        if is_truncated_mid_sentence(trans):
             chapter.content_translated = None
             # Preserve translated title - only reset content
             chapter.translation_status = "idle"
@@ -670,25 +734,37 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/threads/{thread_id}/translations")
-def delete_all_translations(thread_id: int, db: Session = Depends(get_db)):
+async def delete_all_translations(thread_id: int, db: Session = Depends(get_db)):
     """Delete all translated content for a thread. Original text is preserved."""
     stmt = select(Thread).where(Thread.id == thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
 
-    affected = 0
-    for chapter in thread.chapters:
-        has_translation = chapter.content_translated or chapter.title_translated or chapter.translation_status == "done"
-        if has_translation:
-            chapter.content_translated = None
-            chapter.title_translated = None
-            chapter.translation_status = "idle"
-            affected += 1
-        for seg in list(chapter.segments):
-            db.delete(seg)
+    # Cancel any running batch translation first to prevent database conflicts
+    from services.background_translator import BackgroundTranslator
+    await BackgroundTranslator.stop_batch(thread_id)
 
+    from sqlalchemy import update, delete
+
+    # Bulk delete segments to avoid N+1 queries
+    ch_ids_stmt = select(Chapter.id).where(Chapter.thread_id == thread_id)
+    db.execute(delete(TranslationSegment).where(TranslationSegment.chapter_id.in_(ch_ids_stmt)))
+
+    # Bulk update chapters to clear translations
+    result = db.execute(
+        update(Chapter)
+        .where(Chapter.thread_id == thread_id)
+        .where((Chapter.content_translated != None) | (Chapter.title_translated != None) | (Chapter.translation_status != "idle"))
+        .values(
+            content_translated=None,
+            title_translated=None,
+            translation_status="idle"
+        )
+    )
+    affected = result.rowcount
     db.commit()
+
     return {"chapters_affected": affected}
 
 
@@ -744,7 +820,22 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
         raise HTTPException(404, "Chapter not found")
         
     from services.context_engine import ContextEngine
-    chapter.content_translated = ContextEngine.clean_final_translation(body.translated_text, always_hide_thoughts=True)
+    from services.fidelity_checker import verify_translation_fidelity
+    
+    cleaned_translation = ContextEngine.clean_final_translation(body.translated_text, always_hide_thoughts=True)
+    chapter.content_translated = cleaned_translation
+    
+    fidelity = verify_translation_fidelity(
+        chapter.content_original or "", cleaned_translation, chapter_id=chapter_id
+    )
+    if fidelity["is_suspicious"]:
+        chapter.fidelity_warning = (
+            f"Suspicious translation structure: Original has {fidelity['original_paragraphs']} paragraphs, "
+            f"Translated has {fidelity['translated_paragraphs']} paragraphs (ratio: {fidelity['paragraph_ratio']:.2f})."
+        )
+    else:
+        chapter.fidelity_warning = None
+        
     db.commit()
     return {"status": "saved"}
 
@@ -765,6 +856,12 @@ def update_chapter_scroll(thread_id: int, chapter_id: int, payload: ScrollUpdate
         bookmark.scroll_progress = payload.scroll_progress
     db.commit()
     return {"status": "success", "scroll_progress": bookmark.scroll_progress}
+
+
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/progress")
+def save_chapter_progress(thread_id: int, chapter_id: int, payload: ScrollUpdatePayload, db: Session = Depends(get_db)):
+    """Alias for scroll save — frontend uses POST /progress, backend canonical is PUT /scroll."""
+    return update_chapter_scroll(thread_id, chapter_id, payload, db)
 
 class BookmarkedChapterOut(BaseModel):
     id: int

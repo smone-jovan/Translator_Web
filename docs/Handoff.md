@@ -12,7 +12,7 @@
 * **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
 * **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
 * **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
-* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, and Google Gemini cloud models with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, Quality/Fast translation mode, and auto-continue for truncated translations.
+* **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, Google Gemini cloud models, and OpenRouter AI (`https://openrouter.ai/api/v1`) with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, Quality/Fast translation mode, and auto-continue for truncated translations.
 
 ### 🔌 Sandbox Port Assignments
 * **Vite Frontend:** `http://localhost:5173` (Staged to allow LAN sharing `--host` to read on mobile devices).
@@ -34,11 +34,13 @@
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
 │   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
-│   │   ├── polish.py           # Title polishing endpoints & TOC skip logic
+│   │   ├── polish.py           # Title polishing (NDJSON streaming, HARD/SOFT mode) & TOC skip logic
 │   │   ├── relationships.py    # Character relationship graph extraction & D3 data
 │   │   ├── scrape.py           # URL crawling interface using Crawl4AI
 │   │   ├── settings.py         # Server-side persistent settings sync & API key management
+│   │   ├── system.py           # Workspace switching (Ghost Mode) with PIN authentication (ADR-068)
 │   │   ├── threads.py          # Thread/Chapter CRUD, delete chapter, fix-truncated, batch translation, metadata scraping
+│   │   ├── toc.py              # TOC scraping & bulk chapter import pipeline (ADR-069)
 │   │   ├── tools.py            # Utility endpoints (hallucination check, TXT/EPUB cleaners, cleanup preview)
 │   │   └── translate.py        # Single chapter translation & streaming endpoints
 │   ├── services/
@@ -89,7 +91,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-004 through ADR-049)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-070)
 ```
 
 ---
@@ -120,6 +122,19 @@ erDiagram
         string status_coo
         text synopsis
         text thread_context
+        text style_guide
+        datetime created_at
+    }
+    
+    Thread ||--o{ CharacterRelationship : has
+    
+    CharacterRelationship {
+        int id PK
+        int thread_id FK
+        string char_a
+        string char_b
+        string relationship
+        string notes
         datetime created_at
     }
     
@@ -249,12 +264,13 @@ Long chapter translation now uses a configurable guardrail instead of a single h
 * **Scope:** Applies to manual chapter translate, re-translate, streaming chapter translate, background prefetch, and batch-per-chapter translation. It does not apply to title polish, glossary extraction, or metadata scraping.
 * **Intent:** Reduce hallucination drift and wasted token burn on long chapter translations while preserving an uncapped escape hatch for power users with unusually large chapters.
 
-### G. Markdown Formatting Support (ADR-038)
-Basic Markdown formatting is supported natively in both the interactive Reader UI and the exported EPUBs.
+### G. Markdown & HTML Rendering Support (ADR-038 + ADR-067)
+Markdown and embedded HTML are supported natively in both the interactive Reader UI and the exported EPUBs.
 
-* **Supported Markdown:** Bold (`**text**`) and Italic (`*text*`).
+* **Supported Markdown:** Bold (`**text**`), Italic (`*text*`), and Images (`![alt](url)`).
+* **HTML Image Tags (ADR-067):** Raw `<img src="...">` tags (common in SFACG chapters) are parsed and rendered as actual images. The regex splitter in `renderMarkdown()` extracts `src` and `alt` attributes and creates React `<img>` elements. Relative paths are prefixed with `API_BASE`.
+* **AI Preservation Rule:** The translation prompt in `context_engine.py` includes an explicit "HTML TAGS PRESERVATION" rule — AI must preserve `<img>` tags exactly as-is during translation.
 * **Implementation:** Lightweight regex-based parsing without heavy external AST dependencies.
-* **Reader UI:** `renderMarkdown` utility dynamically transforms strings into React elements (`<strong>`, `<em>`) inside the text component.
 * **EPUB Export:** `clean_html_content` injects `<strong>` and `<em>` tags directly into the EPUB HTML structure after necessary `< >` escaping.
 
 ### H. Mobile-Friendly Notifications & Confirmations (ADR-039)
@@ -270,6 +286,50 @@ Two quality-of-life endpoints for chapter management:
 
 * **Fix Truncated** (`POST /api/threads/{id}/fix-truncated`): Scans all translated chapters in a thread. If a translation doesn't end with proper punctuation (`.!??"」』~*-)...`), it resets that chapter's translation to `idle` so it can be re-translated. Returns `{ "reset": <count> }`.
 * **Delete Chapter** (`DELETE /api/threads/{id}/chapters/{chapter_id}`): Removes a single chapter and automatically re-orders remaining chapters to maintain sequential numbering. Available in the ChapterGrid UI via a delete button with confirmation dialog.
+
+### J. Cloudflare & AI Safety Filter Handling (ADR-050)
+Robust error handling for cloud-specific failures:
+
+* **Cloudflare 403/503 Detection:** Scraper and AI endpoints detect Cloudflare challenge pages and report them as actionable errors rather than silent failures.
+* **AI Content Filters:** Provider-level content blocks (e.g., Gemini's `PROHIBITED_CONTENT`) are treated as per-chapter hard failures, not infinite retry loops. Users are advised to switch providers for affected chapters.
+
+### K. Swappable AI Provider Architecture (ADR-029 + ADR-030)
+The AI subsystem uses a factory pattern for seamless provider switching:
+
+* **`AIProviderFactory.get_provider()`** resolves the active provider from `GlobalSetting.llm_provider` and returns the appropriate adapter (LM Studio, OpenAI, or Gemini).
+* **Gemini Model Normalization (ADR-030):** Popular shorthand names (e.g., `gemma-4-31b`, `gemini-3-flash`) are mapped to their correct API identifiers. Thinking mode is automatically disabled for incompatible models.
+* **Multi-Key Rotation (`secrets.py`):** Multiple API keys per provider with automatic round-robin rotation and temporary exhaustion memory (keys that hit rate limits are excluded for a cooldown period).
+
+### L. Workspace Switching — Ghost Mode (ADR-068)
+A privacy feature that provides complete data isolation through dual SQLite databases:
+
+* **Architecture:** Two physically separate databases (`main.db` and ghost workspace DB). All data (novels, translations, glossaries) is fully isolated.
+* **PIN Protection:** Switching requires entering PIN `03697` via a long-press on the profile icon.
+* **Safety:** `BackgroundTranslator.stop_all_batches()` is called before any switch to prevent in-flight translations from writing to the wrong database.
+* **Endpoints:**
+  * `GET /api/system/workspace/current` — returns current workspace
+  * `POST /api/system/workspace` — switches workspace (requires PIN)
+
+### M. TOC Scraper & Bulk Import Pipeline (ADR-069)
+Two-phase novel onboarding from any web source:
+
+* **Phase 1 — TOC Scraping** (`POST /api/threads/scrape-toc`): Accepts any URL and uses heuristic detection (link density, chapter URL patterns, Chinese chapter markers like 第X章) to extract chapter links. Auto-follows dedicated TOC pages when fewer than 50 chapters are found.
+* **Phase 2 — Bulk Import** (`POST /api/threads/bulk-import-toc`): Creates Chapter records with URLs only — content is scraped lazily on-demand. For SFACG sources, novel metadata (author, synopsis, cover) is auto-fetched.
+* **Deduplication:** Chapters whose URLs already exist in the thread are skipped.
+
+### N. Streaming Polish via NDJSON (ADR-066)
+The title polish endpoint was refactored from synchronous JSON to NDJSON streaming to prevent HTTP timeouts on large novels (1000+ chapters):
+
+* **NDJSON Protocol:** Each chunk yields `{"status": "processing", "chunk": N, "total": M}`, final message is `{"status": "done", "count": X}`.
+* **HARD vs SOFT Mode:** HARD mode skips inter-chunk delays for maximum throughput. SOFT mode retains 1-second delays to respect API rate limits.
+* **Frontend Consumer:** `ReaderPage.tsx` reads the stream body via `ReadableStream` reader to keep the HTTP connection alive.
+
+### O. Context Extraction Prompt Hardening (ADR-070)
+The AI glossary extraction prompt and parser were hardened to improve entry quality:
+
+* **Prompt Improvements:** 4 mandatory rules (context required, no generic descriptions, no trailing period after `)`, one entry per line), 3 good examples, 3 bad examples.
+* **Parser Bug Fix:** `desc.rstrip('.!;,。！ ')` before `endswith(")")` check — fixes entries like `(context).` that previously failed to split `translated_term` from `notes`.
+* **Per-Novel Style Guide:** Quality mode injects `thread.style_guide` (up to 1000 chars) into the translation prompt for novel-specific tone and style control.
 
 ---
 
@@ -290,7 +350,7 @@ Every code change must adhere to the highest standard of type checking and compi
 
 Here are the immediate strategic features you are tasked to build next:
 
-Recent completed platform work before these roadmap items:
+Recent completed platform work (ADR-034 through ADR-070):
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 - ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging
@@ -307,6 +367,30 @@ Recent completed platform work before these roadmap items:
 - ADR-047: Quality/Fast translation mode — Quality mode for cloud (full glossary, style guide), Fast mode for local LLMs (10K token cap)
 - ADR-048: cleanup logic hardening — improved ad detection, false chapter filtering, merge safety
 - ADR-049: batch worker reliability — retry logic for rate limits (429/503), exponential backoff, empty stream defense
+- ADR-050: Cloudflare and AI safety filter handling with actionable error messages
+- ADR-051: core architecture documentation
+- ADR-052: stability and batch optimization improvements
+- ADR-053: context-aware glossary management with usage-based ranking
+- ADR-054: configurable prefetch range for background translation
+- ADR-055: mobile-responsive navigation with bottom nav bar
+- ADR-056: chapter bookmarks with last-read tracking
+- ADR-057: auto-fetch next web chapter on-demand
+- ADR-058: background task garbage collection protection
+- ADR-059: Novel Updates Cloudflare bypass via curl-cffi
+- ADR-060: React UI reactivity via lastFetchedStatusRef pattern
+- ADR-061: bulk fetch with RPM-aware key scaling
+- ADR-062: temporary API key exhaustion memory with cooldown
+- ADR-063: context engine glossary prompt fix (initial)
+- ADR-064: local LLM context length safeguards
+- ADR-065: UI performance with React.memo, react-virtuoso, and progressive rendering
+- ADR-066: streaming polish via NDJSON — prevents HTTP timeout on 1000+ chapter novels
+- ADR-067: HTML `<img>` tag preservation in translation pipeline (extends ADR-038)
+- ADR-068: workspace switching (Ghost Mode) with PIN-protected dual databases
+- ADR-069: TOC scraper and bulk chapter import from any web source
+- ADR-070: context extraction prompt hardening with good/bad examples and parser bug fix
+- ADR-085: mobile screen sleep recovery via `sessionStorage` caching & `visibilitychange` wake listeners; continuous `displayMode` persistence
+- ADR-086: text-only Gemini & Gemma model catalog refresh with updated RPM/RPD rate-limit delays
+- ADR-087: garbage glossary entry filtering (`is_garbage_lorebook_entry`) in prompt builder and auto-save persistence
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

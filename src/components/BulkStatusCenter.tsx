@@ -17,6 +17,7 @@ import Sync from '@mui/icons-material/Sync';
 import StopCircle from '@mui/icons-material/StopCircle';
 import Error from '@mui/icons-material/Error';
 import { getApiUrl } from '@/lib/api';
+import { useConfirm } from '@/hooks/use-confirm';
 
 interface BatchStatus {
   active: boolean;
@@ -24,6 +25,7 @@ interface BatchStatus {
   thread_title: string;
   total: number;
   completed: number;
+  current_chapter_id: number | null;
   current_chapter_title: string;
   failed_ids: number[];
   quota_exhausted: boolean;
@@ -34,6 +36,7 @@ interface BatchStatus {
 }
 
 export default function BulkStatusCenter() {
+  const { confirm } = useConfirm();
   const [isOpen, setIsOpen] = useState(true);
   const [status, setStatus] = useState<BatchStatus>({
     active: false,
@@ -132,7 +135,13 @@ export default function BulkStatusCenter() {
 
   const handleStop = async () => {
     if (!status.thread_id) return;
-    if (!confirm('Are you sure you want to stop the batch translation? The current chapter will finish translating, and subsequent chapters will be cancelled.')) return;
+    const isConfirmed = await confirm({
+      title: "Stop Batch Translation",
+      description: "Are you sure you want to stop the batch translation? The current chapter will finish translating, and subsequent chapters will be cancelled.",
+      confirmText: "Stop Batch",
+      cancelText: "Cancel",
+    });
+    if (!isConfirmed) return;
     
     try {
       const res = await fetch(getApiUrl(`/api/threads/${status.thread_id}/batch-stop`), {

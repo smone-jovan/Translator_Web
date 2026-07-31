@@ -4,7 +4,7 @@ from sqlalchemy import select
 from typing import List
 
 from database import get_db, CharacterRelationship, Thread
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api", tags=["Relationships"])
 
@@ -16,8 +16,7 @@ class RelationshipResponse(BaseModel):
     relationship_type: str
     notes: str | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.get("/threads/{thread_id}/relationships", response_model=List[RelationshipResponse])
 def get_relationships(thread_id: int, db: Session = Depends(get_db)):

@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, type ElementType } from 'react';
+import { useState, useEffect, useCallback, useRef, type ElementType } from 'react';
 import { 
   Wifi, WifiOff, Server, RefreshCw, Moon, Sun, 
-  CheckCircle2, Languages, Eye, EyeOff, Layout, ShieldCheck, Database, Info, Globe, Sparkles
+  CheckCircle2, Languages, Eye, EyeOff, Layout, ShieldCheck, Database, Info, Globe, Sparkles, User, X
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,17 +11,30 @@ import ApiKeyManager from '@/components/ApiKeyManager';
 
 const POPULAR_OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-mini'];
 
-// Text-out models only, with free tier info (RPD > 0 = free available)
+const POPULAR_OPENROUTER_MODELS = [
+  'deepseek/deepseek-chat',
+  'deepseek/deepseek-r1',
+  'anthropic/claude-3.5-sonnet',
+  'google/gemini-2.5-flash',
+  'meta-llama/llama-3.3-70b-instruct',
+  'qwen/qwen-2.5-72b-instruct'
+];
+
+// Text-out models only (filtered for novel translation LLMs)
 const GEMINI_MODELS = [
   { id: 'gemini-3.1-flash-lite', free: true, rpm: 15, rpd: 500 },
-  { id: 'gemini-2.5-flash-lite', free: true, rpm: 10, rpd: 20 },
-  { id: 'gemini-2.5-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemini-3-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemini-3.5-flash-lite', free: true, rpm: 15, rpd: 500 },
+  { id: 'gemma-4-31b', free: true, rpm: 30, rpd: 14400 },
+  { id: 'gemma-4-26b', free: true, rpm: 30, rpd: 14400 },
+  { id: 'gemini-3.6-flash', free: true, rpm: 5, rpd: 20 },
   { id: 'gemini-3.5-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemma-4-31b', free: true, rpm: 15, rpd: 1500 },
-  { id: 'gemma-4-26b', free: true, rpm: 15, rpd: 1500 },
-  { id: 'gemini-2.5-pro', free: false, rpm: 0, rpd: 0 },
+  { id: 'gemini-3-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemini-2.5-flash', free: true, rpm: 5, rpd: 20 },
+  { id: 'gemini-2.5-flash-lite', free: true, rpm: 10, rpd: 20 },
   { id: 'gemini-3.1-pro', free: false, rpm: 0, rpd: 0 },
+  { id: 'gemini-2.5-pro', free: false, rpm: 0, rpd: 0 },
+  { id: 'gemini-2-flash', free: false, rpm: 0, rpd: 0 },
+  { id: 'gemini-2-flash-lite', free: false, rpm: 0, rpd: 0 },
 ];
 
 const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map(m => m.id);
@@ -32,10 +45,10 @@ interface ModelInfo {
   object: string;
 }
 
-type LlmProvider = 'lm_studio' | 'openai' | 'gemini';
+type LlmProvider = 'lm_studio' | 'openai' | 'gemini' | 'openrouter';
 
 function isLlmProvider(value: string | null): value is LlmProvider {
-  return value === 'lm_studio' || value === 'openai' || value === 'gemini';
+  return value === 'lm_studio' || value === 'openai' || value === 'gemini' || value === 'openrouter';
 }
 
 const ThemeCard = ({ 
@@ -144,6 +157,44 @@ export default function SettingsPage() {
   const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(() => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Profile / Secret Modal (Mobile)
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startPress = () => {
+    pressTimer.current = setTimeout(() => {
+      setShowPinModal(true);
+    }, 10000); // 10 seconds
+  };
+
+  const endPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
+  const handlePinSubmit = async () => {
+    try {
+      const res = await fetch(getApiUrl('/api/system/workspace'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: 'toggle', pin: pinInput })
+      });
+      if (!res.ok) {
+        setPinError(true);
+        setPinInput('');
+        return;
+      }
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+      setPinError(true);
+    }
+  };
+
   // Cloud & swappable LLM states (ADR-029)
   const [llmProvider, setLlmProvider] = useState<LlmProvider>(() => {
     const saved = localStorage.getItem('llm_provider');
@@ -152,17 +203,28 @@ export default function SettingsPage() {
   const [openaiUrl, setOpenaiUrl] = useState(() => localStorage.getItem('openai_url') || 'https://api.openai.com/v1');
   const [openaiModel, setOpenaiModel] = useState(() => localStorage.getItem('openai_model') || 'gpt-4o');
   const [geminiModel, setGeminiModel] = useState(() => localStorage.getItem('gemini_model') || 'gemini-2.5-flash');
+  const [openrouterModel, setOpenrouterModel] = useState(() => localStorage.getItem('openrouter_model') || 'deepseek/deepseek-chat');
   const [openaiApiKey, setOpenaiApiKey] = useState(() => localStorage.getItem('openai_api_key') || '');
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+  const [openrouterApiKey, setOpenrouterApiKey] = useState(() => localStorage.getItem('openrouter_api_key') || '');
   
   // Multiple API keys
   const [geminiApiKeys, setGeminiApiKeys] = useState<string[]>([]);
   const [geminiActiveKeyIndex, setGeminiActiveKeyIndex] = useState(0);
   const [openaiApiKeys, setOpenaiApiKeys] = useState<string[]>([]);
   const [openaiActiveKeyIndex, setOpenaiActiveKeyIndex] = useState(0);
+  const [openrouterApiKeys, setOpenrouterApiKeys] = useState<string[]>([]);
+  const [openrouterActiveKeyIndex, setOpenrouterActiveKeyIndex] = useState(0);
   // UI password toggles
   const [showOpenaiKey, setShowOpenaiKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showOpenrouterKey, setShowOpenrouterKey] = useState(false);
+
+  // Ghost Mode PIN State
+  const [ghostPin, setGhostPin] = useState(() => localStorage.getItem('ghost_pin') || '03697');
+  const [newGhostPinInput, setNewGhostPinInput] = useState('');
+  const [showGhostPinText, setShowGhostPinText] = useState(false);
+  const [ghostPinStatus, setGhostPinStatus] = useState<string | null>(null);
 
   const fetchGlobalSettings = useCallback(async () => {
     try {
@@ -192,6 +254,10 @@ export default function SettingsPage() {
         setGeminiModel(data.gemini_model);
         localStorage.setItem('gemini_model', data.gemini_model);
       }
+      if (data.openrouter_model) {
+        setOpenrouterModel(data.openrouter_model);
+        localStorage.setItem('openrouter_model', data.openrouter_model);
+      }
       if (data.openai_api_key !== undefined) {
         setOpenaiApiKey(data.openai_api_key);
         localStorage.setItem('openai_api_key', data.openai_api_key);
@@ -199,6 +265,14 @@ export default function SettingsPage() {
       if (data.gemini_api_key !== undefined) {
         setGeminiApiKey(data.gemini_api_key);
         localStorage.setItem('gemini_api_key', data.gemini_api_key);
+      }
+      if (data.openrouter_api_key !== undefined) {
+        setOpenrouterApiKey(data.openrouter_api_key);
+        localStorage.setItem('openrouter_api_key', data.openrouter_api_key);
+      }
+      if (data.ghost_pin) {
+        setGhostPin(data.ghost_pin);
+        localStorage.setItem('ghost_pin', data.ghost_pin);
       }
       // Multiple API keys
       if (data.gemini_api_keys) {
@@ -209,6 +283,15 @@ export default function SettingsPage() {
       }
       if (data.openai_api_keys) {
         setOpenaiApiKeys(data.openai_api_keys);
+      }
+      if (data.openai_active_key_index !== undefined) {
+        setOpenaiActiveKeyIndex(data.openai_active_key_index);
+      }
+      if (data.openrouter_api_keys) {
+        setOpenrouterApiKeys(data.openrouter_api_keys);
+      }
+      if (data.openrouter_active_key_index !== undefined) {
+        setOpenrouterActiveKeyIndex(data.openrouter_active_key_index);
       }
       if (data.openai_active_key_index !== undefined) {
         setOpenaiActiveKeyIndex(data.openai_active_key_index);
@@ -279,17 +362,23 @@ export default function SettingsPage() {
   };
 
   // Generic key management helpers
-  const addKey = (provider: 'gemini' | 'openai', key: string) => {
-    const [keys, setKeys] = provider === 'gemini' ? [geminiApiKeys, setGeminiApiKeys] : [openaiApiKeys, setOpenaiApiKeys];
+  const addKey = (provider: 'gemini' | 'openai' | 'openrouter', key: string) => {
+    const [keys, setKeys] = provider === 'gemini' 
+      ? [geminiApiKeys, setGeminiApiKeys] 
+      : provider === 'openai' 
+        ? [openaiApiKeys, setOpenaiApiKeys]
+        : [openrouterApiKeys, setOpenrouterApiKeys];
     const updated = [...keys, key];
     setKeys(updated);
     saveSettingsToServer({ [`${provider}_api_keys`]: updated });
   };
 
-  const removeKey = (provider: 'gemini' | 'openai', index: number) => {
+  const removeKey = (provider: 'gemini' | 'openai' | 'openrouter', index: number) => {
     const [keys, setKeys, activeIndex, setActiveIndex] = provider === 'gemini'
       ? [geminiApiKeys, setGeminiApiKeys, geminiActiveKeyIndex, setGeminiActiveKeyIndex]
-      : [openaiApiKeys, setOpenaiApiKeys, openaiActiveKeyIndex, setOpenaiActiveKeyIndex];
+      : provider === 'openai'
+        ? [openaiApiKeys, setOpenaiApiKeys, openaiActiveKeyIndex, setOpenaiActiveKeyIndex]
+        : [openrouterApiKeys, setOpenrouterApiKeys, openrouterActiveKeyIndex, setOpenrouterActiveKeyIndex];
     const updated = keys.filter((_, i) => i !== index);
     setKeys(updated);
     const newIndex = activeIndex >= updated.length ? Math.max(0, updated.length - 1) : activeIndex;
@@ -297,10 +386,25 @@ export default function SettingsPage() {
     saveSettingsToServer({ [`${provider}_api_keys`]: updated, [`${provider}_active_key_index`]: newIndex });
   };
 
-  const setActiveKey = (provider: 'gemini' | 'openai', index: number) => {
-    const setActiveIndex = provider === 'gemini' ? setGeminiActiveKeyIndex : setOpenaiActiveKeyIndex;
+  const setActiveKey = (provider: 'gemini' | 'openai' | 'openrouter', index: number) => {
+    const setActiveIndex = provider === 'gemini' 
+      ? setGeminiActiveKeyIndex 
+      : provider === 'openai' 
+        ? setOpenaiActiveKeyIndex 
+        : setOpenrouterActiveKeyIndex;
     setActiveIndex(index);
     saveSettingsToServer({ [`${provider}_active_key_index`]: index });
+  };
+
+  const handleUpdateGhostPin = () => {
+    if (!newGhostPinInput.trim()) return;
+    const pin = newGhostPinInput.trim();
+    setGhostPin(pin);
+    localStorage.setItem('ghost_pin', pin);
+    saveSettingsToServer({ ghost_pin: pin });
+    setNewGhostPinInput('');
+    setGhostPinStatus('Ghost Mode PIN berhasil diperbarui!');
+    setTimeout(() => setGhostPinStatus(null), 3000);
   };
 
   // Persist local states
@@ -310,8 +414,11 @@ export default function SettingsPage() {
   useEffect(() => { localStorage.setItem('openai_url', openaiUrl); }, [openaiUrl]);
   useEffect(() => { localStorage.setItem('openai_model', openaiModel); }, [openaiModel]);
   useEffect(() => { localStorage.setItem('gemini_model', geminiModel); }, [geminiModel]);
+  useEffect(() => { localStorage.setItem('openrouter_model', openrouterModel); }, [openrouterModel]);
   useEffect(() => { localStorage.setItem('openai_api_key', openaiApiKey); }, [openaiApiKey]);
   useEffect(() => { localStorage.setItem('gemini_api_key', geminiApiKey); }, [geminiApiKey]);
+  useEffect(() => { localStorage.setItem('openrouter_api_key', openrouterApiKey); }, [openrouterApiKey]);
+  useEffect(() => { localStorage.setItem('ghost_pin', ghostPin); }, [ghostPin]);
 
   useEffect(() => { 
     localStorage.setItem('target_language', targetLang);
@@ -448,7 +555,7 @@ export default function SettingsPage() {
           <h2 className="text-xl font-bold">AI Translation Model</h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <ProviderCard
             id="lm_studio"
             label="LM Studio (Local)"
@@ -471,6 +578,14 @@ export default function SettingsPage() {
             description="Akses Gemini API berkecepatan sangat tinggi & gratis/premium dengan konteks raksasa."
             active={llmProvider === 'gemini'}
             onClick={() => handleLlmProviderChange('gemini')}
+            icon={Globe}
+          />
+          <ProviderCard
+            id="openrouter"
+            label="OpenRouter"
+            description="Akses ratusan model AI cloud (DeepSeek, Claude, Llama, Qwen) dalam satu API key."
+            active={llmProvider === 'openrouter'}
+            onClick={() => handleLlmProviderChange('openrouter')}
             icon={Globe}
           />
         </div>
@@ -732,6 +847,85 @@ export default function SettingsPage() {
 
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
                     Rekomendasi: `gemini-3.1-flash-lite` (free, 15 RPM, 500 RPD) untuk batch. `gemini-2.5-flash` untuk kualitas lebih tinggi.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {llmProvider === 'openrouter' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenRouter API Key</label>
+                    <div className="relative">
+                      <input 
+                        type={showOpenrouterKey ? "text" : "password"}
+                        value={openrouterApiKey}
+                        onChange={e => {
+                          setOpenrouterApiKey(e.target.value);
+                          saveSettingsToServer({ openrouter_api_key: e.target.value });
+                        }}
+                        placeholder="sk-or-v1-..."
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => setShowOpenrouterKey(!showOpenrouterKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                      >
+                        {showOpenrouterKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <ApiKeyManager
+                    label="Multiple Keys"
+                    keys={openrouterApiKeys}
+                    activeIndex={openrouterActiveKeyIndex}
+                    onAdd={(key) => addKey('openrouter', key)}
+                    onRemove={(i) => removeKey('openrouter', i)}
+                    onSetActive={(i) => setActiveKey('openrouter', i)}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenRouter Model</label>
+                    <select
+                      value={POPULAR_OPENROUTER_MODELS.includes(openrouterModel) ? openrouterModel : "custom"}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (val !== "custom") {
+                          setOpenrouterModel(val);
+                          saveSettingsToServer({ openrouter_model: val });
+                        }
+                      }}
+                      className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                    >
+                      {POPULAR_OPENROUTER_MODELS.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                      <option value="custom">Custom (Type below)...</option>
+                    </select>
+                  </div>
+
+                  {(!POPULAR_OPENROUTER_MODELS.includes(openrouterModel) || !openrouterModel) && (
+                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Custom Model Name</label>
+                      <input 
+                        value={openrouterModel}
+                        onChange={e => {
+                          setOpenrouterModel(e.target.value);
+                          saveSettingsToServer({ openrouter_model: e.target.value });
+                        }}
+                        placeholder="deepseek/deepseek-chat"
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
+                    OpenRouter memberikan akses universal ke DeepSeek-V3, Claude 3.5 Sonnet, Llama 3.3, Qwen, dll.
                   </p>
                 </div>
               </div>
@@ -1214,6 +1408,63 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Section: Privacy & Security */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <ShieldCheck size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Privacy & Security</h2>
+        </div>
+
+        <Card className="overflow-hidden border border-[var(--border)]">
+          <CardContent className="p-8 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold flex items-center gap-2 text-[var(--foreground)]">
+                  Ghost Mode Authentication PIN
+                </h3>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Atur PIN rahasia untuk berpindah ke Ghost Mode workspace. PIN standar bawaan: <span className="font-mono font-bold text-[var(--foreground)]">03697</span>.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="relative">
+                  <input
+                    type={showGhostPinText ? "text" : "password"}
+                    value={newGhostPinInput}
+                    onChange={e => setNewGhostPinInput(e.target.value)}
+                    placeholder={`Current PIN: ${ghostPin}`}
+                    className="bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all w-48"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGhostPinText(!showGhostPinText)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                  >
+                    {showGhostPinText ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <Button
+                  onClick={handleUpdateGhostPin}
+                  disabled={!newGhostPinInput.trim()}
+                  className="rounded-xl font-bold"
+                >
+                  Save PIN
+                </Button>
+              </div>
+            </div>
+
+            {ghostPinStatus && (
+              <p className="text-xs font-semibold text-green-500 animate-in fade-in duration-200">
+                ✓ {ghostPinStatus}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
       {/* Section: System Info */}
       <section className="space-y-6">
         <div className="flex items-center gap-3 mb-2">
@@ -1247,10 +1498,59 @@ export default function SettingsPage() {
                   <p className="font-bold">Python FastAPI</p>
                 </div>
               </div>
+              {/* Profile Logo for Mobile (Ghost Mode Trigger) */}
+              <div 
+                className="flex md:hidden items-center gap-4 cursor-pointer"
+                onMouseDown={startPress}
+                onMouseUp={endPress}
+                onMouseLeave={endPress}
+                onTouchStart={startPress}
+                onTouchEnd={endPress}
+              >
+                <div className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--primary)] transition-all">
+                  <User size={20} className="text-[var(--muted-foreground)]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Profile</h4>
+                  <p className="font-bold text-xs text-[var(--muted-foreground)]">Local User</p>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
       </section>
+
+      {/* PIN Modal */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[var(--card)] w-full max-w-sm p-6 rounded-2xl shadow-xl border border-[var(--border)] relative">
+            <button 
+              onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(false); }}
+              className="absolute top-4 right-4 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              <X size={20} />
+            </button>
+            <h2 className="text-xl font-bold mb-4">Enter PIN</h2>
+            <div className="space-y-4">
+              <input 
+                type="password"
+                maxLength={5}
+                value={pinInput}
+                onChange={e => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(false); }}
+                className={cn(
+                  "w-full bg-[var(--background)] border rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none transition-all",
+                  pinError ? "border-red-500 text-red-500" : "border-[var(--border)] focus:border-[var(--primary)]"
+                )}
+                autoFocus
+              />
+              {pinError && <p className="text-red-500 text-xs text-center">Invalid PIN. Try again.</p>}
+              <Button onClick={handlePinSubmit} className="w-full rounded-xl py-6 font-bold text-lg" disabled={pinInput.length < 5}>
+                Unlock
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -65,3 +65,23 @@ backend/trigger_batch.py
 backend/test_links.txt
 test_*.py
 translate_*.py
+
+# Subagent Working Directories
+.agents/
+
+# Debug and Dump Scripts
+backend/debug_*.py
+backend/check_*.py
+backend/dump_*
+check.py
+
+# User Uploads
+backend/uploads/
+
+# Agent Planning Files
+plan.md
+progress.md
+
+# Temporary folders
+temp_polish_2/
+.mimocode/
