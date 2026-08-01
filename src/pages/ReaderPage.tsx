@@ -871,7 +871,32 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
     );
   }
 
-  if (!thread) return null;
+  if (!thread) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 text-center gap-4">
+        <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 mb-2">
+          <Loader2 className="w-8 h-8" />
+        </div>
+        <h3 className="text-xl font-bold text-[var(--foreground)]">Gagal Memuat Novel</h3>
+        <p className="text-sm text-[var(--muted-foreground)] max-w-md">
+          Aplikasi tidak dapat terhubung ke server backend di HP. Pastikan:
+        </p>
+        <ul className="text-xs text-[var(--muted-foreground)] text-left list-disc list-inside space-y-1 bg-[var(--card)] p-4 rounded-xl border border-[var(--border)] max-w-md">
+          <li>Laptop dan HP berada di jaringan Wi-Fi yang sama.</li>
+          <li>Backend Uvicorn dijalankan dengan <b>--host 0.0.0.0</b> (misal: <code className="text-[var(--primary)] font-mono">py -m uvicorn main:app --reload --port 8000 --host 0.0.0.0</code>).</li>
+          <li>Windows Firewall di laptop mengizinkan Port 8000.</li>
+        </ul>
+        <div className="flex gap-3 mt-4">
+          <Button variant="outline" onClick={onBack}>
+            Kembali
+          </Button>
+          <Button onClick={() => { setLoading(true); fetchThread().finally(() => setLoading(false)); }}>
+            Coba Lagi
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[var(--background)] relative">

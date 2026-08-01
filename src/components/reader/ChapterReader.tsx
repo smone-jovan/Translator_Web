@@ -115,9 +115,27 @@ export default function ChapterReader({
 
   const scrollRafOriginalId = useRef<number | null>(null);
 
+  const lastSavedScrollTopRef = useRef<number | null>(null);
+  const prevChapterIdRef = useRef<number | null>(null);
+
+  const saveScrollPosition = (pct: number, top?: number) => {
+    if (!chapterContent) return;
+    const key = `readomni_scroll_${thread.id}_${chapterContent.id}`;
+    try {
+      localStorage.setItem(key, JSON.stringify({ pct, top, ts: Date.now() }));
+    } catch { /* ignore */ }
+  };
+
   // Shared DOM update logic
-  const updateScrollUI = (pct: number) => {
+  const updateScrollUI = (pct: number, scrollTop?: number) => {
     scrollProgressRef.current = pct;
+    if (scrollTop !== undefined) {
+      lastSavedScrollTopRef.current = scrollTop;
+    }
+
+    if (chapterContent && pct >= 0) {
+      saveScrollPosition(pct, scrollTop ?? lastSavedScrollTopRef.current ?? undefined);
+    }
     
     if (progressCircleRef.current) {
       progressCircleRef.current.style.strokeDashoffset = `${163.4 - (pct / 100) * 163.4}`;
@@ -159,7 +177,7 @@ export default function ChapterReader({
     
     scrollRafOriginalId.current = requestAnimationFrame(() => {
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      updateScrollUI(pct);
+      updateScrollUI(pct, scrollTop);
 
       const delta = scrollTop - lastScrollTopOriginal.current;
       
@@ -186,7 +204,7 @@ export default function ChapterReader({
     
     scrollRafTranslatedId.current = requestAnimationFrame(() => {
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      updateScrollUI(pct);
+      updateScrollUI(pct, scrollTop);
 
       const delta = scrollTop - lastScrollTopTranslated.current;
       
@@ -221,7 +239,7 @@ export default function ChapterReader({
         const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
         const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
         
-        updateScrollUI(pct);
+        updateScrollUI(pct, scrollTop);
         
         const delta = scrollTop - lastWindowScrollTop.current;
         if (scrollTop < 20) {
@@ -244,53 +262,95 @@ export default function ChapterReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Restore scroll progress when chapter content changes
+  // Save scroll position immediately on mobile screen-lock / visibility change
   useEffect(() => {
-    if (chapterContent && chapterContent.scroll_progress && chapterContent.scroll_progress > 0) {
-      const timer = setTimeout(() => {
-        const progress = chapterContent.scroll_progress || 0;
-        
-        // 1. Restore for columns if internally scrolling
+    const handlePageHide = () => {
+      if (chapterContent && scrollProgressRef.current > 0) {
+        const pct = scrollProgressRef.current;
+        const top = lastSavedScrollTopRef.current ?? undefined;
+        saveScrollPosition(pct, top);
+
+        try {
+          navigator.sendBeacon(
+            getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`),
+            JSON.stringify({ scroll_progress: pct })
+          );
+        } catch { /* ignore */ }
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handlePageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handlePageHide);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterContent, thread.id]);
+
+  // Multi-stage Scroll Position Restoration (local storage + backend progress)
+  useEffect(() => {
+    if (!chapterContent) return;
+
+    const currentId = chapterContent.id;
+    const isSameChapter = prevChapterIdRef.current === currentId;
+    prevChapterIdRef.current = currentId;
+
+    // Read saved local scroll position first
+    const key = `readomni_scroll_${thread.id}_${currentId}`;
+    let savedLocal: { pct?: number; top?: number } | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) savedLocal = JSON.parse(raw);
+    } catch { /* ignore */ }
+
+    const targetPct = savedLocal?.pct ?? chapterContent.scroll_progress ?? 0;
+    const targetTop = savedLocal?.top;
+
+    // If switching to a DIFFERENT chapter and no saved position exists, start at top (0)
+    if (!isSameChapter && targetTop === undefined && targetPct === 0) {
+      if (originalScrollContainerRef.current) originalScrollContainerRef.current.scrollTop = 0;
+      if (translatedScrollContainerRef.current) translatedScrollContainerRef.current.scrollTop = 0;
+      window.scrollTo(0, 0);
+      updateScrollUI(0, 0);
+      return;
+    }
+
+    const applyScroll = () => {
+      if (targetTop !== undefined && targetTop > 0) {
+        if (originalScrollContainerRef.current) originalScrollContainerRef.current.scrollTop = targetTop;
+        if (translatedScrollContainerRef.current) translatedScrollContainerRef.current.scrollTop = targetTop;
+        window.scrollTo(0, targetTop);
+      } else if (targetPct > 0) {
         if (originalScrollContainerRef.current) {
           const el = originalScrollContainerRef.current;
           const scrollHeight = el.scrollHeight - el.clientHeight;
-          if (scrollHeight > 0) {
-            el.scrollTop = (progress / 100) * scrollHeight;
-          }
+          if (scrollHeight > 0) el.scrollTop = (targetPct / 100) * scrollHeight;
         }
         if (translatedScrollContainerRef.current) {
           const el = translatedScrollContainerRef.current;
           const scrollHeight = el.scrollHeight - el.clientHeight;
-          if (scrollHeight > 0) {
-            el.scrollTop = (progress / 100) * scrollHeight;
-          }
+          if (scrollHeight > 0) el.scrollTop = (targetPct / 100) * scrollHeight;
         }
-        
-        // 2. Restore for window/body scroll
         const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-        if (docHeight > 0) {
-          const targetY = (progress / 100) * docHeight;
-          window.scrollTo({ top: targetY, behavior: 'auto' });
-        }
-      }, 350); // slight delay to let elements lay out
-      
-      return () => clearTimeout(timer);
-    }
-  }, [chapterContent]);
+        if (docHeight > 0) window.scrollTo(0, (targetPct / 100) * docHeight);
+      }
+    };
 
-  useEffect(() => {
+    applyScroll();
+    const t1 = setTimeout(applyScroll, 50);
+    const t2 = setTimeout(applyScroll, 150);
+    const t3 = setTimeout(applyScroll, 350);
+
     return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       if (saveProgressTimeout.current) clearTimeout(saveProgressTimeout.current);
     };
-  }, []);
-
-  useEffect(() => {
-    if (originalScrollContainerRef.current) originalScrollContainerRef.current.scrollTop = 0;
-    if (translatedScrollContainerRef.current) translatedScrollContainerRef.current.scrollTop = 0;
-    window.scrollTo(0, 0);
-    updateScrollUI(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterContent?.id]);
+  }, [chapterContent?.id, thread.id]);
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });

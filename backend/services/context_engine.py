@@ -251,32 +251,27 @@ class ContextEngine:
     @staticmethod
     def strip_translator_notes(text: str) -> str:
         """
-        Bersihkan bagian 'Translator Notes' atau 'Notes' dari teks terjemahan cerita.
-        HANYA strip jika section ini ada di akhir teks (bagian terakhir), bukan di tengah.
-        Ini mencegah hapus konten cerita yang kebetulan mengandung kata 'Notes'.
+        Bersihkan bagian 'Translator Notes', 'Notes', dan 'Footnotes' dari teks terjemahan cerita
+        sehingga pengguna mendapatkan teks prosa murni 100%.
         """
         if not text:
             return ""
         import re
-        # Pola pencarian header catatan penerjemah (Mencegah false positive dengan Author's Note)
+        
+        # Pola pencarian header catatan penerjemah & catatan kaki
         header_pattern = re.compile(
-            r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?)", 
+            r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?|\n\s*[-—*_#]*\s*Footnotes?[:\s]?)", 
             re.IGNORECASE
         )
         
-        # Cari semua match, ambil yang TERAKHIR (kemungkinan besar di akhir chapter)
         matches = list(header_pattern.finditer(text))
         if not matches:
             return text
         
-        last_match = matches[-1]
+        # Potong dari header pertama yang muncul (baik Footnotes maupun Translator Notes)
+        first_match = matches[0]
+        cleaned = text[:first_match.start()].strip()
         
-        # We removed the `match_position < 0.7` check here because some LLMs (like Qwen)
-        # hallucinate and restart the story translation AFTER the Translator Notes,
-        # putting the notes in the middle of the output text. By always cutting at the last match,
-        # we strip both the notes and any trailing hallucination.
-        
-        cleaned = text[:last_match.start()].strip()
         # Bersihkan sisa-sisa formatting markdown di ujung teks
         while True:
             prev_len = len(cleaned)

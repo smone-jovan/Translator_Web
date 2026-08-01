@@ -212,9 +212,11 @@ Use smooth, active, web-novel {lang_name} — vivid, immersive, emotional.
 Preserve paragraph breaks where natural — don't force them.
 Avoid machine-like long sentences. Break long Chinese sentences into 2–3 {lang_name} sentences if needed — preserve all meaning.
 
-Chinese Text Handling:
-Translate ALL Chinese characters and words to {lang_name} in the story.
+Chinese Text Handling & Idioms (成语 / 俗语 / 歇后语):
+Translate ALL Chinese text, slang, and idioms naturally into smooth, immersive {lang_name} prose.
 Do NOT leave any Chinese characters or raw pinyin in the main story text.
+DO NOT embed inline dictionary parens, bilingual annotations, or explanation notes anywhere in the story (e.g. NEVER output 'ChineseTerm (English translation)', '(lust fluid)', or '[1] Footnote').
+DO NOT output any Footnotes or Translator Notes section. Output ONLY the pure translated story text.
 
 Consistency & Glossary Priority:
 **STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
@@ -227,6 +229,7 @@ Output ONLY the {lang_name} translation.
 No extra commentary, no summary, no conversational filler.
 Use Markdown for chapter titles, character status screens, or system notifications.
 Ensure double newlines between paragraphs for clear readability.
+ABSOLUTELY NO INLINE DICTIONARY NOTES OR BILINGUAL ANNOTATIONS: Never output parenthetical translations or glossary notes in the story prose (such as 'ChineseTerm (English Note)' or '(lust fluid)').
 If the model produces corrupted hybrid garbage tokens, symbol-noise strings, or broken OCR-like output such as 'Shan! IV% Cold ⑦ Erliu 8 Shui #' or mixed-script junk, you MUST delete that garbage instead of translating or preserving it.
 Never output malformed token soup, mixed-script noise, isolated symbol clusters, or analysis phrases pretending to be translation.
 
