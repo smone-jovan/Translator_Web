@@ -1,3 +1,5 @@
+import re
+import json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import LorebookEntry, Thread, GlobalSetting
@@ -377,6 +379,7 @@ class ContextEngine:
 
         cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
         cleaned = HallucinationDetector.strip_word_soup_hallucinations(cleaned)
+        cleaned = re.sub(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u2060\u2000-\u200a]", "", cleaned)
         
         return cleaned.strip()
 

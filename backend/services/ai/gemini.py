@@ -10,10 +10,16 @@ class GeminiAdapter(BaseAIProviderAdapter):
     """
     PROVIDER_NAME = "gemini"
     
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", base_url: str = None):
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url.rstrip("/")
+        if base_url:
+            cleaned_url = base_url.rstrip("/")
+            if "/v1" not in cleaned_url and "/openai" not in cleaned_url:
+                cleaned_url += "/v1beta/openai"
+            self.base_url = cleaned_url
+        else:
+            self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 
     async def _try_chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None, model_name: str | None = None) -> str:
         """Single attempt at chat completion with specified model."""
