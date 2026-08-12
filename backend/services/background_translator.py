@@ -428,8 +428,8 @@ class BackgroundTranslator:
                     if not round_truncated:
                         break  # Translation complete, no truncation
 
-                    # ----- ANTI 40K TOKEN LEAK -----
-                    # Prevent LLM from continuing an infinite hallucination loop
+                    # ----- ANTI 40K TOKEN LEAK & WORD-SOUP PREVENTION -----
+                    # 1. Prevent LLM from continuing an infinite substring repetition loop
                     tail = full_content[-LOOP_DETECTION_TAIL_CHARS:]
                     is_looping = False
                     for i in range(len(tail) - LOOP_DETECTION_WINDOW):
@@ -441,7 +441,17 @@ class BackgroundTranslator:
                     if is_looping:
                         print(f"[WARN] Chapter {chapter_id} truncated due to infinite loop hallucination! Aborting continuation to save tokens.")
                         break
-                    # -------------------------------
+
+                    # 2. Prevent runaway length explosion (>5x original length or >35k chars)
+                    if len(full_content) > max(len(content_original) * 5, 25000):
+                        print(f"[WARN] Chapter {chapter_id} translation length exceeded safe ratio ({len(full_content)} chars vs {len(content_original)} orig chars). Aborting continuation.")
+                        break
+
+                    # 3. Prevent unpunctuated word-soup dictionary dump continuation
+                    if re.search(r"(?:[A-Za-z0-9-]{2,}\s+){20,}[A-Za-z0-9-]{2,}", tail):
+                        print(f"[WARN] Chapter {chapter_id} detected word-soup vocabulary dump in stream tail! Aborting continuation.")
+                        break
+                    # --------------------------------------------------------
 
                     continuation_round += 1
                     if continuation_round > MAX_CONTINUATIONS:

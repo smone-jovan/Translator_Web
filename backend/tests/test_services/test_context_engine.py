@@ -124,4 +124,85 @@ def test_strip_translator_notes_strips_footnotes_and_notes():
     assert "### TRANSLATOR NOTES:" not in cleaned
 
 
+def test_strip_translator_notes_at_start_preserves_story():
+    """Verify that notes placed at the start of output are stripped while preserving the story."""
+    story_with_notes_at_top = (
+        "### TRANSLATOR NOTES:\n"
+        "- 杰夫 → Jeff (Protagonist)\n"
+        "- 艾米 → Amy (Resistance member)\n\n"
+        "### Chapter 1: The New Day\n"
+        "Jeff looked out the window and smiled."
+    )
+    cleaned = ContextEngine.strip_translator_notes(story_with_notes_at_top)
+    assert "Jeff looked out the window and smiled." in cleaned
+    assert "### TRANSLATOR NOTES:" not in cleaned
+
+
+def test_clean_final_translation_pure_notes_returns_empty():
+    """Verify that when AI outputs ONLY translator notes without story, clean_final_translation returns empty string."""
+    pure_notes = (
+        "### TRANSLATOR NOTES:\n"
+        "- 杰夫 → Jeff (Protagonist)\n"
+        "- 艾米 → Amy (Resistance member)"
+    )
+    cleaned = ContextEngine.clean_final_translation(pure_notes, always_hide_thoughts=True)
+    assert cleaned == ""
+
+
+def test_auto_save_glossary_splits_slash_terms():
+    """Verify that auto_save_glossary properly splits slash-separated terms into clean single entries."""
+    from database import LorebookEntry, GlobalSetting
+    mock_db = MagicMock()
+    mock_gs = MagicMock()
+    mock_gs.max_context_terms = 50
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gs
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+
+    added_entries = []
+    mock_db.add.side_effect = lambda obj: added_entries.append(obj)
+
+    ai_output = (
+        "Full translated story here.\n\n"
+        "### TRANSLATOR NOTES:\n"
+        "- 夏茵 / 夏恩 / 莎恩 → Shain (Variations of heroine name)\n"
+        "- 杰夫 → Jeff (The main protagonist)"
+    )
+
+    ContextEngine.auto_save_glossary(mock_db, thread_id=99, full_text=ai_output)
+    
+    # Should create individual entries for 夏茵, 夏恩, 莎恩, and 杰夫
+    added_terms = [e.original_term for e in added_entries]
+    assert "夏茵" in added_terms
+    assert "夏恩" in added_terms
+    assert "莎恩" in added_terms
+    assert "杰夫" in added_terms
+    assert all("/" not in t for t in added_terms)
+
+
+def test_strip_word_soup_hallucinations():
+    """Verify that HallucinationDetector properly strips unpunctuated dictionary dump / word-soup hallucinations."""
+    from services.hallucination_detector import HallucinationDetector
+
+    text_with_soup = (
+        "Chapter 1: The Beginning\n\n"
+        "Senior Sister looked down with a gentle smile. \"Are you ready?\"\n\n"
+        "society civilization history era period age decade century millennium year month day hour minute second "
+        "tick tock clock watch timer stopwatch chronometer calendar date timestamp label tag keyword search query "
+        "filter sort order rank score point mark symbol icon image picture photo video audio sound noise music rhythm\n\n"
+        "\"Yes, I am ready,\" I replied softly.\n\n"
+        "unskin unbone unmuscle untendon unligament unnerve unblood unvein unartery unheart unlung unliver unkidney "
+        "unspleen unstomach unintestine unconcolon unrectum unanus unmouth unnose uneareye unhand unfoot unarm unleg"
+    )
+
+    cleaned = HallucinationDetector.strip_word_soup_hallucinations(text_with_soup)
+    assert "society civilization" not in cleaned
+    assert "unbone unmuscle" not in cleaned
+    assert "Chapter 1: The Beginning" in cleaned
+    assert "Senior Sister looked down" in cleaned
+    assert "Yes, I am ready" in cleaned
+
+
+
+
 

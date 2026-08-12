@@ -87,7 +87,7 @@ export default function ChapterGrid({
                 {ch.title_translated || ch.title_original || `Chapter ${ch.order + 1}`}
               </span>
               {/* Translation indicator */}
-              {ch.has_translation ? (
+              {(ch.has_translation || ch.translation_status === 'done') ? (
                 <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] flex-shrink-0 mt-1" title="Translated" />
               ) : (
                 <span className="w-2 h-2 rounded-full bg-[var(--border)] flex-shrink-0 mt-1" title="Not Translated" />

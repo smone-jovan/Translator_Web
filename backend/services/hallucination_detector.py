@@ -56,6 +56,60 @@ class HallucinationDetector:
         return matches
 
     @staticmethod
+    def strip_word_soup_hallucinations(text: str) -> str:
+        """
+        Detect and strip associative dictionary dumps / word-soup hallucinations from translation output.
+        (e.g., runaway LLM loops outputting endless space-separated vocabulary lists like
+        'society civilization history era period age decade...' or 'unbone unmuscle untendon...').
+        """
+        if not text:
+            return ""
+
+        # Pattern for a block of space-separated words without sentence punctuation (20+ words in a row)
+        word_stream_pattern = re.compile(
+            r"(?:[A-Za-z0-9-]{2,}\s+){20,}[A-Za-z0-9-]{2,}",
+            re.IGNORECASE
+        )
+        # Morphological prefix repetition pattern (e.g. 8+ 'un...' words in a row)
+        un_pattern = re.compile(r"\b(un[a-z]{3,}\s+){8,}", re.IGNORECASE)
+
+        cleaned_paras = []
+        for para in re.split(r"\n\s*\n", text):
+            para_strip = para.strip()
+            if not para_strip:
+                continue
+
+            # Check if the paragraph contains a word-soup stream
+            match = word_stream_pattern.search(para_strip)
+            if match:
+                start_idx = match.start()
+                if start_idx < 60:
+                    # Paragraph is overwhelmingly word soup -> discard
+                    continue
+                else:
+                    # Word soup starts mid-paragraph -> truncate paragraph before the soup
+                    valid_prefix = para_strip[:start_idx].strip()
+                    if len(valid_prefix) > 20:
+                        cleaned_paras.append(valid_prefix)
+                    continue
+
+            # Check morphological repetition pattern
+            match_un = un_pattern.search(para_strip)
+            if match_un:
+                if match_un.start() < 60:
+                    continue
+                else:
+                    valid_prefix = para_strip[:match_un.start()].strip()
+                    if len(valid_prefix) > 20:
+                        cleaned_paras.append(valid_prefix)
+                    continue
+
+            cleaned_paras.append(para_strip)
+
+        result = "\n\n".join(cleaned_paras).strip()
+        return result
+
+    @staticmethod
     def strip_garbled_hallucination_lines(text: str) -> str:
         if not text:
             return ""

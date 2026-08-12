@@ -17,6 +17,7 @@ const APP_SESSION_MAX_IDLE_MS = 6 * 60 * 60 * 1000;
 interface AppSessionState {
   activeTab: TabId;
   openThreadId: number | null;
+  openChapterId: number | null;
   lastActiveAt: number;
 }
 
@@ -40,6 +41,7 @@ function readAppSession(): AppSessionState | null {
     return {
       activeTab: parsed.activeTab as TabId,
       openThreadId: typeof parsed.openThreadId === 'number' ? parsed.openThreadId : null,
+      openChapterId: typeof parsed.openChapterId === 'number' ? parsed.openChapterId : null,
       lastActiveAt: parsed.lastActiveAt,
     };
   } catch {
@@ -51,7 +53,7 @@ function readAppSession(): AppSessionState | null {
 export default function App() {
   const initialSession = readAppSession();
   const [openThreadId, setOpenThreadId] = useState<number | null>(initialSession?.openThreadId ?? null);
-  const [openChapterId, setOpenChapterId] = useState<number | null>(null);
+  const [openChapterId, setOpenChapterId] = useState<number | null>(initialSession?.openChapterId ?? null);
   const [isReadingChapter, setIsReadingChapter] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>(initialSession?.activeTab ?? 'translate');
 
@@ -60,6 +62,7 @@ export default function App() {
       const payload: AppSessionState = {
         activeTab,
         openThreadId,
+        openChapterId,
         lastActiveAt: Date.now(),
       };
       localStorage.setItem(APP_SESSION_KEY, JSON.stringify(payload));
@@ -73,7 +76,7 @@ export default function App() {
       window.removeEventListener('pagehide', persistSession);
       document.removeEventListener('visibilitychange', persistSession);
     };
-  }, [activeTab, openThreadId]);
+  }, [activeTab, openThreadId, openChapterId]);
 
   const openReaderFromLibrary = (threadId: number, chapterId?: number) => {
     setActiveTab('library');

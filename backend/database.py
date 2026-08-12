@@ -86,6 +86,8 @@ class GlobalSetting(Base):
     openrouter_active_key_index: Mapped[int] = mapped_column(default=0)
     # Ghost Mode PIN authentication
     ghost_pin: Mapped[str] = mapped_column(String(100), default="03697")
+    display_mode: Mapped[str] = mapped_column(String(20), default="translated") # translated, original, both
+
 
 
 class Thread(Base):
@@ -426,6 +428,13 @@ def init_db():
         if 'scroll_progress' not in columns_ub:
             print("[MIGRASI] Menambahkan kolom 'scroll_progress' ke dalam tabel user_bookmarks...")
             conn.execute(text("ALTER TABLE user_bookmarks ADD COLUMN scroll_progress REAL DEFAULT 0.0"))
+            conn.commit()
+
+        cursor = conn.execute(text("PRAGMA table_info(global_settings);"))
+        columns_gs = [row[1] for row in cursor.fetchall()]
+        if 'display_mode' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'display_mode' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN display_mode VARCHAR(20) DEFAULT 'translated'"))
             conn.commit()
             
     print(f"[SUKSES] Inisialisasi basis data selesai - {'ghost.db' if ACTIVE_WORKSPACE == 'ghost' else 'app.db'} siap digunakan.")

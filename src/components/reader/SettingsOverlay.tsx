@@ -139,7 +139,11 @@ export default function SettingsOverlay({
                   key={mode}
                   variant={displayMode === mode ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => { setDisplayMode(mode); localStorage.setItem('display_mode', mode); }}
+                  onClick={() => {
+                    setDisplayMode(mode);
+                    localStorage.setItem('display_mode', mode);
+                    saveSetting('display_mode', mode);
+                  }}
                   className="text-[10px] capitalize h-8"
                 >
                   {mode}

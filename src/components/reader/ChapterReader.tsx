@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
-import { renderMarkdown } from '@/lib/utils';
+import { renderMarkdown, cn } from '@/lib/utils';
 import type { ThreadDetail, ChapterContent } from './types';
 
 function cleanThoughts(text: string | null | undefined): string {
@@ -441,10 +441,7 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'original' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => {
-              setDisplayMode('original');
-              try { localStorage.setItem('display_mode', 'original'); } catch { /* ignore */ }
-            }}
+            onClick={() => setDisplayMode('original')}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'original' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             ORI
@@ -452,10 +449,7 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'translated' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => {
-              setDisplayMode('translated');
-              try { localStorage.setItem('display_mode', 'translated'); } catch { /* ignore */ }
-            }}
+            onClick={() => setDisplayMode('translated')}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'translated' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             TRS
@@ -463,10 +457,7 @@ export default function ChapterReader({
           <Button 
             variant={displayMode === 'both' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => {
-              setDisplayMode('both');
-              try { localStorage.setItem('display_mode', 'both'); } catch { /* ignore */ }
-            }}
+            onClick={() => setDisplayMode('both')}
             className={`rounded-xl text-[10px] h-7 px-3 ${displayMode === 'both' ? 'shadow-sm bg-[var(--background)]' : ''}`}
           >
             BOTH
@@ -496,7 +487,12 @@ export default function ChapterReader({
       </div>
 
       {/* Reader Grid */}
-      <div className="flex-1 grid md:grid-cols-2 gap-0 divide-x divide-[var(--border)] overflow-hidden">
+      <div className={cn(
+        "flex-1 overflow-hidden",
+        displayMode === 'both'
+          ? "grid grid-cols-1 md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-[var(--border)]"
+          : "flex flex-col"
+      )}>
         {/* Original Content */}
         {showOriginal && (
           <div className="flex flex-col h-full overflow-hidden bg-[var(--secondary)]/10">

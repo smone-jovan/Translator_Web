@@ -12,11 +12,11 @@ export default function BottomNav({ activeTab, onTabChange, visible = true }: Bo
   return (
     <div 
       className={cn(
-        "fixed bottom-0 left-0 right-0 z-50 md:hidden px-4 pb-4 pt-2 transition-all duration-300 ease-in-out",
-        visible ? "translate-y-0 opacity-100" : "translate-y-28 opacity-0 pointer-events-none"
+        "fixed bottom-0 left-0 right-0 z-50 md:hidden px-4 pb-4 pt-2 transition-all duration-300 ease-in-out pointer-events-none flex justify-center",
+        visible ? "translate-y-0 opacity-100" : "translate-y-28 opacity-0"
       )}
     >
-      <div className="bg-[var(--card)]/80 backdrop-blur-xl border border-[var(--border)] rounded-2xl shadow-2xl flex items-center justify-around p-2">
+      <div className="pointer-events-auto w-full max-w-lg bg-[var(--card)]/85 backdrop-blur-xl border border-[var(--border)] rounded-2xl shadow-2xl flex items-center justify-around p-2">
         {[...navItems, { id: 'bookmarks' as TabId, icon: <Star size={24} />, label: 'Favs' }].map((item) => (
           <button
             key={item.id}

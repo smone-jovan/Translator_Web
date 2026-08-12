@@ -66,9 +66,9 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
 
   return (
     <>
-      <aside className="hidden md:flex shrink-0 sticky top-0 h-screen z-50 w-20 bg-[var(--card)] border-r border-[var(--border)] flex-col items-center py-8 shadow-sm">
+      <aside className="hidden md:flex shrink-0 fixed top-0 left-0 h-screen h-[100dvh] z-50 w-20 bg-[var(--card)] border-r border-[var(--border)] flex-col items-center py-6 shadow-sm overflow-y-auto select-none">
         {/* Brand/Logo */}
-        <div className="mb-12">
+        <div className="mb-8">
           <div className="w-10 h-10 rounded-xl bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] font-bold text-xl shadow-lg shadow-[var(--primary)]/20">
             翻
           </div>

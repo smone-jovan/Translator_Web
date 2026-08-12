@@ -84,15 +84,43 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   const [showChapterList, setShowChapterList] = useState(initialReaderSession?.showChapterList ?? true);
   const [fontSize, setFontSize] = useState(18);
   const [showSettings, setShowSettings] = useState(false);
-  const [displayMode, setDisplayMode] = useState(localStorage.getItem('display_mode') || 'both');
+  const [displayMode, setDisplayMode] = useState(localStorage.getItem('display_mode') || 'translated');
+
+  const updateDisplayMode = (mode: string) => {
+    setDisplayMode(mode);
+    try {
+      localStorage.setItem('display_mode', mode);
+    } catch { /* ignore */ }
+    fetch(getApiUrl('/api/settings'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_mode: mode }),
+    }).catch(() => {});
+  };
 
   useEffect(() => {
-    if (displayMode) {
-      try {
-        localStorage.setItem('display_mode', displayMode);
-      } catch { /* ignore */ }
-    }
-  }, [displayMode]);
+    fetch(getApiUrl('/api/global-context'))
+      .then(res => res.json())
+      .then(data => {
+        if (data.display_mode) {
+          setDisplayMode(data.display_mode);
+          try { localStorage.setItem('display_mode', data.display_mode); } catch { /* ignore */ }
+        }
+        if (data.always_hide_thoughts !== undefined) {
+          setAlwaysHideThoughts(data.always_hide_thoughts === 1);
+        }
+        if (data.prefetch_enabled !== undefined) {
+          setPrefetchEnabled(data.prefetch_enabled === 1);
+        }
+        if (data.prefetch_count !== undefined) {
+          setPrefetchCount(data.prefetch_count);
+        }
+        if (data.prefetch_mode) {
+          setPrefetchMode(data.prefetch_mode);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [isTranslatingTitles, setIsTranslatingTitles] = useState(false);
   const [lastReadId, setLastReadId] = useState<number | null>(null);
@@ -160,29 +188,33 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [mobileToolbarVisible, setMobileToolbarVisible] = useState(true);
 
-  // Jump to initial chapter if provided
-  useEffect(() => {
-    if (thread && initialChapterId) {
-      const idx = thread.chapters.findIndex(c => c.id === initialChapterId);
-      if (idx !== -1 && idx !== selectedChapterIdx) {
-        goToChapter(idx);
-      }
-    }
-  }, [thread, initialChapterId]);
-
+  const initialChapterHandledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastFetchedIdRef = useRef<number | null>(null);
   const autoTranslatePendingRef = useRef(false);
   const initialReaderSessionRef = useRef<ReaderSessionState | null>(initialReaderSession);
 
-  const fetchThread = useCallback(async (opts?: { silent?: boolean }) => {
+  // Jump to initial chapter if provided (only once on initial load)
+  useEffect(() => {
+    if (thread && initialChapterId && !initialChapterHandledRef.current) {
+      const idx = thread.chapters.findIndex(c => c.id === initialChapterId);
+      if (idx !== -1) {
+        initialChapterHandledRef.current = true;
+        goToChapter(idx);
+      }
+    }
+  }, [thread, initialChapterId]);
+
+  const fetchThread = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
     const CACHE_KEY = `readomni_thread_cache_${threadId}`;
 
-    // On silent refresh (polling), skip if tab is hidden
-    if (opts?.silent && document.hidden) return;
+    // On silent refresh (polling), skip if tab is hidden unless forced
+    if (opts?.silent && !opts?.force && document.hidden) return;
 
     try {
-      const res = await fetch(getApiUrl(`/api/threads/${threadId}`));
+      const res = await fetch(getApiUrl(`/api/threads/${threadId}?t=${Date.now()}`), {
+        cache: 'no-store'
+      });
       if (!res.ok) throw new Error('Network response not ok');
       const data: ThreadDetail = await res.json();
       setThread(data);
@@ -193,25 +225,34 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
         sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
       } catch { /* quota exceeded — ignore */ }
 
-      const storedSession = initialReaderSessionRef.current;
-      if (storedSession?.selectedChapterId) {
-        const restoredIdx = data.chapters.findIndex((chapter) => chapter.id === storedSession.selectedChapterId);
-        if (restoredIdx !== -1) {
-          setSelectedChapterIdx(restoredIdx);
-          setShowChapterList(storedSession.showChapterList);
+      // Only restore chapter index ONCE on initial load if not yet chosen/handled
+      if (!initialChapterHandledRef.current) {
+        const storedSession = initialReaderSessionRef.current;
+        const targetChapterId = initialChapterId || storedSession?.selectedChapterId || data.last_read_id || null;
+        if (targetChapterId) {
+          const restoredIdx = data.chapters.findIndex((chapter) => chapter.id === targetChapterId);
+          if (restoredIdx !== -1) {
+            setSelectedChapterIdx(restoredIdx);
+            initialChapterHandledRef.current = true;
+            if (storedSession) {
+              setShowChapterList(storedSession.showChapterList);
+            } else if (initialChapterId) {
+              setShowChapterList(false);
+            }
+          }
         }
         initialReaderSessionRef.current = null;
       }
     } catch (err) {
       console.error('Failed to fetch thread:', err);
     }
-  }, [threadId]);
+  }, [threadId, initialChapterId]);
 
   useEffect(() => {
     const persistReaderSession = () => {
       if (!thread) return;
       const currentChapterId =
-        !showChapterList && selectedChapterIdx !== null && thread.chapters?.[selectedChapterIdx]
+        selectedChapterIdx !== null && thread.chapters?.[selectedChapterIdx]
           ? thread.chapters[selectedChapterIdx].id
           : null;
 
@@ -220,16 +261,18 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
       try { if (savedRaw) prevSession = JSON.parse(savedRaw); } catch { /* ignore */ }
 
       const finalChapterId = currentChapterId !== null ? currentChapterId : (prevSession?.selectedChapterId ?? null);
-      const finalShowList = !showChapterList ? false : (prevSession?.showChapterList ?? true);
 
       const payload: ReaderSessionState = {
         threadId,
         selectedChapterId: finalChapterId,
-        showChapterList: finalShowList,
+        showChapterList,
         lastActiveAt: Date.now(),
       };
       localStorage.setItem(getReaderSessionKey(threadId), JSON.stringify(payload));
     };
+
+    // Save session immediately when state changes
+    persistReaderSession();
 
     window.addEventListener('pagehide', persistReaderSession);
     document.addEventListener('visibilitychange', persistReaderSession);
@@ -239,6 +282,40 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
       document.removeEventListener('visibilitychange', persistReaderSession);
     };
   }, [thread, threadId, selectedChapterIdx, showChapterList]);
+
+  // Real-time live update for chapter translation status (green dots & progress)
+  useEffect(() => {
+    let lastFetchedCompleted = -1;
+    let lastFetchedCurrentChId: number | null = null;
+
+    const handleBatchProgress = (e: Event) => {
+      const customEv = e as CustomEvent;
+      const detail = customEv.detail;
+      if (!detail || detail.thread_id !== threadId) return;
+
+      // Always re-fetch when completed count or active chapter changes
+      if (detail.completed !== lastFetchedCompleted || detail.current_chapter_id !== lastFetchedCurrentChId) {
+        lastFetchedCompleted = detail.completed;
+        lastFetchedCurrentChId = detail.current_chapter_id;
+        fetchThread({ silent: true, force: true });
+      }
+    };
+
+    const handleBatchCompleted = (e: Event) => {
+      const customEv = e as CustomEvent;
+      const detail = customEv.detail;
+      if (detail && detail.thread_id && detail.thread_id !== threadId) return;
+      fetchThread({ silent: true, force: true });
+    };
+
+    window.addEventListener('batch-progress', handleBatchProgress);
+    window.addEventListener('batch-completed', handleBatchCompleted);
+
+    return () => {
+      window.removeEventListener('batch-progress', handleBatchProgress);
+      window.removeEventListener('batch-completed', handleBatchCompleted);
+    };
+  }, [threadId, fetchThread]);
 
   const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast' = 'quality') => {
     if (!thread) return;
@@ -351,11 +428,17 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
             setThread(data);
             if (data.last_read_id) setLastReadId(data.last_read_id);
             const storedSession = initialReaderSessionRef.current;
-            if (storedSession?.selectedChapterId) {
-              const restoredIdx = data.chapters.findIndex(c => c.id === storedSession.selectedChapterId);
+            const targetId = initialChapterId || storedSession?.selectedChapterId || data.last_read_id || null;
+            if (targetId && !initialChapterHandledRef.current) {
+              const restoredIdx = data.chapters.findIndex(c => c.id === targetId);
               if (restoredIdx !== -1) {
                 setSelectedChapterIdx(restoredIdx);
-                setShowChapterList(storedSession.showChapterList);
+                initialChapterHandledRef.current = true;
+                if (storedSession) {
+                  setShowChapterList(storedSession.showChapterList);
+                } else if (initialChapterId) {
+                  setShowChapterList(false);
+                }
               }
               initialReaderSessionRef.current = null;
             }
@@ -460,8 +543,23 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
         }
       }
       
-      // Update thread state to show it has translation
-      await fetchThread();
+      // Optimistically update thread state so green dot lights up immediately
+      if (chId) {
+        setThread(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            chapters: prev.chapters.map(c => 
+              c.id === chId 
+                ? { ...c, has_translation: true, translation_status: 'done' }
+                : c
+            )
+          };
+        });
+      }
+
+      // Update thread state from server
+      await fetchThread({ force: true });
     } catch (err) {
       console.error('Translation error:', err);
       setTranslatedText(prev => prev + '\n⚠️ Translation failed.');
@@ -585,7 +683,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
       const cnNums: { [key: string]: number } = {
         '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
         '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
-        '壹': 1, '贰': 2, '叁': 3, '肆': 4, '伍': 5, '陆': 6, '柒': 7, '捌': 8, '玖': 9, '两': 2, '倆': 2
+        '壹': 1, '贰': 2, '叁': 3, '肆': 4, '伍': 5, '陆': 6, '柒': 7, '捌': 8, '玖': 9, '倆': 2
       };
       const cnUnits: { [key: string]: number } = {
         '十': 10, '拾': 10,
@@ -899,14 +997,14 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[var(--background)] relative">
+    <div className="flex flex-col h-screen h-[100dvh] w-full overflow-hidden bg-[var(--background)] relative">
       {/* Settings Overlay */}
       {showSettings && (
         <SettingsOverlay 
           fontSize={fontSize}
           setFontSize={setFontSize}
           displayMode={displayMode}
-          setDisplayMode={setDisplayMode}
+          setDisplayMode={updateDisplayMode}
           prefetchEnabled={prefetchEnabled}
           setPrefetchEnabled={setPrefetchEnabled}
           prefetchCount={prefetchCount}
@@ -1062,7 +1160,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
               translatedText={translatedText}
               isTranslating={isTranslating}
               displayMode={displayMode}
-              setDisplayMode={setDisplayMode}
+              setDisplayMode={updateDisplayMode}
               fontSize={fontSize}
               handleTranslateChapter={handleTranslateChapter}
               setShowChapterList={setShowChapterList}

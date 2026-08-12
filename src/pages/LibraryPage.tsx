@@ -23,6 +23,7 @@ interface ThreadItem {
   chapter_count: number;
   created_at: string;
   last_read?: string;
+  last_read_id?: number | null;
   progress?: number;
   cover_image?: string | null;
   original_title?: string | null;
@@ -60,13 +61,13 @@ interface ThreadHallucinationAudit {
 }
 
 interface LibraryPageProps {
-  onOpenThread?: (threadId: number) => void;
+  onOpenThread?: (threadId: number, chapterId?: number) => void;
 }
 
 interface LibraryBookCardProps {
   thread: ThreadItem;
   actions: {
-    onOpen: () => void;
+    onOpen: (chapterId?: number) => void;
     onDelete: () => void;
     onBatchTranslate: () => void;
     onEditCover: () => void;
@@ -94,8 +95,11 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
   return (
     <Card className="overflow-hidden group hover:shadow-xl hover:border-[var(--primary)]/30 transition-all duration-300 bg-[var(--card)] border-[var(--border)]">
       <CardContent className="p-0 flex flex-col h-full">
-        {/* Poster Area */}
-        <div className="relative aspect-[3/4] bg-[var(--secondary)] overflow-hidden">
+        {/* Poster Area - Click image box to open thread */}
+        <div 
+          className="relative aspect-[3/4] bg-[var(--secondary)] overflow-hidden cursor-pointer" 
+          onClick={() => onOpen()}
+        >
           {thread.cover_image ? (
             <img 
               src={thread.cover_image} 
@@ -139,7 +143,10 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
             <Button 
               size="icon" 
               className="w-12 h-12 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-lg transform scale-90 group-hover:scale-100 transition-all duration-300 flex items-center justify-center" 
-              onClick={onOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen();
+              }}
             >
               <Play size={24} className="fill-current ml-0.5" />
             </Button>
@@ -249,6 +256,36 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
           )}
           
           <div className="mt-auto space-y-3">
+            {/* Resume / Start Reading Action Button */}
+            <div>
+              {thread.last_read ? (
+                <Button 
+                  size="sm" 
+                  className="w-full rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] font-bold hover:opacity-90 transition-all flex items-center justify-center gap-1.5 py-2 text-[11px] shadow-md shadow-[var(--primary)]/20"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen(thread.last_read_id ?? undefined);
+                  }}
+                >
+                  <Play size={13} className="fill-current" />
+                  <span className="truncate">Resume: {thread.last_read}</span>
+                </Button>
+              ) : (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="w-full rounded-xl border-[var(--primary)]/30 text-[var(--primary)] font-bold hover:bg-[var(--primary)]/10 transition-all flex items-center justify-center gap-1.5 py-2 text-[11px]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen();
+                  }}
+                >
+                  <BookOpen size={13} />
+                  <span>Start Reading</span>
+                </Button>
+              )}
+            </div>
+
             {/* Progress */}
             <div className="space-y-1">
               <div className="flex justify-between text-[9px] font-bold text-[var(--muted-foreground)] uppercase tracking-tighter">
@@ -333,16 +370,36 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     fetchThreads();
   }, [fetchThreads]);
 
-  // Silently refresh when batch translation completes
+  // Silently refresh when batch translation is in progress or completes
   useEffect(() => {
+    let lastCompletedCount = -1;
+
+    const handleBatchProgress = (e: Event) => {
+      const customEv = e as CustomEvent;
+      const detail = customEv.detail;
+      if (detail && detail.completed !== lastCompletedCount) {
+        lastCompletedCount = detail.completed;
+        fetch(getApiUrl(`/api/threads?t=${Date.now()}`), { cache: 'no-store' })
+          .then(res => res.json())
+          .then(data => setThreads(data))
+          .catch(() => {});
+      }
+    };
+
     const handleBatchCompleted = () => {
-      fetch(getApiUrl('/api/threads'))
+      fetch(getApiUrl(`/api/threads?t=${Date.now()}`), { cache: 'no-store' })
         .then(res => res.json())
         .then(data => setThreads(data))
         .catch(() => {});
     };
+
+    window.addEventListener('batch-progress', handleBatchProgress);
     window.addEventListener('batch-completed', handleBatchCompleted);
-    return () => window.removeEventListener('batch-completed', handleBatchCompleted);
+
+    return () => {
+      window.removeEventListener('batch-progress', handleBatchProgress);
+      window.removeEventListener('batch-completed', handleBatchCompleted);
+    };
   }, []);
 
   const handleDelete = async (id: number) => {
@@ -565,7 +622,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                     </div>
 
                     <div className="flex items-center gap-3 pt-1">
-                      <Button size="sm" className="rounded-xl px-5 font-bold shadow-lg shadow-[var(--primary)]/20 text-[10px] h-9" onClick={() => onOpenThread?.(book.id)}>
+                      <Button size="sm" className="rounded-xl px-5 font-bold shadow-lg shadow-[var(--primary)]/20 text-[10px] h-9" onClick={() => onOpenThread?.(book.id, book.last_read_id ?? undefined)}>
                         <Play size={14} className="fill-current mr-2" /> RESUME
                       </Button>
                       <Button variant="ghost" size="sm" className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground)] text-[10px] h-9" onClick={() => onOpenThread?.(book.id)}>
@@ -613,7 +670,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             key={thread.id} 
             thread={thread} 
             actions={{
-              onOpen: () => onOpenThread?.(thread.id),
+              onOpen: (chapterId?: number) => onOpenThread?.(thread.id, chapterId),
               onDelete: () => handleDelete(thread.id),
               onBatchTranslate: () => handleOpenBatchModal(thread),
               onEditCover: () => {

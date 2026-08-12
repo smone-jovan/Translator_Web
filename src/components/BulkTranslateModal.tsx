@@ -54,37 +54,64 @@ interface BulkTranslateModalProps {
 }
 
 const ChapterItem = memo(({ ch, isSelected, onToggle }: { ch: Chapter, isSelected: boolean, onToggle: (id: number) => void }) => (
-  <ListItem 
+  <Box 
     onClick={() => onToggle(ch.id)}
     sx={{ 
+      height: '42px',
+      boxSizing: 'border-box',
       borderRadius: '10px', 
-      mb: 0.5,
+      mb: '2px',
+      px: 1.5,
       cursor: 'pointer',
-      background: isSelected ? 'rgba(var(--primary-rgb), 0.08)' : 'transparent',
-      '&:hover': { background: 'rgba(255,255,255,0.03)' }
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      background: isSelected ? 'rgba(var(--primary-rgb), 0.12)' : 'transparent',
+      border: isSelected ? '1px solid rgba(var(--primary-rgb), 0.35)' : '1px solid transparent',
+      transition: 'background 0.12s ease',
+      userSelect: 'none',
+      '&:hover': { 
+        background: isSelected ? 'rgba(var(--primary-rgb), 0.18)' : 'rgba(255,255,255,0.04)' 
+      }
     }}
   >
-    <Checkbox 
-      checked={isSelected} 
-      size="small"
-      sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: 'var(--primary)' } }}
-    />
-    <ListItemText>
-      <span style={{ fontSize: '0.8rem', fontWeight: 600, opacity: ch.has_translation ? 0.5 : 1 }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0, flex: 1, mr: 1 }}>
+      <Checkbox 
+        checked={isSelected} 
+        size="small"
+        sx={{ 
+          p: 0.5,
+          mr: 1,
+          color: 'var(--muted-foreground)', 
+          '&.Mui-checked': { color: 'var(--primary)' } 
+        }}
+      />
+      <Typography 
+        noWrap
+        sx={{ 
+          fontSize: '0.8rem', 
+          fontWeight: 600, 
+          color: 'var(--foreground)',
+          opacity: ch.has_translation ? 0.55 : 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}
+      >
         {`Ch ${ch.order}: ${ch.title_original || 'Untitled'}`}
-      </span>
+      </Typography>
       {ch.translation_status === 'prohibited' && (
-        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px' }}>
+        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px', flexShrink: 0 }}>
           PROHIBITED
         </span>
       )}
-    </ListItemText>
+    </Box>
     {ch.has_translation && (
       <Tooltip title="Already translated. Re-translating will overwrite it.">
-        <History sx={{ fontSize: 16, opacity: 0.5, color: 'var(--primary)' }} />
+        <History sx={{ fontSize: 16, opacity: 0.5, color: 'var(--primary)', flexShrink: 0 }} />
       </Tooltip>
     )}
-  </ListItem>
+  </Box>
 ));
 
 export default function BulkTranslateModal({ 
@@ -106,13 +133,12 @@ export default function BulkTranslateModal({
     () => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality'
   );
   const [includeProhibited, setIncludeProhibited] = useState<boolean>(false);
+  const maxEasy = Math.max(chapters.length, 1);
 
   // Update selected IDs in Easy Mode
   const updateEasySelection = (quantity: number, incProhibited = includeProhibited) => {
     const untranslated = chapters.filter(c => {
-      // is untranslated AND (we include prohibited/error OR it's neither)
-      const valid = !c.has_translation && (incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
-      return valid;
+      return !c.has_translation && (incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
     });
 
     const baseList = untranslated.length > 0 ? untranslated : chapters.filter(c => incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
@@ -162,12 +188,12 @@ export default function BulkTranslateModal({
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const selectAllUntranslated = () => {
-    const untranslated = chapters.filter(c => !c.has_translation && (includeProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'))).map(c => c.id);
+    const untranslated = chapters.filter(c => !c.has_translation).map(c => c.id);
     setSelectedIds(untranslated);
   };
 
   const selectAll = () => {
-    const all = chapters.filter(c => includeProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error')).map(c => c.id);
+    const all = chapters.map(c => c.id);
     setSelectedIds(all);
   };
 
@@ -209,16 +235,17 @@ export default function BulkTranslateModal({
       onClose={onClose}
       fullWidth
       maxWidth="sm"
-      // @ts-ignore
-      PaperProps={{
-        sx: {
-          background: 'var(--card)', 
-          backgroundImage: 'radial-gradient(circle at top left, var(--primary), transparent)',
-          border: '1px solid var(--border)',
-          borderRadius: '28px',
-          color: 'var(--foreground)',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-          overflow: 'hidden'
+      slotProps={{
+        paper: {
+          sx: {
+            background: 'var(--card)', 
+            backgroundImage: 'radial-gradient(circle at top left, var(--primary), transparent)',
+            border: '1px solid var(--border)',
+            borderRadius: '28px',
+            color: 'var(--foreground)',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            overflow: 'hidden'
+          }
         }
       }}
     >
@@ -321,14 +348,15 @@ export default function BulkTranslateModal({
               value={range}
               onChange={handleRangeChange}
               min={1}
-              max={30}
+              max={maxEasy}
               step={1}
               marks={[
                 { value: 1, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>1</span> },
-                { value: 5, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>5</span> },
-                { value: 10, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>10</span> },
-                { value: 20, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>20</span> },
-                { value: 30, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>30</span> }
+                ...(maxEasy >= 5 ? [{ value: 5, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>5</span> }] : []),
+                ...(maxEasy >= 10 ? [{ value: 10, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>10</span> }] : []),
+                ...(maxEasy >= 25 ? [{ value: 25, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>25</span> }] : []),
+                ...(maxEasy >= 50 ? [{ value: 50, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>50</span> }] : []),
+                { value: maxEasy, label: <span style={{ color: 'var(--primary)', fontSize: '10px', fontWeight: 800 }}>{maxEasy}</span> }
               ]}
               sx={{ 
                 color: 'var(--primary)', 
@@ -347,6 +375,50 @@ export default function BulkTranslateModal({
                 }
               }}
             />
+
+            {/* Quick preset buttons in Easy Mode */}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => { setRange(Math.min(5, maxEasy)); updateEasySelection(Math.min(5, maxEasy)); }}
+                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              >
+                Next 5
+              </Button>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => { setRange(Math.min(10, maxEasy)); updateEasySelection(Math.min(10, maxEasy)); }}
+                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              >
+                Next 10
+              </Button>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => { setRange(Math.min(25, maxEasy)); updateEasySelection(Math.min(25, maxEasy)); }}
+                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              >
+                Next 25
+              </Button>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => { setRange(maxEasy); selectAllUntranslated(); }}
+                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 800 }}
+              >
+                All Untranslated
+              </Button>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                onClick={() => { setRange(maxEasy); selectAll(); }}
+                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              >
+                All ({chapters.length})
+              </Button>
+            </Box>
 
             {/* Quick Prohibited Toggle in Easy Mode */}
             {(() => {
@@ -394,12 +466,12 @@ export default function BulkTranslateModal({
                 <ListAlt fontSize="small" sx={{ color: 'var(--primary)' }} /> Select Chapters Manually
               </Typography>
               <Typography variant="caption" sx={{ color: 'var(--primary)', fontWeight: 800 }}>
-                {selectedIds.length} Selected
+                {selectedIds.length} of {chapters.length} Selected
               </Typography>
             </Box>
 
             {/* Quick action buttons */}
-            <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
               <Button 
                 size="small" 
                 variant="outlined" 
@@ -426,7 +498,7 @@ export default function BulkTranslateModal({
                   fontWeight: 700
                 }}
               >
-                Select All
+                Select All ({chapters.length})
               </Button>
               <Button 
                 size="small" 
@@ -461,28 +533,29 @@ export default function BulkTranslateModal({
               </Button>
             </Box>
 
-            {/* Manual Checkbox List */}
+            {/* Manual Checkbox List with Fast Virtualization */}
             <Box sx={{ 
-              height: 210, 
-              background: 'rgba(0,0,0,0.25)', 
+              height: 260, 
+              background: 'rgba(0,0,0,0.3)', 
               border: '1px solid var(--border)',
               borderRadius: '16px', 
-              p: 1 
+              p: 0.5,
+              overflow: 'hidden'
             }}>
-              <List dense sx={{ py: 0, height: '100%', p: 0 }}>
-                <Virtuoso
-                  style={{ height: '100%' }}
-                  data={chapters}
-                  itemContent={(_index, ch) => (
-                    <ChapterItem 
-                      key={ch.id} 
-                      ch={ch} 
-                      isSelected={selectedSet.has(ch.id)} 
-                      onToggle={toggleChapter} 
-                    />
-                  )}
-                />
-              </List>
+              <Virtuoso
+                style={{ height: '100%', width: '100%' }}
+                data={chapters}
+                overscan={600}
+                computeItemKey={(_index, ch) => ch.id}
+                itemContent={(_index, ch) => (
+                  <ChapterItem 
+                    key={ch.id} 
+                    ch={ch} 
+                    isSelected={selectedSet.has(ch.id)} 
+                    onToggle={toggleChapter} 
+                  />
+                )}
+              />
             </Box>
           </Box>
         )}

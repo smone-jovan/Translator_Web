@@ -391,6 +391,10 @@ Recent completed platform work (ADR-034 through ADR-070):
 - ADR-085: mobile screen sleep recovery via `sessionStorage` caching & `visibilitychange` wake listeners; continuous `displayMode` persistence
 - ADR-086: text-only Gemini & Gemma model catalog refresh with updated RPM/RPD rate-limit delays
 - ADR-087: garbage glossary entry filtering (`is_garbage_lorebook_entry`) in prompt builder and auto-save persistence
+- ADR-088: real-time live batch translation event broadcasting (`batch-progress`) for 0ms chapter grid reactivity
+- ADR-089: fixed desktop sidebar anchoring (`fixed top-0 left-0 h-screen`) and viewport-scoped mobile navigation (`md:hidden`)
+- ADR-090: interactive library cover poster navigation and instant 1-click "Resume Reading" action button
+- ADR-091: translation notes prompt instruction alignment, automatic glossary slash-splitting sanitization, and robust empty-translation detection
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

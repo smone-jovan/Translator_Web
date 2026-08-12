@@ -336,6 +336,10 @@ export default function SettingsPage() {
         setTranslationMode(data.translation_mode);
         localStorage.setItem('translation_mode', data.translation_mode);
       }
+      if (data.display_mode) {
+        setDisplayMode(data.display_mode);
+        localStorage.setItem('display_mode', data.display_mode);
+      }
     } catch {
       console.error('Failed to fetch server settings');
     }
@@ -462,7 +466,7 @@ export default function SettingsPage() {
     }
   };
 
-  const handleLlmProviderChange = (provider: 'lm_studio' | 'openai' | 'gemini') => {
+  const handleLlmProviderChange = (provider: LlmProvider) => {
     setLlmProvider(provider);
     localStorage.setItem('llm_provider', provider);
     saveSettingsToServer({ llm_provider: provider });

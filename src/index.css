@@ -52,7 +52,8 @@
   }
 }
 
-:root[data-theme="black"] {
+:root[data-theme="black"],
+:root[data-theme="dark"] {
   --background: #111418;
   --foreground: #f2f2f3;
   --card: #181c22;
@@ -183,13 +184,24 @@
 /* ============================================
    Base Styles
    ============================================ */
+html, body, #root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100%;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
 }
 
 /* ============================================

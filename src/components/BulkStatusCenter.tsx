@@ -67,6 +67,9 @@ export default function BulkStatusCenter() {
           if (data.active) {
             setStatus(data);
             setShowFinished(false);
+            window.dispatchEvent(new CustomEvent('batch-progress', {
+              detail: data
+            }));
           } else {
             // If it was active but now not, check if we just completed it
             setStatus(prev => {
@@ -103,7 +106,10 @@ export default function BulkStatusCenter() {
           }
         }
       } catch (err) {
-        console.error('Error checking active batch:', err);
+        // Backend might be offline or starting up; suppress noisy console error
+        if (import.meta.env.DEV) {
+          console.debug('Active batch check skipped (backend offline or reconnecting):', err);
+        }
       }
     };
 

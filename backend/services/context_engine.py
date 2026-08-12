@@ -253,25 +253,52 @@ class ContextEngine:
         """
         Bersihkan bagian 'Translator Notes', 'Notes', dan 'Footnotes' dari teks terjemahan cerita
         sehingga pengguna mendapatkan teks prosa murni 100%.
+        Mendukung pembersihan catatan baik di akhir, tengah, maupun di awal teks (jika AI salah urutan).
         """
         if not text:
             return ""
         import re
-        
-        # Pola pencarian header catatan penerjemah & catatan kaki
+
+        cleaned = text.strip()
+
+        # 1. Cek apakah ada catatan penerjemah di AWAL teks (sebelum cerita)
+        start_header_pattern = re.compile(
+            r"^(?:[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*|[-—*_#]*\s*Footnotes?[:\s]*)", 
+            re.IGNORECASE
+        )
+        if start_header_pattern.match(cleaned):
+            lines = cleaned.split("\n")
+            story_start_idx = -1
+            in_notes_header = True
+
+            for i, line in enumerate(lines):
+                l_strip = line.strip()
+                if not l_strip:
+                    continue
+                if in_notes_header:
+                    if start_header_pattern.match(l_strip):
+                        continue
+                    if l_strip.startswith(("-", "*", "•", "—")) or "→" in l_strip or "->" in l_strip:
+                        continue
+                    story_start_idx = i
+                    break
+
+            if story_start_idx != -1:
+                cleaned = "\n".join(lines[story_start_idx:]).strip()
+            else:
+                # Teks HANYA berisi catatan penerjemah tanpa ada cerita
+                return ""
+
+        # 2. Cek apakah ada catatan penerjemah di AKHIR / TENGAH teks (setelah cerita)
         header_pattern = re.compile(
             r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?|\n\s*[-—*_#]*\s*Footnotes?[:\s]?)", 
             re.IGNORECASE
         )
-        
-        matches = list(header_pattern.finditer(text))
-        if not matches:
-            return text
-        
-        # Potong dari header pertama yang muncul (baik Footnotes maupun Translator Notes)
-        first_match = matches[0]
-        cleaned = text[:first_match.start()].strip()
-        
+        matches = list(header_pattern.finditer(cleaned))
+        if matches:
+            first_match = matches[0]
+            cleaned = cleaned[:first_match.start()].strip()
+
         # Bersihkan sisa-sisa formatting markdown di ujung teks
         while True:
             prev_len = len(cleaned)
@@ -343,16 +370,14 @@ class ContextEngine:
 
         cleaned = ContextEngine.strip_translator_notes(cleaned)
         
-        # Fallback again
+        # If stripping translator notes resulted in empty string, it means the output had ONLY translator notes
+        # (no actual story translated). We do NOT restore the notes as if they were story prose.
         if not cleaned.strip():
-            cleaned = text
+            return ""
 
         cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
+        cleaned = HallucinationDetector.strip_word_soup_hallucinations(cleaned)
         
-        # Final safety fallback
-        if not cleaned.strip():
-            cleaned = text
-
         return cleaned.strip()
 
     @staticmethod
@@ -398,13 +423,13 @@ class ContextEngine:
             
             if separator:
                 parts = line.split(separator, 1)
-                term = parts[0].strip(" \t\n\r*•-“”\"'")
-                term = re.sub(r"\*\*$", "", term).strip(" \t\n\r*•-“”\"'").strip()
+                raw_term = parts[0].strip(" \t\n\r*•-“”\"'")
+                raw_term = re.sub(r"\*\*$", "", raw_term).strip(" \t\n\r*•-“”\"'").strip()
                 
                 desc = parts[1].strip(" \t\n\r*•-“”\"'")
                 desc = re.sub(r"\*\*$", "", desc).strip(" \t\n\r*•-“”\"'").strip()
                 
-                if not term or not desc:
+                if not raw_term or not desc:
                     continue
                 
                 # Abaikan kalau AI cuma bilang "tidak ada istilah baru" atau deskripsi kosong
@@ -412,63 +437,69 @@ class ContextEngine:
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
-                # Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
-                # ATAU merupakan pinyin term yang valid (2+ Latin words, maks 30 chars).
-                # Ini mencegah kalimat Bahasa Inggris panjang tersimpan, tapi mengizinkan
-                # nama-nama pinyin seperti "Ye Xiu", "Meng Hao" (penting untuk konsistensi novel kelas atas).
-                chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-                has_chinese = chinese_pattern.search(term)
-                # Pinyin heuristic: 2-4 short words, each capitalized, total <= 30 chars
-                pinyin_pattern = re.compile(r"^[A-Z][a-z]{0,8}(\s[A-Z][a-z]{0,8}){0,3}$")
-                is_valid_pinyin = bool(pinyin_pattern.match(term)) and len(term) <= GLOSSARY_TERM_MAX_LENGTH
-                if not has_chinese and not is_valid_pinyin:
-                    continue
-                if len(term) > GLOSSARY_TERM_MAX_LENGTH:
-                    continue
+                # Dukung pemisahan term berganda dengan garis miring (e.g. 夏茵 / 夏恩 / 莎恩 -> Shain)
+                subterms = [st.strip(" \t\n\r*•-“”\"'") for st in raw_term.split("/") if st.strip(" \t\n\r*•-“”\"'")]
+                if not subterms:
+                    subterms = [raw_term]
 
-                if len(term) >= GLOSSARY_MIN_TERM_LENGTH:
-                    term_clean = term.lower()
-                    
-                    # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
-                    if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
+                for term in subterms:
+                    # Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
+                    # ATAU merupakan pinyin term yang valid (2+ Latin words, maks 30 chars).
+                    # Ini mencegah kalimat Bahasa Inggris panjang tersimpan, tapi mengizinkan
+                    # nama-nama pinyin seperti "Ye Xiu", "Meng Hao" (penting untuk konsistensi novel kelas atas).
+                    chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
+                    has_chinese = chinese_pattern.search(term)
+                    # Pinyin heuristic: 2-4 short words, each capitalized, total <= 30 chars
+                    pinyin_pattern = re.compile(r"^[A-Z][a-z]{0,8}(\s[A-Z][a-z]{0,8}){0,3}$")
+                    is_valid_pinyin = bool(pinyin_pattern.match(term)) and len(term) <= GLOSSARY_TERM_MAX_LENGTH
+                    if not has_chinese and not is_valid_pinyin:
                         continue
+                    if len(term) > GLOSSARY_TERM_MAX_LENGTH:
+                        continue
+
+                    if len(term) >= GLOSSARY_MIN_TERM_LENGTH:
+                        term_clean = term.lower()
                         
-                    # Skip jika term merupakan metadata / teks instruksi AI atau ampas
-                    if any(gk in term_clean for gk in garbage_keywords) or ContextEngine.is_garbage_lorebook_entry(term, desc):
-                        continue
+                        # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
+                        if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
+                            continue
+                            
+                        # Skip jika term merupakan metadata / teks instruksi AI atau ampas
+                        if any(gk in term_clean for gk in garbage_keywords) or ContextEngine.is_garbage_lorebook_entry(term, desc):
+                            continue
+                            
+                        # Cegah duplikasi di dalam respon AI yang sama (internal deduplication)
+                        if term_clean in seen_terms:
+                            continue
+                        seen_terms.add(term_clean)
                         
-                    # Cegah duplikasi di dalam respon AI yang sama (internal deduplication)
-                    if term_clean in seen_terms:
-                        continue
-                    seen_terms.add(term_clean)
-                    
-                    # Cek dulu di basis data biar gak dobel (case-insensitive & trim spaces)
-                    exists_stmt = select(LorebookEntry).where(
-                        LorebookEntry.thread_id == thread_id,
-                        func.lower(func.trim(LorebookEntry.original_term)) == term_clean
-                    )
-                    exists = db.execute(exists_stmt).scalars().first()
-                    
-                    if not exists:
-                        # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
-                        final_translated = desc
-                        final_notes = f"Auto-extracted: {term}"
-
-                        # Strip trailing punctuation sebelum cek kurung tutup
-                        desc_check = desc.rstrip('.!;,。！ ')
-                        if "(" in desc_check and desc_check.endswith(")"):
-                            p_start = desc_check.rfind("(")
-                            final_translated = desc_check[:p_start].strip()
-                            final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
-
-                        new_entry = LorebookEntry(
-                            thread_id=thread_id,
-                            original_term=term,
-                            translated_term=final_translated,
-                            notes=final_notes
+                        # Cek dulu di basis data biar gak dobel (case-insensitive & trim spaces)
+                        exists_stmt = select(LorebookEntry).where(
+                            LorebookEntry.thread_id == thread_id,
+                            func.lower(func.trim(LorebookEntry.original_term)) == term_clean
                         )
-                        db.add(new_entry)
-                        new_entries.append(f"{term} -> {final_translated}")
+                        exists = db.execute(exists_stmt).scalars().first()
+                        
+                        if not exists:
+                            # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
+                            final_translated = desc
+                            final_notes = f"Auto-extracted: {term}"
+
+                            # Strip trailing punctuation sebelum cek kurung tutup
+                            desc_check = desc.rstrip('.!;,。！ ')
+                            if "(" in desc_check and desc_check.endswith(")"):
+                                p_start = desc_check.rfind("(")
+                                final_translated = desc_check[:p_start].strip()
+                                final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
+
+                            new_entry = LorebookEntry(
+                                thread_id=thread_id,
+                                original_term=term,
+                                translated_term=final_translated,
+                                notes=final_notes
+                            )
+                            db.add(new_entry)
+                            new_entries.append(f"{term} -> {final_translated}")
         
         if new_entries:
             db.commit()

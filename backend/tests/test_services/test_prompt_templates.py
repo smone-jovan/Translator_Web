@@ -54,6 +54,6 @@ def test_build_core_translation_guidelines_pure_prose_no_footnotes():
     """Test that prompt instructions require pure prose without inline annotations or footnotes."""
     prompt = build_core_translation_guidelines(lang_name="Indonesian", genre="default")
     assert "ABSOLUTELY NO INLINE DICTIONARY NOTES OR BILINGUAL ANNOTATIONS" in prompt
-    assert "DO NOT output any Footnotes or Translator Notes section" in prompt
+    assert "DO NOT embed footnotes in the story body" in prompt
 
 

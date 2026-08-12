@@ -152,6 +152,11 @@
 - **Implementation**: Sinkronisasi `displayMode` ke `localStorage` dan pemulihan layar mati mobile via `sessionStorage` cache & `visibilitychange` listener (ADR-085), pembaruan katalog model terjemahan Gemini & Gemma dengan pengaturan RPM/RPD terbaru (ADR-086), serta penyaringan otomatis istilah ampas via `ContextEngine.is_garbage_lorebook_entry()` (ADR-087).
 - **Status**: Finished.
 
+## Phase 19: Translation Notes Prompt Alignment & Glossary Sanitization (COMPLETE)
+- **Goal**: Mencegah AI task hijacking/confusion yang menyebabkan hanya catatan penerjemah yang dihasilkan alih-alih isi bab, serta menyaring istilah majemuk bergaris miring di Lorebook.
+- **Implementation**: Penyelarasan instruksi prompt di `prompt_templates.py`, pembersihan otomatis istilah majemuk bergaris miring di `auto_save_glossary()`, pengerasan `strip_translator_notes()` dan `clean_final_translation()` di `context_engine.py`, migrasi sanitasi database `app.db`, serta re-translasi bab terdampak (ADR-091).
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing

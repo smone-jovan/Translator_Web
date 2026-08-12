@@ -119,10 +119,17 @@ def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None =
         raise e
 
 
-def get_active_api_key(provider: str, gs=None) -> str:
+# Global in-memory round-robin counters to distribute requests evenly across healthy keys
+_key_rotation_counters: dict[str, int] = {
+    "gemini": 0,
+    "openai": 0,
+    "openrouter": 0
+}
+
+def get_active_api_key(provider: str, gs=None, auto_advance: bool = False) -> str:
     """
-    Get the active API key for a provider.
-    Checks multiple keys first, then falls back to single key.
+    Get the active API key for a provider with true round-robin load balancing.
+    Automatically skips keys that have exceeded their daily quota.
     """
     secrets = load_secrets()
     
@@ -130,21 +137,30 @@ def get_active_api_key(provider: str, gs=None) -> str:
         _clear_stale_exhausted_keys()
         model = gs.gemini_model if gs else ""
         if gs and gs.gemini_api_keys:
-            keys = json.loads(gs.gemini_api_keys)
+            try:
+                keys = json.loads(gs.gemini_api_keys)
+            except Exception:
+                keys = []
             if keys:
-                # Find the next available non-exhausted key starting from current index
-                start_idx = gs.gemini_active_key_index if gs.gemini_active_key_index < len(keys) else 0
-                for offset in range(len(keys)):
-                    idx = (start_idx + offset) % len(keys)
-                    dict_key = f"{keys[idx]}::{model}" if model else keys[idx]
-                    if dict_key not in exhausted_gemini_keys:
-                        # Found a healthy key, optionally update the index if we skipped
-                        if offset > 0:
-                            gs.gemini_active_key_index = idx
-                        return keys[idx]
-                # If we get here, ALL keys are exhausted for this model
-                model_str = f" for model '{model}'" if model else ""
-                raise QuotaExhaustedError(f"All available Gemini API keys have hit their daily quota limit{model_str}.")
+                # Find all healthy keys that haven't hit their daily quota
+                healthy_keys = [
+                    k for k in keys 
+                    if (f"{k}::{model}" if model else k) not in exhausted_gemini_keys
+                ]
+                if not healthy_keys:
+                    model_str = f" for model '{model}'" if model else ""
+                    raise QuotaExhaustedError(f"All available Gemini API keys ({len(keys)} keys) have hit their daily quota limit{model_str}.")
+                
+                if hasattr(gs, 'gemini_active_key_index') and gs.gemini_active_key_index is not None:
+                    chosen_idx = gs.gemini_active_key_index % len(healthy_keys)
+                else:
+                    current_count = _key_rotation_counters["gemini"]
+                    chosen_idx = current_count % len(healthy_keys)
+                    if auto_advance:
+                        _key_rotation_counters["gemini"] = (current_count + 1) % 1_000_000
+                
+                chosen_key = healthy_keys[chosen_idx]
+                return chosen_key
         
         single_key = secrets.get("gemini_api_key", "")
         if single_key:
@@ -156,18 +172,36 @@ def get_active_api_key(provider: str, gs=None) -> str:
     
     elif provider == "openai":
         if gs and gs.openai_api_keys:
-            keys = json.loads(gs.openai_api_keys)
+            try:
+                keys = json.loads(gs.openai_api_keys)
+            except Exception:
+                keys = []
             if keys:
-                idx = gs.openai_active_key_index if gs.openai_active_key_index < len(keys) else 0
-                return keys[idx]
+                if hasattr(gs, 'openai_active_key_index') and gs.openai_active_key_index is not None:
+                    chosen_idx = gs.openai_active_key_index % len(keys)
+                else:
+                    current_count = _key_rotation_counters["openai"]
+                    chosen_idx = current_count % len(keys)
+                    if auto_advance:
+                        _key_rotation_counters["openai"] = (current_count + 1) % 1_000_000
+                return keys[chosen_idx]
         return secrets.get("openai_api_key", "")
 
     elif provider == "openrouter":
         if gs and gs.openrouter_api_keys:
-            keys = json.loads(gs.openrouter_api_keys)
+            try:
+                keys = json.loads(gs.openrouter_api_keys)
+            except Exception:
+                keys = []
             if keys:
-                idx = gs.openrouter_active_key_index if gs.openrouter_active_key_index < len(keys) else 0
-                return keys[idx]
+                if hasattr(gs, 'openrouter_active_key_index') and gs.openrouter_active_key_index is not None:
+                    chosen_idx = gs.openrouter_active_key_index % len(keys)
+                else:
+                    current_count = _key_rotation_counters["openrouter"]
+                    chosen_idx = current_count % len(keys)
+                    if auto_advance:
+                        _key_rotation_counters["openrouter"] = (current_count + 1) % 1_000_000
+                return keys[chosen_idx]
         return secrets.get("openrouter_api_key", "")
     
     return ""
@@ -175,38 +209,37 @@ def get_active_api_key(provider: str, gs=None) -> str:
 
 def rotate_api_key(provider: str, gs) -> str:
     """
-    Rotate to the next API key for a provider.
-    Returns the new active key.
+    Explicitly advance to the next API key for a provider.
+    Returns the new active key and updates the active key index on gs.
     """
-    if provider == "gemini" and gs.gemini_api_keys:
-        _clear_stale_exhausted_keys()
-        model = gs.gemini_model if gs else ""
-        keys = json.loads(gs.gemini_api_keys)
-        if len(keys) > 1:
-            start_idx = gs.gemini_active_key_index
-            for offset in range(1, len(keys) + 1):
-                idx = (start_idx + offset) % len(keys)
-                dict_key = f"{keys[idx]}::{model}" if model else keys[idx]
-                if dict_key not in exhausted_gemini_keys:
-                    gs.gemini_active_key_index = idx
-                    print(f"[KEY ROTATE] Gemini: switched to key #{gs.gemini_active_key_index}")
-                    return keys[idx]
-            # All keys are exhausted
-            raise QuotaExhaustedError("All available Gemini API keys have hit their daily quota limit.")
-    
-    elif provider == "openai" and gs.openai_api_keys:
-        keys = json.loads(gs.openai_api_keys)
-        if len(keys) > 1:
-            gs.openai_active_key_index = (gs.openai_active_key_index + 1) % len(keys)
-            print(f"[KEY ROTATE] OpenAI: switched to key #{gs.openai_active_key_index}")
-            return keys[gs.openai_active_key_index]
+    if gs:
+        if provider == "gemini" and gs.gemini_api_keys:
+            try:
+                keys = json.loads(gs.gemini_api_keys)
+                if keys:
+                    gs.gemini_active_key_index = ((gs.gemini_active_key_index or 0) + 1) % len(keys)
+                    _key_rotation_counters["gemini"] = gs.gemini_active_key_index
+            except Exception:
+                pass
+        elif provider == "openai" and gs.openai_api_keys:
+            try:
+                keys = json.loads(gs.openai_api_keys)
+                if keys:
+                    gs.openai_active_key_index = ((gs.openai_active_key_index or 0) + 1) % len(keys)
+                    _key_rotation_counters["openai"] = gs.openai_active_key_index
+            except Exception:
+                pass
+        elif provider == "openrouter" and gs.openrouter_api_keys:
+            try:
+                keys = json.loads(gs.openrouter_api_keys)
+                if keys:
+                    gs.openrouter_active_key_index = ((gs.openrouter_active_key_index or 0) + 1) % len(keys)
+                    _key_rotation_counters["openrouter"] = gs.openrouter_active_key_index
+            except Exception:
+                pass
+    else:
+        if provider in _key_rotation_counters:
+            _key_rotation_counters[provider] = (_key_rotation_counters[provider] + 1) % 1_000_000
 
-    elif provider == "openrouter" and gs.openrouter_api_keys:
-        keys = json.loads(gs.openrouter_api_keys)
-        if len(keys) > 1:
-            gs.openrouter_active_key_index = (gs.openrouter_active_key_index + 1) % len(keys)
-            print(f"[KEY ROTATE] OpenRouter: switched to key #{gs.openrouter_active_key_index}")
-            return keys[gs.openrouter_active_key_index]
-    
-    # No rotation possible, return current key
-    return get_active_api_key(provider, gs)
+    print(f"[KEY ROTATE] {provider.capitalize()}: shifted to next key round-robin (counter={_key_rotation_counters.get(provider, 0)})")
+    return get_active_api_key(provider, gs, auto_advance=False)

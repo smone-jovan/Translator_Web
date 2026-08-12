@@ -24,7 +24,7 @@ def test_thread15_genre_detection_and_prompt_building():
     
     # Verify pure prose without footnotes requirements
     assert "ABSOLUTELY NO INLINE DICTIONARY NOTES OR BILINGUAL ANNOTATIONS" in prompt
-    assert "DO NOT output any Footnotes or Translator Notes section" in prompt
+    assert "DO NOT embed footnotes in the story body" in prompt
     assert "[GENRE:" in prompt
 
 

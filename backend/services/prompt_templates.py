@@ -216,7 +216,7 @@ Chinese Text Handling & Idioms (成语 / 俗语 / 歇后语):
 Translate ALL Chinese text, slang, and idioms naturally into smooth, immersive {lang_name} prose.
 Do NOT leave any Chinese characters or raw pinyin in the main story text.
 DO NOT embed inline dictionary parens, bilingual annotations, or explanation notes anywhere in the story (e.g. NEVER output 'ChineseTerm (English translation)', '(lust fluid)', or '[1] Footnote').
-DO NOT output any Footnotes or Translator Notes section. Output ONLY the pure translated story text.
+DO NOT embed footnotes in the story body. Translate the full story prose faithfully from beginning to end.
 
 Consistency & Glossary Priority:
 **STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
@@ -243,16 +243,18 @@ def build_translator_notes_instruction(is_quality: bool, lang_name: str = "Engli
     """Build the translator notes instruction based on translation mode."""
     if is_quality:
         return f"""
-**ZERO TOLERANCE**: DO NOT include any term in "Translator Notes" that does not appear in the current chapter text. DO NOT mention terms to say they are "not present". If it's not in the chapter, it MUST NOT be in the notes.
-After the chapter, if needed, add a section starting EXACTLY with the phrase "### TRANSLATOR NOTES:" for NEW terms (names, items, etc.) FOUND IN THIS CHAPTER.
-**FORMAT**: You MUST use this exact format: '- Original Chinese Term → Translated Term (Brief notes tentang istilah tersebut)'.
-Do NOT include terms from the Style Reference examples unless they are in the chapter.
-If no new terms, skip.
-STOP GENERATING immediately after you finish the Translator Notes list. Do NOT output anything else.
+[TRANSLATION COMPLETION & OPTIONAL NOTES]:
+- PRIMARY DIRECTIVE: You MUST translate the ENTIRE chapter story text from beginning to end. NEVER replace the story translation with a list of notes or summaries.
+- After the full story text is completely translated, if and only if there are NEW terms (character names, special items, fictional organizations) that were not in the glossary, you MAY append an optional section starting EXACTLY with the header:
+### TRANSLATOR NOTES:
+- **FORMAT**: Use this exact format: '- Original Chinese Term → Translated Term (Brief note)'
+- **ZERO TOLERANCE**: DO NOT include any term that does not appear in the chapter. DO NOT mention terms to say they are "not present".
+- If no new terms exist, do NOT output the notes section.
+- STOP GENERATING immediately after the story or notes finish. Do NOT output any concluding remarks or conversational filler.
 """
     else:
         return """
-Do NOT output any Translator Notes. STOP GENERATING immediately after the story ends. Do NOT output anything else.
+Output ONLY the pure translated story text. Do NOT output any Translator Notes or Footnotes. STOP GENERATING immediately after the story ends.
 """
 
 

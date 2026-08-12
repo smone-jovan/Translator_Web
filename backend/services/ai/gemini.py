@@ -100,6 +100,11 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 if any(p in err_str for p in ["prohibited", "content_filter", "safety", "blocked", "block reason", "policy", "rejected"]):
                     return PROHIBITED_MARKER
                 
+                # If Gemini threw 429 Quota Exceeded, mark key as exhausted for today so other requests rotate immediately
+                if "429" in err_str and any(q in err_str for q in ["quota", "exhausted", "resource_exhausted"]):
+                    from services.ai.secrets import mark_key_exhausted
+                    mark_key_exhausted("gemini", self.api_key, model)
+                
                 # Add delay before next attempt for flash-lite to handle rate limits
                 if "gemini-3.1-flash-lite" in model.lower() and "empty content" in str(e).lower():
                     import asyncio
