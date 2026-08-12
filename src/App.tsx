@@ -100,6 +100,7 @@ export default function App() {
             setOpenChapterId(null);
           }}
           onReadingChapterChange={setIsReadingChapter}
+          onActiveChapterChange={setOpenChapterId}
         />
         {!isReadingChapter && <BulkStatusCenter />}
         <Toaster theme="system" position="bottom-center" richColors closeButton />

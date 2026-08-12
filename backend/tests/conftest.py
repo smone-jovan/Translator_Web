@@ -7,13 +7,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from database import Base, GlobalSetting, Chapter, Thread
+from sqlalchemy.pool import StaticPool
+from database import Base, GlobalSetting, Chapter, Thread, UserBookmark
 
 
 @pytest.fixture
 def db_session():
     """In-memory SQLite session for isolated testing."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_wal(dbapi_conn, connection_record):

@@ -436,6 +436,20 @@ def init_db():
             print("[MIGRASI] Menambahkan kolom 'display_mode' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN display_mode VARCHAR(20) DEFAULT 'translated'"))
             conn.commit()
+
+        # Deduplicate user_bookmarks (ensure 1 active bookmark per thread)
+        conn.execute(text("""
+            DELETE FROM user_bookmarks 
+            WHERE id NOT IN (
+                SELECT ub1.id FROM user_bookmarks ub1
+                INNER JOIN (
+                    SELECT thread_id, MAX(last_read_at) as max_time, MAX(id) as max_id
+                    FROM user_bookmarks
+                    GROUP BY thread_id
+                ) ub2 ON ub1.thread_id = ub2.thread_id AND ub1.id = ub2.max_id
+            )
+        """))
+        conn.commit()
             
     print(f"[SUKSES] Inisialisasi basis data selesai - {'ghost.db' if ACTIVE_WORKSPACE == 'ghost' else 'app.db'} siap digunakan.")
 

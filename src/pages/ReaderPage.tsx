@@ -24,6 +24,7 @@ interface ReaderPageProps {
   initialChapterId?: number | null;
   onBack: () => void;
   onReadingChapterChange?: (isReading: boolean) => void;
+  onActiveChapterChange?: (chapterId: number | null) => void;
 }
 
 const READER_SESSION_MAX_IDLE_MS = 6 * 60 * 60 * 1000;
@@ -71,7 +72,7 @@ function readReaderSession(threadId: number): ReaderSessionState | null {
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export default function ReaderPage({ threadId, initialChapterId, onBack, onReadingChapterChange }: ReaderPageProps) {
+export default function ReaderPage({ threadId, initialChapterId, onBack, onReadingChapterChange, onActiveChapterChange }: ReaderPageProps) {
   const { confirm } = useConfirm();
   const initialReaderSession = readReaderSession(threadId);
   const [thread, setThread] = useState<ThreadDetail | null>(null);
@@ -167,6 +168,14 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
     onReadingChapterChange?.(!showChapterList && selectedChapterIdx !== null);
     return () => onReadingChapterChange?.(false);
   }, [onReadingChapterChange, selectedChapterIdx, showChapterList]);
+
+  useEffect(() => {
+    if (thread && selectedChapterIdx !== null && thread.chapters?.[selectedChapterIdx]) {
+      onActiveChapterChange?.(thread.chapters[selectedChapterIdx].id);
+    } else if (showChapterList) {
+      onActiveChapterChange?.(null);
+    }
+  }, [onActiveChapterChange, selectedChapterIdx, showChapterList, thread]);
 
   useEffect(() => {
     localStorage.setItem(`auto_detect_start_${threadId}`, String(autoDetectStart));

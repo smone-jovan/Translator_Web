@@ -271,9 +271,10 @@ export default function ChapterReader({
         saveScrollPosition(pct, top);
 
         try {
+          const blob = new Blob([JSON.stringify({ scroll_progress: pct })], { type: 'application/json' });
           navigator.sendBeacon(
             getApiUrl(`/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`),
-            JSON.stringify({ scroll_progress: pct })
+            blob
           );
         } catch { /* ignore */ }
       }

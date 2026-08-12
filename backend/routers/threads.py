@@ -840,28 +840,55 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
     return {"status": "saved"}
 
 
-class ScrollUpdatePayload(BaseModel):
-    scroll_progress: float
-
+from fastapi import Request
 
 @router.put("/threads/{thread_id}/chapters/{chapter_id}/scroll")
-def update_chapter_scroll(thread_id: int, chapter_id: int, payload: ScrollUpdatePayload, db: Session = Depends(get_db)):
-    """Update scroll progress for a thread's active reading session."""
-    stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id, UserBookmark.chapter_id == chapter_id)
-    bookmark = db.execute(stmt).scalar_one_or_none()
-    if not bookmark:
-        bookmark = UserBookmark(thread_id=thread_id, chapter_id=chapter_id, scroll_progress=payload.scroll_progress)
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/progress")
+async def save_chapter_progress_universal(
+    thread_id: int, 
+    chapter_id: int, 
+    request: Request, 
+    db: Session = Depends(get_db)
+):
+    """
+    Universal scroll and progress handler supporting application/json, text/plain (sendBeacon),
+    and raw JSON bodies while maintaining a single authoritative UserBookmark per thread.
+    """
+    scroll_progress = 0.0
+    try:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            data = await request.json()
+            scroll_progress = float(data.get("scroll_progress", 0.0))
+        else:
+            raw_body = await request.body()
+            if raw_body:
+                import json
+                try:
+                    data = json.loads(raw_body.decode("utf-8"))
+                    scroll_progress = float(data.get("scroll_progress", 0.0))
+                except Exception:
+                    scroll_progress = float(raw_body.decode("utf-8").strip() or 0.0)
+    except Exception:
+        scroll_progress = 0.0
+
+    # Ensure single authoritative UserBookmark per thread
+    stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id).order_by(UserBookmark.last_read_at.desc())
+    bookmarks = db.execute(stmt).scalars().all()
+    
+    if not bookmarks:
+        bookmark = UserBookmark(thread_id=thread_id, chapter_id=chapter_id, scroll_progress=scroll_progress)
         db.add(bookmark)
     else:
-        bookmark.scroll_progress = payload.scroll_progress
+        bookmark = bookmarks[0]
+        bookmark.chapter_id = chapter_id
+        bookmark.scroll_progress = scroll_progress
+        # Clean up any historical duplicate bookmark rows for this thread
+        for dup in bookmarks[1:]:
+            db.delete(dup)
+
     db.commit()
     return {"status": "success", "scroll_progress": bookmark.scroll_progress}
-
-
-@router.post("/threads/{thread_id}/chapters/{chapter_id}/progress")
-def save_chapter_progress(thread_id: int, chapter_id: int, payload: ScrollUpdatePayload, db: Session = Depends(get_db)):
-    """Alias for scroll save — frontend uses POST /progress, backend canonical is PUT /scroll."""
-    return update_chapter_scroll(thread_id, chapter_id, payload, db)
 
 class BookmarkedChapterOut(BaseModel):
     id: int
