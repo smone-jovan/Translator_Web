@@ -3,6 +3,7 @@ Router for exporting novel threads into various formats (EPUB, TXT).
 Supports custom metadata (Author, Title, Cover) and selective chapter bundling.
 """
 
+import os
 import io
 import base64
 import re
