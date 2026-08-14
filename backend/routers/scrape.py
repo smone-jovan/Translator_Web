@@ -4,17 +4,21 @@ Uses httpx + BeautifulSoup (lightweight, no browser needed).
 Also contains URL imports and NovelUpdates/SFACG metadata scrapers.
 """
 
+import asyncio
+import json
+import random
 import re
 import urllib.parse
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from database import get_db, Thread, Chapter, GlobalSetting
+from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting
 from services.scrapers.engine import MetadataScraperEngine
 
 router = APIRouter(prefix="/api", tags=["Scraping"])
@@ -515,3 +519,195 @@ async def fetch_next_chapter(
     db.commit()
 
     return {"success": True, "chapter_id": new_chapter.id}
+
+
+class CrawlNextChaptersRequest(BaseModel):
+    start_chapter_id: Optional[int] = None
+    custom_start_url: Optional[str] = None
+    count: int = 10
+
+
+@router.post("/threads/{thread_id}/crawl-next")
+async def crawl_next_chapters(
+    thread_id: int,
+    req: CrawlNextChaptersRequest
+):
+    """Crawl N upcoming chapters sequentially from the web using Next links with real-time SSE progress."""
+    async def crawl_stream_generator():
+        db = SessionLocal()
+        try:
+            # 1. Verify thread
+            thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+            if not thread:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Thread not found'})}\n\n"
+                return
+
+            # Get current max order
+            current_max_order = db.execute(
+                select(func.max(Chapter.order)).where(Chapter.thread_id == thread_id)
+            ).scalar() or 0
+
+            # 2. Determine starting chapter / URL
+            start_chapter = None
+            current_url = None
+            start_title = "Web Source"
+            start_order = current_max_order
+
+            if req.custom_start_url and req.custom_start_url.strip().startswith(("http://", "https://")):
+                current_url = req.custom_start_url.strip()
+                start_title = "Custom URL"
+            elif req.start_chapter_id:
+                start_chapter = db.execute(
+                    select(Chapter).where(Chapter.id == req.start_chapter_id, Chapter.thread_id == thread_id)
+                ).scalar_one_or_none()
+                if start_chapter and start_chapter.source_url:
+                    current_url = start_chapter.source_url
+                    start_title = start_chapter.title_original or f"Chapter {start_chapter.order}"
+                    start_order = start_chapter.order
+            else:
+                # 1st try: chapter with highest order that has source_url
+                start_chapter = db.execute(
+                    select(Chapter)
+                    .where(Chapter.thread_id == thread_id, Chapter.source_url.isnot(None), Chapter.source_url != "")
+                    .order_by(Chapter.order.desc())
+                ).scalars().first()
+                if start_chapter and start_chapter.source_url:
+                    current_url = start_chapter.source_url
+                    start_title = start_chapter.title_original or f"Chapter {start_chapter.order}"
+                    start_order = start_chapter.order
+                elif thread.source_url and thread.source_url.strip().startswith(("http://", "https://")):
+                    current_url = thread.source_url.strip()
+                    start_title = thread.title
+
+            if not current_url:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'No valid web source URL found to start crawling. Please provide a starting URL or import from web.'})}\n\n"
+                return
+
+            target_count = max(1, min(req.count, 50))
+            created_chapters = []
+            visited_urls = {current_url}
+
+            yield f"data: {json.dumps({'type': 'start', 'start_order': start_order, 'start_title': start_title, 'target_count': target_count})}\n\n"
+
+            for step in range(1, target_count + 1):
+                # A. Fetch current page HTML to find next link
+                try:
+                    async with httpx.AsyncClient(
+                        follow_redirects=True,
+                        timeout=30.0,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                    ) as client:
+                        resp = await client.get(current_url)
+                        resp.raise_for_status()
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to fetch URL ({current_url}): {e}'})}\n\n"
+                    break
+
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                links = soup.find_all('a')
+                next_url = None
+                next_title = None
+
+                for a in links:
+                    text = a.get_text(strip=True)
+                    rel = a.get('rel', [])
+                    is_rel_next = 'next' in rel if isinstance(rel, list) else 'next' in str(rel).lower()
+                    if is_rel_next or '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text or '下页' in text:
+                        href = a.get('href')
+                        if href:
+                            candidate_url = urllib.parse.urljoin(str(resp.url), href)
+                            # Avoid self loops or javascript anchors
+                            if candidate_url != current_url and not candidate_url.startswith("javascript:"):
+                                next_url = candidate_url
+                                next_title = text
+                                break
+
+                if not next_url:
+                    yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'no_next_link', 'message': f'End of web chapters reached. Scraped {len(created_chapters)} new chapters.'})}\n\n"
+                    break
+
+                if next_url in visited_urls:
+                    yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'loop_detected', 'message': f'Loop detected. Scraped {len(created_chapters)} new chapters.'})}\n\n"
+                    break
+                visited_urls.add(next_url)
+
+                # B. Check if next_url is already in database
+                existing = db.execute(
+                    select(Chapter).where(Chapter.thread_id == thread_id, Chapter.source_url == next_url)
+                ).scalar_one_or_none()
+
+                if existing:
+                    current_url = next_url
+                    yield f"data: {json.dumps({'type': 'progress', 'current': step, 'total': target_count, 'status': 'skipped_existing', 'chapter': {'id': existing.id, 'order': existing.order, 'title': existing.title_original}})}\n\n"
+                    continue
+
+                # C. Fetch and parse next chapter content
+                try:
+                    async with httpx.AsyncClient(
+                        follow_redirects=True,
+                        timeout=30.0,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                    ) as client:
+                        next_resp = await client.get(next_url)
+                        next_resp.raise_for_status()
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to download next chapter ({next_url}): {e}'})}\n\n"
+                    break
+
+                parsed_title, markdown = html_to_markdown(next_resp.text)
+                is_vip = False
+                if "/vip/" in next_url.lower():
+                    is_vip = True
+                elif parsed_title and "VIP章节" in parsed_title:
+                    is_vip = True
+                elif not markdown or len(markdown) < 50:
+                    is_vip = True
+
+                if is_vip:
+                    markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+
+                current_max_order += 1
+                new_chapter = Chapter(
+                    thread_id=thread_id,
+                    order=current_max_order,
+                    title_original=parsed_title or next_title or f"Chapter {current_max_order}",
+                    content_original=markdown,
+                    source_url=next_url,
+                    translation_status="vip" if is_vip else "idle"
+                )
+                db.add(new_chapter)
+                db.commit()
+                db.refresh(new_chapter)
+
+                created_chapters.append({
+                    "id": new_chapter.id,
+                    "order": new_chapter.order,
+                    "title": new_chapter.title_original,
+                    "is_vip": is_vip
+                })
+
+                yield f"data: {json.dumps({'type': 'progress', 'current': len(created_chapters), 'total': target_count, 'status': 'created', 'chapter': {'id': new_chapter.id, 'order': new_chapter.order, 'title': new_chapter.title_original, 'is_vip': is_vip}})}\n\n"
+
+                if is_vip:
+                    yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'vip_reached', 'message': f'Stopped at VIP chapter ({new_chapter.title_original}). Scraped {len(created_chapters)} chapters.'})}\n\n"
+                    break
+
+                current_url = next_url
+
+                # Anti-bot delay between scrapes
+                if step < target_count:
+                    await asyncio.sleep(random.uniform(1.2, 2.2))
+
+            else:
+                # Loop completed target count
+                yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'target_reached', 'message': f'Successfully crawled {len(created_chapters)} chapters.'})}\n\n"
+
+        except Exception as general_err:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Unexpected crawl error: {general_err}'})}\n\n"
+        finally:
+            db.close()
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(crawl_stream_generator(), media_type="text/event-stream")
+

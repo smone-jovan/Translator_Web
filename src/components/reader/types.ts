@@ -8,6 +8,7 @@ export interface Chapter {
   translation_status?: string;
   is_bookmarked?: boolean;
   fidelity_warning?: string | null;
+  source_url?: string | null;
 }
 
 export interface ThreadDetail {

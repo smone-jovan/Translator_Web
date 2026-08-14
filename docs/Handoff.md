@@ -395,6 +395,8 @@ Recent completed platform work (ADR-034 through ADR-070):
 - ADR-089: fixed desktop sidebar anchoring (`fixed top-0 left-0 h-screen`) and viewport-scoped mobile navigation (`md:hidden`)
 - ADR-090: interactive library cover poster navigation and instant 1-click "Resume Reading" action button
 - ADR-091: translation notes prompt instruction alignment, automatic glossary slash-splitting sanitization, and robust empty-translation detection
+- ADR-092: punctuation false-positive elimination and fidelity warning clarity
+- ADR-093: chained bulk web chapter crawler with real-time SSE streaming progress and reader quick-action button
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

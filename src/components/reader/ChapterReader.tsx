@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp, Star } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, Loader2, Sparkles, Languages, ArrowUp, Star, CloudDownload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
 import { renderMarkdown, cn } from '@/lib/utils';
@@ -37,6 +37,7 @@ interface ChapterReaderProps {
   mobileToolbarVisible: boolean;
   setMobileToolbarVisible: (val: boolean | ((prev: boolean) => boolean)) => void;
   handleFetchNextChapter?: () => Promise<void>;
+  handleOpenBulkCrawl?: () => void;
 }
 
 export default function ChapterReader({
@@ -59,6 +60,7 @@ export default function ChapterReader({
   mobileToolbarVisible,
   setMobileToolbarVisible,
   handleFetchNextChapter,
+  handleOpenBulkCrawl,
 }: ChapterReaderProps) {
   const showOriginal = displayMode === 'both' || displayMode === 'original';
   const showTranslated = displayMode === 'both' || displayMode === 'translated';
@@ -543,15 +545,30 @@ export default function ChapterReader({
                       >
                         Next Chapter <ChevronRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
                       </Button>
-                    ) : chapterContent?.source_url && handleFetchNextChapter ? (
-                      <Button 
-                        variant="default" 
-                        className="rounded-full px-8 py-6 text-sm font-bold shadow-lg shadow-[var(--primary)]/20 hover:scale-105 active:scale-95 transition-all duration-300 group"
-                        onClick={handleFetchNextChapter}
-                      >
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        Fetch Next Web Chapter
-                      </Button>
+                    ) : chapterContent?.source_url ? (
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        {handleFetchNextChapter && (
+                          <Button 
+                            variant="default" 
+                            className="rounded-full px-6 py-6 text-sm font-bold shadow-lg shadow-[var(--primary)]/20 hover:scale-105 active:scale-95 transition-all duration-300 group"
+                            onClick={handleFetchNextChapter}
+                          >
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Fetch Next Web Chapter
+                          </Button>
+                        )}
+                        {handleOpenBulkCrawl && (
+                          <Button 
+                            variant="outline" 
+                            className="rounded-full px-5 py-6 text-sm font-bold border-blue-500/30 text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 hover:text-blue-300 hover:border-blue-500/50 shadow-md transition-all duration-300 group"
+                            onClick={handleOpenBulkCrawl}
+                            title="Crawl multiple upcoming chapters sequentially from web source"
+                          >
+                            <CloudDownload className="w-4 h-4 mr-2 text-blue-400" />
+                            ⚡ Bulk Crawl (+10)
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] opacity-40 shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)]" />
                     )}
@@ -661,15 +678,30 @@ export default function ChapterReader({
                       >
                         Next Chapter <ChevronRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
                       </Button>
-                    ) : chapterContent?.source_url && handleFetchNextChapter ? (
-                      <Button 
-                        variant="default" 
-                        className="rounded-full px-8 py-6 text-sm font-bold shadow-lg shadow-[var(--primary)]/20 hover:scale-105 active:scale-95 transition-all duration-300 group"
-                        onClick={handleFetchNextChapter}
-                      >
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        Fetch Next Web Chapter
-                      </Button>
+                    ) : chapterContent?.source_url ? (
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        {handleFetchNextChapter && (
+                          <Button 
+                            variant="default" 
+                            className="rounded-full px-6 py-6 text-sm font-bold shadow-lg shadow-[var(--primary)]/20 hover:scale-105 active:scale-95 transition-all duration-300 group"
+                            onClick={handleFetchNextChapter}
+                          >
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Fetch Next Web Chapter
+                          </Button>
+                        )}
+                        {handleOpenBulkCrawl && (
+                          <Button 
+                            variant="outline" 
+                            className="rounded-full px-5 py-6 text-sm font-bold border-blue-500/30 text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 hover:text-blue-300 hover:border-blue-500/50 shadow-md transition-all duration-300 group"
+                            onClick={handleOpenBulkCrawl}
+                            title="Crawl multiple upcoming chapters sequentially from web source"
+                          >
+                            <CloudDownload className="w-4 h-4 mr-2 text-blue-400" />
+                            ⚡ Bulk Crawl (+10)
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] opacity-40 shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)]" />
                     )}

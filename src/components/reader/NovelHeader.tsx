@@ -93,8 +93,8 @@ export default function NovelHeader({
                   Batch Translate
                 </Button>
 
-                {/* Show Fetch Button ONLY if it's from a URL */}
-                {thread.source_url && (
+                {/* Show Fetch Button if thread or chapters have a web source */}
+                {(thread.source_url || (thread.chapters && thread.chapters.some(c => !!c.source_url))) && (
                   <Button 
                     variant="outline"
                     size="lg"

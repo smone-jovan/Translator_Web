@@ -191,6 +191,7 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isFetchModalOpen, setIsFetchModalOpen] = useState(false);
+  const [bulkFetchInitialTab, setBulkFetchInitialTab] = useState<'missing' | 'crawl'>('missing');
   const [chapterSearch, setChapterSearch] = useState('');
   const [controlsVisible, setControlsVisible] = useState(true);
   const [chapterFilter, setChapterFilter] = useState<'all' | 'translated'>('all');
@@ -1108,7 +1109,10 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
                 goToChapter(startIdx !== -1 ? startIdx : 0);
               }}
               onOpenBulkModal={() => setIsBulkModalOpen(true)}
-              onOpenFetchModal={() => setIsFetchModalOpen(true)}
+              onOpenFetchModal={() => {
+                setBulkFetchInitialTab('missing');
+                setIsFetchModalOpen(true);
+              }}
             />
 
             <ChapterListControls 
@@ -1180,6 +1184,10 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
               mobileToolbarVisible={mobileToolbarVisible}
               setMobileToolbarVisible={setMobileToolbarVisible}
               handleFetchNextChapter={handleFetchNextChapter}
+              handleOpenBulkCrawl={() => {
+                setBulkFetchInitialTab('crawl');
+                setIsFetchModalOpen(true);
+              }}
             />
           )
         )}
@@ -1281,6 +1289,8 @@ export default function ReaderPage({ threadId, initialChapterId, onBack, onReadi
         threadTitle={thread?.title || ''}
         chapters={thread?.chapters || []}
         onStartBatch={handleStartBulkFetch}
+        onCrawlSuccess={() => fetchThread({ silent: true })}
+        initialTab={bulkFetchInitialTab}
       />
     </div>
   );

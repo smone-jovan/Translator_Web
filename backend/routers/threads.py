@@ -29,6 +29,7 @@ class ChapterOut(BaseModel):
     translation_status: str
     is_bookmarked: bool = False
     fidelity_warning: Optional[str] = None
+    source_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -318,7 +319,8 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
             has_translation=bool(c.content_translated),
             translation_status=c.translation_status,
             is_bookmarked=c.is_bookmarked,
-            fidelity_warning=c.fidelity_warning
+            fidelity_warning=c.fidelity_warning,
+            source_url=c.source_url
         )
         for c in chapters
     ]
@@ -829,7 +831,7 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
         chapter.content_original or "", cleaned_translation, chapter_id=chapter_id
     )
     if fidelity["is_suspicious"]:
-        chapter.fidelity_warning = (
+        chapter.fidelity_warning = " | ".join(fidelity["warnings"]) if fidelity.get("warnings") else (
             f"Suspicious translation structure: Original has {fidelity['original_paragraphs']} paragraphs, "
             f"Translated has {fidelity['translated_paragraphs']} paragraphs (ratio: {fidelity['paragraph_ratio']:.2f})."
         )

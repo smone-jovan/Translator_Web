@@ -28,7 +28,13 @@ MAX_CHAR_RATIO = 5.0   # very generous upper bound
 MIN_DIALOGUE_RATIO = 0.2
 
 # Characters that indicate a properly-ended sentence (used for truncation detection)
-PROPER_ENDING_CHARS = '.!?\u2026"\u201d\u300d\u300f~*-)\u3002\uff01\uff1f'
+PROPER_ENDING_CHARS = (
+    '.!?…~*-—:;'
+    '"\'"”’‘'
+    ')]}》〉】〕］）｝>」』'
+    '。！？；…～'
+    '♥♡★☆♪♫'
+)
 
 
 def _count_meaningful_paragraphs(text: str) -> int:
@@ -72,7 +78,15 @@ def is_truncated_mid_sentence(text: str) -> bool:
     """
     if not text or not text.strip():
         return True  # Empty text is considered truncated
-    last_char = text.rstrip()[-1:]
+    
+    cleaned = text.rstrip()
+    # Trim markdown emphasis wrappers (like * or _ or `) from the tail to inspect inner ending punctuation
+    trimmed = cleaned.rstrip('*_`~ \t\r\n')
+    if not trimmed:
+        # If string was only markdown markers/spaces
+        trimmed = cleaned
+        
+    last_char = trimmed[-1:]
     return last_char not in PROPER_ENDING_CHARS
 
 

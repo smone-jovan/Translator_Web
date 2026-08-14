@@ -491,14 +491,12 @@ class BackgroundTranslator:
                             content_original, clean_to_save, chapter_id=chapter_id
                         )
                         if fidelity["is_suspicious"]:
-                            print(f"[FIDELITY] Chapter {chapter_id}: Translation may be incomplete. "
-                                  f"Original: {fidelity['original_paragraphs']} paragraphs, "
-                                  f"Translated: {fidelity['translated_paragraphs']} paragraphs "
-                                  f"(ratio: {fidelity['paragraph_ratio']})")
-                            ch.fidelity_warning = (
+                            warning_msg = " | ".join(fidelity["warnings"]) if fidelity.get("warnings") else (
                                 f"Suspicious translation structure: Original has {fidelity['original_paragraphs']} paragraphs, "
                                 f"Translated has {fidelity['translated_paragraphs']} paragraphs (ratio: {fidelity['paragraph_ratio']:.2f})."
                             )
+                            print(f"[FIDELITY] Chapter {chapter_id}: {warning_msg}")
+                            ch.fidelity_warning = warning_msg
                         else:
                             ch.fidelity_warning = None
 
