@@ -46,34 +46,47 @@
 │   ├── services/
 │   │   ├── ai/
 │   │   │   ├── base.py         # Abstract AI provider interface (streaming, non-streaming, truncation markers)
-│   │   │   ├── factory.py      # Provider factory & model routing logic (Gemini/OpenAI/LM Studio)
+│   │   │   ├── factory.py      # Provider factory & model routing logic (Gemini/OpenAI/LM Studio/OpenRouter)
 │   │   │   ├── gemini.py       # Google Gemini adapter (thinking mode auto-disable, safety filters, content parsing)
 │   │   │   ├── lm_studio.py    # LM Studio local adapter (localhost/127.0.0.1 fallback)
 │   │   │   ├── openai.py       # OpenAI cloud adapter
+│   │   │   ├── openrouter.py   # OpenRouter cloud adapter (ADR-084)
 │   │   │   ├── settings.py     # Active model/URL resolution, token cap calculation
 │   │   │   └── secrets.py      # API key management, multi-key rotation, .env persistence, key rotation
+│   │   ├── scrapers/           # Dynamic web scrapers & metadata extraction
+│   │   │   ├── base.py         # Base scraper interface
+│   │   │   ├── engine.py       # Scraper dispatch engine
+│   │   │   ├── novel_updates.py # Novel Updates Cloudflare-aware scraper (curl-cffi)
+│   │   │   └── sfacg.py        # SFACG API & chapter scraper
 │   │   ├── background_translator.py # Core queue, sequential prefetchers, batch worker, TOC detection, auto-continue
 │   │   ├── cleaner_tools.py    # TXT/EPUB cleanup pipelines (ad detection, hallucination stripping)
 │   │   ├── context_engine.py   # Translation prompt builder, lorebook auto-save, glossary enforcement
-│   │   └── hallucination_detector.py # Garbled output detection, repeated word analysis, suspicious char patterns
+│   │   ├── fidelity_checker.py # Post-translation fidelity & truncation verification (ADR-072, ADR-080)
+│   │   ├── genre_presets.py    # Cultivation & genre preset term dictionaries (ADR-073)
+│   │   ├── hallucination_detector.py # Garbled output detection, repeated word analysis, suspicious char patterns
+│   │   └── prompt_templates.py # Centralized prompt templates & system instructions (ADR-074)
 │   └── tests/
 │       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
 │       ├── test_routers/       # Router integration tests
 │       └── test_services/      # Service unit tests (AI factory, settings)
 ├── src/
 │   ├── components/             # Reusable UX controls
+│   │   ├── ApiKeyManager.tsx   # Multiple API keys management and auto-rotation UI
 │   │   ├── BottomNav.tsx       # Mobile bottom navigation bar
+│   │   ├── BulkFetchModal.tsx  # Chained bulk chapter crawler modal (ADR-093)
 │   │   ├── BulkStatusCenter.tsx # Live batch translation progress dashboard
 │   │   ├── BulkTranslateModal.tsx # Batch translation configuration modal (Easy & Advanced modes, Quality/Fast toggle)
 │   │   ├── EditCoverModal.tsx  # Dynamic HTML5 canvas drawing and base64 compression modal
+│   │   ├── ErrorBoundary.tsx   # React runtime error boundary shield
 │   │   ├── ExportModal.tsx     # Compilation controls, metadata forms, checklists
 │   │   ├── Layout.tsx          # App shell layout with sidebar + content area
 │   │   ├── RelationshipGraph.tsx # Interactive character relationship visualization (react-force-graph-2d)
 │   │   ├── ScrapeNUModal.tsx   # Novel Updates & SFACG metadata scraper interface
 │   │   ├── Sidebar.tsx         # Desktop sidebar navigation
+│   │   ├── TocImportModal.tsx  # TOC bulk import modal with genre selection
 │   │   ├── reader/
-│   │   │   ├── ChapterGrid.tsx # Chapter grid with delete button & title polish actions
-│   │   │   ├── ChapterReader.tsx # Chapter content display with markdown rendering
+│   │   │   ├── ChapterGrid.tsx # Chapter grid with delete button, fidelity warning icons & title polish actions
+│   │   │   ├── ChapterReader.tsx # Chapter content display with markdown rendering & fidelity warning banner
 │   │   │   ├── ChapterListControls.tsx # Chapter list toolbar (bulk translate, polish, export)
 │   │   │   ├── NovelHeader.tsx  # Novel title, cover, metadata display
 │   │   │   └── SettingsOverlay.tsx # In-reader settings overlay
@@ -81,8 +94,8 @@
 │   ├── hooks/
 │   │   └── use-confirm.tsx # Custom confirmation dialog hook (Radix UI AlertDialog)
 │   ├── pages/
-│   │   ├── BrowseNovelPage.tsx # Novel discovery & SFACG scraping dashboard
-│   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes)
+│   │   ├── BookmarksPage.tsx   # Chapter reading bookmarks & jump-to-page navigation (ADR-056)
+│   │   ├── ContextLibraryPage.tsx # AI glossary extraction workstation (Easy & Advanced Modes, Presets)
 │   │   ├── LibraryPage.tsx     # Rack bookshelf, reading history continue carousel, batch studios
 │   │   ├── ReaderPage.tsx      # Immersive reader dual-pane (Split-screen translation workspace)
 │   │   ├── SettingsPage.tsx    # Global variables dashboard (Themes, language, API keys, quality mode)
@@ -91,7 +104,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-004 through ADR-070)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-093)
 ```
 
 ---
@@ -146,7 +159,10 @@ erDiagram
         string title_translated
         text content_original
         text content_translated
+        string source_url
         string translation_status
+        boolean is_bookmarked
+        text fidelity_warning
         datetime created_at
     }
     
@@ -163,6 +179,7 @@ erDiagram
         int id PK
         int thread_id FK
         int chapter_id FK
+        float scroll_progress
         datetime last_read_at
     }
     
@@ -194,12 +211,25 @@ erDiagram
         int extract_chapter_count
         int extract_sample_size
         int always_hide_thoughts
+        int chapter_token_cap_enabled
+        int chapter_token_cap
+        string translation_mode
         string llm_provider
         string openai_url
         string openai_model
         string gemini_model
-        int chapter_token_cap_enabled
-        int chapter_token_cap
+        string openrouter_model
+        string openai_api_key
+        string gemini_api_key
+        string openrouter_api_key
+        text openai_api_keys
+        int openai_active_key_index
+        text gemini_api_keys
+        int gemini_active_key_index
+        text openrouter_api_keys
+        int openrouter_active_key_index
+        string ghost_pin
+        string display_mode
     }
 ```
 
@@ -350,7 +380,7 @@ Every code change must adhere to the highest standard of type checking and compi
 
 Here are the immediate strategic features you are tasked to build next:
 
-Recent completed platform work (ADR-034 through ADR-070):
+Recent completed platform work (ADR-034 through ADR-093):
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 - ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging
@@ -388,6 +418,20 @@ Recent completed platform work (ADR-034 through ADR-070):
 - ADR-068: workspace switching (Ghost Mode) with PIN-protected dual databases
 - ADR-069: TOC scraper and bulk chapter import from any web source
 - ADR-070: context extraction prompt hardening with good/bad examples and parser bug fix
+- ADR-071: genre-aware translation prompting with cultivation & romance contextual nuance
+- ADR-072: post-translation fidelity verification and truncation warning system
+- ADR-073: cultivation rank preset system with instant lorebook insertion
+- ADR-074: prompt template centralization (`prompt_templates.py`)
+- ADR-075: model-aware context scaling & dynamic token budgeting
+- ADR-076: heuristic volume prefix stripping for clean sequential numbering
+- ADR-077: robust paragraph detection for EPUB compilation
+- ADR-078: lowering fidelity ratio threshold to eliminate false positive warnings
+- ADR-079: audit-driven minor improvements across scraping and translation pipelines
+- ADR-080: unified fidelity and truncation detection engine
+- ADR-081: foreign key index optimization for SQLite performance
+- ADR-082: glossary extraction rate limiting & sample optimization
+- ADR-083: dynamic Ghost Mode PIN authentication and persistence
+- ADR-084: OpenRouter LLM provider adapter with multi-key rotation
 - ADR-085: mobile screen sleep recovery via `sessionStorage` caching & `visibilitychange` wake listeners; continuous `displayMode` persistence
 - ADR-086: text-only Gemini & Gemma model catalog refresh with updated RPM/RPD rate-limit delays
 - ADR-087: garbage glossary entry filtering (`is_garbage_lorebook_entry`) in prompt builder and auto-save persistence

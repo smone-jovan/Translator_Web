@@ -54,9 +54,9 @@ STRIP_TAGS = [
     "figcaption", "img", "video", "audio", "canvas",
 ]
 
-# Common ad/nav class patterns
+# Common ad/nav class patterns (uses negative lookbehind to avoid matching words ending in 'ad' like 'read-content')
 AD_PATTERNS = re.compile(
-    r"(ad[s_-]|banner|sidebar|menu|nav|footer|comment|social|share|popup|modal|cookie)",
+    r"(?<![a-zA-Z0-9])(ads?[_-]|banner|sidebar|menu|nav|footer|comment|social|share|popup|modal|cookie)",
     re.IGNORECASE,
 )
 

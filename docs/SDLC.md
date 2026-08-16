@@ -1,7 +1,7 @@
 # SDLC — AI Translator Web (ReadOmni Clone)
 
-> **Terakhir diperbarui:** 30 Mei 2026  
-> **Status Aktif:** ✅ Phase 17 — Quality/Fast Mode, Auto-Continue & Batch Reliability (Complete)  
+> **Terakhir diperbarui:** 15 Agustus 2026  
+> **Status Aktif:** ✅ Phase 20 — Punctuation False-Positive Elimination & Chained Bulk Crawler (Complete)  
 > **Lihat rencana detail:** [`docs/implementation_plan.md`](./implementation_plan.md)
 
 ---
@@ -63,6 +63,9 @@
 | **Phase 15** | **Configurable Chapter Token Safety Cap** | ✅ Selesai |
 | **Phase 16** | **Hallucination Audit, Context Expansion & Target Language Enforcement** | ✅ Selesai |
 | **Phase 17** | **Quality/Fast Mode, Auto-Continue, Cleanup Hardening & Batch Reliability** | ✅ Selesai |
+| **Phase 18** | **Mobile Screen Sleep Recovery, Model Catalog Refresh & Glossary Filtering** | ✅ Selesai |
+| **Phase 19** | **Translation Notes Prompt Alignment & Glossary Sanitization** | ✅ Selesai |
+| **Phase 20** | **Punctuation False-Positive Elimination & Chained Bulk Crawler** | ✅ Selesai |
 
 ## Phase 1: Foundation (COMPLETE)
 - **Goal**: Membangun fondasi arsitektur backend, skema basis data, dan design system frontend yang seragam.
@@ -155,6 +158,11 @@
 ## Phase 19: Translation Notes Prompt Alignment & Glossary Sanitization (COMPLETE)
 - **Goal**: Mencegah AI task hijacking/confusion yang menyebabkan hanya catatan penerjemah yang dihasilkan alih-alih isi bab, serta menyaring istilah majemuk bergaris miring di Lorebook.
 - **Implementation**: Penyelarasan instruksi prompt di `prompt_templates.py`, pembersihan otomatis istilah majemuk bergaris miring di `auto_save_glossary()`, pengerasan `strip_translator_notes()` dan `clean_final_translation()` di `context_engine.py`, migrasi sanitasi database `app.db`, serta re-translasi bab terdampak (ADR-091).
+- **Status**: Finished.
+
+## Phase 20: Punctuation False-Positive Elimination & Chained Bulk Crawler (COMPLETE)
+- **Goal**: Mengeliminasi peringatan false-positive pada verifikasi fidelity tanda baca akhir dan menyediakan mekanisme crawling bab web secara berantai (chained) dengan progress real-time.
+- **Implementation**: Pengecekan karakter penutup fleksibel termasuk tanda kutip/kurung/ellipsis pada `fidelity_checker.py` (ADR-092), dan implementasi crawler berantai berbasis SSE/streaming di backend dan modal `BulkFetchModal.tsx` di frontend (ADR-093).
 - **Status**: Finished.
 
 ---

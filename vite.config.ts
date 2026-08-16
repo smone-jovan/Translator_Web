@@ -13,6 +13,7 @@ export default defineConfig({
   },
   server: {
     host: true, // Allow access from local network (mobile)
+    allowedHosts: true, // Allow .local and custom LAN hostnames for mobile devices
     watch: {
       ignored: [
         '**/backend/**',

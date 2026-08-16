@@ -61,8 +61,14 @@ def guess_image_ext(file_path: str) -> str:
 
 @app.get("/images/{rest_of_path:path}", tags=["Images"])
 async def serve_images(rest_of_path: str):
-    file_path = os.path.join("uploads", "images", rest_of_path)
-    if not os.path.exists(file_path):
+    safe_base = os.path.abspath("uploads/images")
+    file_path = os.path.abspath(os.path.join(safe_base, rest_of_path))
+    
+    # Path traversal protection
+    if not file_path.startswith(safe_base):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Image not found")
     
     # Try to guess mime type from extension first

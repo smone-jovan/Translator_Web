@@ -69,6 +69,9 @@ test_*.py
 translate_*.py
 !backend/tests/
 !backend/tests/**
+backend/tests/**/__pycache__/
+backend/tests/**/.pytest_cache/
+.pytest_cache/
 
 # Subagent Working Directories
 .agents/

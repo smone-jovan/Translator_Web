@@ -66,7 +66,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
 | **Frontend** | React 19, Vite 8, TailwindCSS v4, Radix UI |
 | **Backend** | Python 3.11, FastAPI, SQLAlchemy 2.0 |
 | **Database** | SQLite (WAL mode) |
-| **AI Providers** | LM Studio, Google Gemini, OpenAI |
+| **AI Providers** | LM Studio, Google Gemini, OpenAI, OpenRouter |
 | **Scraping** | Crawl4AI, BeautifulSoup4 |
 | **EPUB** | EbookLib |
 | **Testing** | pytest (backend) |
@@ -83,6 +83,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
   - [LM Studio](https://lmstudio.ai/) running on port 1234 (free, local)
   - [Google AI Studio](https://aistudio.google.com/) API key (free tier available)
   - OpenAI API key (paid)
+  - OpenRouter API key (optional, cloud access to multiple models)
 
 ### 1. Backend
 
@@ -115,6 +116,7 @@ Create `backend/.env` (gitignored):
 ```env
 OPENAI_API_KEY=sk-your-key-here
 GEMINI_API_KEY=AIzaSy-your-key-here
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
 
 ### Settings Page
@@ -123,7 +125,7 @@ All configuration is available in the app's Settings page:
 
 | Setting | Description |
 |---------|-------------|
-| **AI Provider** | LM Studio / OpenAI / Gemini |
+| **AI Provider** | LM Studio / OpenAI / Gemini / OpenRouter |
 | **Model** | Provider-specific model selection (Gemini: gemini-2.5-flash, gemini-3-flash, gemma-4-31b, etc.) |
 | **Target Language** | Indonesian / English |
 | **Translation Mode** | Quality (cloud, full glossary) / Fast (local, 10K cap) |
@@ -142,11 +144,11 @@ Translator_Web/
 ├── backend/
 │   ├── main.py                 # FastAPI app entry
 │   ├── database.py             # SQLAlchemy models & auto-migration
-│   ├── routers/                # API endpoints (16 routers)
+│   ├── routers/                # API endpoints (15 routers)
 │   │   ├── system.py          # Workspace switching (Ghost Mode) with PIN authentication
 │   │   └── toc.py             # TOC scraping and bulk chapter import pipeline
 │   ├── services/
-│   │   ├── ai/                 # Provider adapters (Gemini, OpenAI, LM Studio)
+│   │   ├── ai/                 # Provider adapters (Gemini, OpenAI, LM Studio, OpenRouter)
 │   │   ├── background_translator.py  # Batch engine with auto-continue
 │   │   ├── context_engine.py   # Prompt builder & glossary injection
 │   │   └── cleaner_tools.py    # TXT/EPUB cleanup pipelines
@@ -156,7 +158,7 @@ Translator_Web/
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/
-    ├── decisions/              # 70 Architectural Decision Records
+    ├── decisions/              # 90 Architectural Decision Records (ADR-004 to ADR-093)
     ├── Handoff.md              # Developer onboarding guide
     └── SDLC.md                 # Development lifecycle docs
 ```
@@ -169,7 +171,7 @@ Translator_Web/
 |----------|-------------|
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
 | [SDLC](docs/SDLC.md) | Software development lifecycle |
-| [ADRs](docs/decisions/) | 70 architectural decision records |
+| [ADRs](docs/decisions/) | 90 architectural decision records (ADR-004 to ADR-093) |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
 ---

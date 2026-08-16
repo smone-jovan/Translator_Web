@@ -136,31 +136,44 @@ class ThreadUpdatePayload(BaseModel):
 
 @router.get("/threads", response_model=List[ThreadItemOut])
 def list_threads(db: Session = Depends(get_db)):
-    """List all threads with reading progress."""
-    stmt = select(Thread).order_by(Thread.id.desc())
-    threads = db.execute(stmt).scalars().all()
+    """List all threads with reading progress (batch optimized)."""
+    threads = db.execute(select(Thread).order_by(Thread.id.desc())).scalars().all()
+    if not threads:
+        return []
+    
+    # Batch fetch chapter counts (1 query)
+    ch_counts_stmt = select(Chapter.thread_id, func.count(Chapter.id)).group_by(Chapter.thread_id)
+    ch_counts = dict(db.execute(ch_counts_stmt).all())
+    
+    # Batch fetch bookmarks with referenced chapter metadata (1 query)
+    bookmarks_stmt = (
+        select(
+            UserBookmark.thread_id,
+            UserBookmark.chapter_id,
+            Chapter.title_translated,
+            Chapter.title_original,
+            Chapter.order
+        )
+        .join(Chapter, UserBookmark.chapter_id == Chapter.id)
+    )
+    bookmark_rows = db.execute(bookmarks_stmt).all()
+    bookmark_map = {row[0]: (row[1], row[2] or row[3], row[4]) for row in bookmark_rows}
     
     result = []
     for t in threads:
-        # Chapter count
-        ch_count_stmt = select(func.count(Chapter.id)).where(Chapter.thread_id == t.id)
-        ch_count = db.execute(ch_count_stmt).scalar() or 0
-        
-        # Last read info from UserBookmark
-        bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == t.id)
-        bookmark = db.execute(bookmark_stmt).scalars().first()
+        ch_count = ch_counts.get(t.id, 0)
+        bookmark_info = bookmark_map.get(t.id)
         
         last_read_title = None
+        last_read_id = None
         progress = 0
         
-        if bookmark:
-            last_ch_stmt = select(Chapter).where(Chapter.id == bookmark.chapter_id)
-            last_ch = db.execute(last_ch_stmt).scalar_one_or_none()
-            if last_ch:
-                last_read_title = last_ch.title_translated or last_ch.title_original
-                # Calculate progress percentage
-                if ch_count > 0:
-                    progress = int(((last_ch.order + 1) / ch_count) * 100)
+        if bookmark_info:
+            last_read_id = bookmark_info[0]
+            last_read_title = bookmark_info[1]
+            last_order = bookmark_info[2]
+            if ch_count > 0:
+                progress = int(((last_order + 1) / ch_count) * 100)
         
         result.append(ThreadItemOut(
             id=t.id,
@@ -178,7 +191,7 @@ def list_threads(db: Session = Depends(get_db)):
             chapter_count=ch_count,
             created_at=str(t.created_at) if t.created_at else None,
             last_read=last_read_title,
-            last_read_id=bookmark.chapter_id if bookmark else None,
+            last_read_id=last_read_id,
             progress=progress
         ))
     return result
@@ -306,23 +319,38 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
     if not thread:
         raise HTTPException(404, "Thread not found")
 
-    ch_stmt = select(Chapter).where(Chapter.thread_id == thread_id).order_by(Chapter.order)
-    chapters = db.execute(ch_stmt).scalars().all()
+    ch_stmt = (
+        select(
+            Chapter.id,
+            Chapter.order,
+            Chapter.title_original,
+            Chapter.title_translated,
+            func.length(func.coalesce(Chapter.content_original, "")),
+            (Chapter.content_translated.is_not(None) & (Chapter.content_translated != "")),
+            Chapter.translation_status,
+            Chapter.is_bookmarked,
+            Chapter.fidelity_warning,
+            Chapter.source_url
+        )
+        .where(Chapter.thread_id == thread_id)
+        .order_by(Chapter.order)
+    )
+    ch_rows = db.execute(ch_stmt).all()
 
     ch_out = [
         ChapterOut(
-            id=c.id,
-            order=c.order,
-            title_original=c.title_original,
-            title_translated=c.title_translated,
-            word_count=len((c.content_original or "").split()),
-            has_translation=bool(c.content_translated),
-            translation_status=c.translation_status,
-            is_bookmarked=c.is_bookmarked,
-            fidelity_warning=c.fidelity_warning,
-            source_url=c.source_url
+            id=row[0],
+            order=row[1],
+            title_original=row[2],
+            title_translated=row[3],
+            word_count=row[4],
+            has_translation=bool(row[5]),
+            translation_status=row[6],
+            is_bookmarked=bool(row[7]),
+            fidelity_warning=row[8],
+            source_url=row[9]
         )
-        for c in chapters
+        for row in ch_rows
     ]
 
     # Get bookmark for this thread

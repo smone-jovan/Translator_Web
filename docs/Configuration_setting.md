@@ -18,7 +18,9 @@ Pengaturan berikut sekarang tersinkronisasi secara otomatis di seluruh perangkat
   - **LM Studio (Local)**: Terjemahan offline gratis menggunakan model LLM lokal Anda di komputer (default).
   - **OpenAI (Cloud)**: Akses cloud berbayar ke OpenAI API (GPT-4o, GPT-4o-mini).
   - **Google Gemini**: Akses Gemini API gratis/premium dengan kecepatan sangat tinggi dan gratis tier personal melimpah dari Google AI Studio.
-- **API Keys & Model custom**: API Key dan Model untuk OpenAI & Gemini tersimpan secara aman di database server dan disinkronkan ke seluruh klien. Mendukung **multiple API keys** per provider untuk rotasi otomatis mendistribusikan free-tier quota.
+  - **OpenRouter (Cloud / ADR-084)**: Akses cloud ke berbagai model LLM global (DeepSeek, Claude, Llama, dll.) via OpenRouter API.
+- **API Keys & Model custom**: API Key dan Model untuk OpenAI, Gemini, & OpenRouter tersimpan secara aman di database server dan disinkronkan ke seluruh klien. Mendukung **multiple API keys** per provider untuk rotasi otomatis mendistribusikan free-tier quota.
+- **Ghost Mode PIN Authentication (ADR-068 & ADR-083)**: Isolasi penuh basis data utama (`app.db`) dan ghost workspace (`ghost.db`) dengan proteksi PIN.
 - **Translation Mode (ADR-047)**: Quality mode (cloud, full glossary + style guide) atau Fast mode (local LLM, 10K token cap).
 - **Target Language**: Bahasa tujuan (Indonesian/English).
 - **Advanced Prefetch**: 

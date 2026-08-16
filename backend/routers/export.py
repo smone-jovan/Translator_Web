@@ -170,9 +170,10 @@ async def export_thread(
                 img_path = match.group(1) # e.g. /images/thread_31/img
                 if img_path.startswith("/images/"):
                     local_relative = img_path.replace("/images/", "", 1)
-                    local_fs_path = os.path.join("uploads", "images", local_relative)
+                    safe_base = os.path.abspath("uploads/images")
+                    local_fs_path = os.path.abspath(os.path.join(safe_base, local_relative))
                     
-                    if os.path.exists(local_fs_path):
+                    if local_fs_path.startswith(safe_base) and os.path.exists(local_fs_path) and os.path.isfile(local_fs_path):
                         internal_epub_path = f"images/{local_relative.replace('/', '_')}"
                         
                         if internal_epub_path not in added_images:
