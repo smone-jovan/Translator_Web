@@ -9,6 +9,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
 import os
+from pathlib import Path
 import mimetypes
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -61,27 +62,33 @@ def guess_image_ext(file_path: str) -> str:
 
 @app.get("/images/{rest_of_path:path}", tags=["Images"])
 async def serve_images(rest_of_path: str):
-    safe_base = os.path.abspath("uploads/images")
-    file_path = os.path.abspath(os.path.join(safe_base, rest_of_path))
-    
-    # Path traversal protection
-    if not file_path.startswith(safe_base):
+    if "\x00" in rest_of_path or not rest_of_path.strip():
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+    base_dir = Path("uploads/images").resolve()
+    try:
+        cleaned_rel = rest_of_path.lstrip("/\\")
+        candidate = (base_dir / cleaned_rel).resolve()
+        is_safe = candidate.is_relative_to(base_dir)
+    except Exception:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not is_safe or candidate == base_dir:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
-    
-    # Try to guess mime type from extension first
-    media_type, _ = mimetypes.guess_type(file_path)
+
+    file_path_str = str(candidate)
+    media_type, _ = mimetypes.guess_type(file_path_str)
     if not media_type:
-        # Check magic bytes if no extension
-        ext = guess_image_ext(file_path)
+        ext = guess_image_ext(file_path_str)
         if ext:
             media_type = f"image/{ext}"
         else:
             media_type = "application/octet-stream"
-            
-    return FileResponse(file_path, media_type=media_type)
+
+    return FileResponse(file_path_str, media_type=media_type)
 
 
 @app.get("/", tags=["Health"])

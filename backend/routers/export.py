@@ -4,6 +4,7 @@ Supports custom metadata (Author, Title, Cover) and selective chapter bundling.
 """
 
 import os
+from pathlib import Path
 import io
 import base64
 import re
@@ -169,12 +170,17 @@ async def export_thread(
                 full_tag = match.group(0)
                 img_path = match.group(1) # e.g. /images/thread_31/img
                 if img_path.startswith("/images/"):
-                    local_relative = img_path.replace("/images/", "", 1)
-                    safe_base = os.path.abspath("uploads/images")
-                    local_fs_path = os.path.abspath(os.path.join(safe_base, local_relative))
-                    
-                    if local_fs_path.startswith(safe_base) and os.path.exists(local_fs_path) and os.path.isfile(local_fs_path):
-                        internal_epub_path = f"images/{local_relative.replace('/', '_')}"
+                    local_relative = img_path.replace("/images/", "", 1).lstrip("/\\")
+                    base_dir = Path("uploads/images").resolve()
+                    try:
+                        candidate = (base_dir / local_relative).resolve()
+                        is_safe = candidate.is_relative_to(base_dir) and candidate.is_file()
+                    except Exception:
+                        is_safe = False
+
+                    if is_safe:
+                        local_fs_path = str(candidate)
+                        internal_epub_path = f"images/{local_relative.replace('/', '_').replace('\\', '_')}"
                         
                         if internal_epub_path not in added_images:
                             with open(local_fs_path, "rb") as f:

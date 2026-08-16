@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+
+# Build artifacts
+dist/
+dist-ssr/
+
+# Backend files, Python virtualenvs, and database files
+backend/
+*.db
+*.db-shm
+*.db-wal
+*.py
+*.pyc
+__pycache__/
+
+# Local scratch and temp folders
+uploads/
+scratch/
+ecc-temp-dir/
+temp_polish_2/
+.agent/
+.agents/
+.mimocode/
+.pytest_cache/
