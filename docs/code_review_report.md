@@ -24,6 +24,7 @@ Project ini secara keseluruhan **sudah solid** — arsitekturnya clean (FastAPI 
 ## 🔴 CRITICAL Issues
 
 ### C1. Thread-Unsafe Database Workspace Switching
+- **Status:** ⏳ **PENDING (Patch B - Architecture Design Ready)**
 - **File:** `backend/database.py` (Lines 37-43)
 - **Problem:** `ACTIVE_WORKSPACE` adalah global variable yang menentukan database mana yang dipakai. Di FastAPI yang concurrent, kalau satu request switch workspace, SEMUA request ikut berubah — ini bisa menyebabkan data dari workspace `main` masuk ke `ghost` dan sebaliknya.
 
@@ -37,42 +38,28 @@ def SessionLocal():
     return SessionLocalMain()
 ```
 
-- **Fix:** Per-request workspace determination via header/cookie, bukan global variable.
+- **Fix Plan:** Stateless per-request workspace determination via header `X-Workspace` + explicit `workspace` context pada `BackgroundTranslator`.
 
 ---
 
 ### C2. TypeScript `strict: true` Missing
+- **Status:** ✅ **RESOLVED in Patch A (Commit `39504d2`)**
 - **File:** `tsconfig.app.json`, `tsconfig.node.json`
-- **Problem:** `strict` defaults ke `false` — `strictNullChecks`, `noImplicitAny`, `strictFunctionTypes` semua OFF. TypeScript tidak catch null/undefined bugs.
-- **Fix:** Add `"strict": true` ke kedua tsconfig.
+- **Solution:** Menambahkan `"strict": true` pada kedua tsconfig dan `"DOM.Iterable"` pada `tsconfig.app.json`. Terverifikasi 100% lulus `tsc -b --noEmit` dengan 0 error.
 
 ---
 
 ### C3. Broken `typecheck` Script
+- **Status:** ✅ **RESOLVED in Patch A (Commit `39504d2`)**
 - **File:** `package.json` (Line 10)
-- **Problem:** `"typecheck": "tsc --noEmit"` tapi root tsconfig pakai project references (`"files": []`). Ini checks **zero files** dan selalu exit 0 — type errors lolos semua.
-- **Fix:** Change to `"tsc -b --noEmit"`.
+- **Solution:** Mengubah script menjadi `"typecheck": "tsc -b --noEmit"` sehingga mengevaluasi seluruh *project references*.
 
 ---
 
 ### C4. Path Traversal Edge Case (Windows)
-- **File:** `backend/main.py` (Lines 62-72)
-- **Problem:** `str.startswith()` path traversal check bisa di-bypass di Windows karena case insensitivity + path separator differences.
-
-```python
-# CURRENT — string prefix check (fragile on Windows)
-if not file_path.startswith(safe_base):
-    raise HTTPException(status_code=403)
-```
-
-- **Fix:** Use `pathlib.Path.resolve()` comparison:
-```python
-from pathlib import Path
-safe_base = Path("uploads/images").resolve()
-file_path = (safe_base / rest_of_path).resolve()
-if safe_base not in file_path.parents and file_path != safe_base:
-    raise HTTPException(status_code=403)
-```
+- **Status:** ✅ **RESOLVED in Patch A (Commit `39504d2`)**
+- **Files:** `backend/main.py` (Lines 62-85), `backend/routers/export.py` (Lines 170-185)
+- **Solution:** Mengganti string `startswith()` dengan canonical containment `pathlib.Path.resolve()` dan `candidate.is_relative_to(base_dir)`. Dilengkapi dengan 8 unit regression tests di `backend/tests/test_routers/test_security_path_traversal.py`.
 
 ---
 
@@ -114,13 +101,14 @@ if safe_base not in file_path.parents and file_path != safe_base:
 ---
 
 ### H6. Launcher Uses `py` Instead of `sys.executable`
-- **File:** `launcher.py` (Line 131)
-- **Problem:** Spawns backend with `py` instead of `sys.executable`, bypasses virtualenv, breaks on macOS/Linux.
-- **Fix:** `cmd = [sys.executable, "-u", "-m", "uvicorn", ...]`
+- **Status:** ✅ **VERIFIED RESOLVED**
+- **File:** `launcher.py` (Line 194)
+- **Status Detail:** Launcher telah memanggil backend menggunakan `sys.executable` (`[sys.executable, "-u", "-m", "uvicorn", ...]`), menjaga isolasi virtualenv.
 
 ---
 
 ### H7. Duplicated VIP Detection (3× copy-paste)
+- **Status:** ⏳ **PENDING (Phase 2)**
 - **File:** `backend/routers/scrape.py` — lines 214, 494, 658
 - **Problem:** Same VIP detection logic repeated 3 times.
 - **Fix:** Extract `is_vip_chapter(url, title, markdown)` utility function.
@@ -128,51 +116,38 @@ if safe_base not in file_path.parents and file_path != safe_base:
 ---
 
 ### H8. `.env.example` Missing `OPENROUTER_API_KEY`
+- **Status:** ✅ **RESOLVED in Patch A (Commit `39504d2`)**
 - **File:** `backend/.env.example`
-- **Problem:** Code supports OpenRouter, but template doesn't list the key.
-- **Fix:** Add `OPENROUTER_API_KEY=` to the example file.
+- **Solution:** Menambahkan entri template `OPENROUTER_API_KEY=` pada `backend/.env.example`.
 
 ---
 
 ### H9. `start_app.bat` Bypasses Virtualenv
+- **Status:** ✅ **VERIFIED RESOLVED**
 - **File:** `start_app.bat`
-- **Problem:** Hardcodes `py launcher.py`, no venv detection, window closes on crash.
-- **Fix:** Add virtualenv fallback + error pause:
-```bat
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" launcher.py
-) else if exist "backend\.venv\Scripts\python.exe" (
-    "backend\.venv\Scripts\python.exe" launcher.py
-) else (
-    py launcher.py 2>nul || python launcher.py
-)
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Launcher exited with error code %ERRORLEVEL%.
-    pause
-)
-```
+- **Status Detail:** `start_app.bat` telah dilengkapi hierarki deteksi `.venv`, `venv`, `backend/.venv`, dan `backend/venv` serta pause penanganan error code.
 
 ---
 
 ## 🟡 MEDIUM Issues
 
-| # | Issue | File(s) |
-|---|-------|---------|
-| M1 | Missing Vite proxy → relies on wide CORS | `vite.config.ts` |
-| M2 | No production chunk splitting → massive vendor bundle | `vite.config.ts` |
-| M3 | `user-scalable=no` blocks accessibility zoom | `index.html` |
-| M4 | Missing `.prettierignore` → formats Python/DB files | Project root |
-| M5 | ESLint scans backend/ and temp dirs | `eslint.config.js` |
-| M6 | `.gitignore` missing `uploads/`, `ecc-temp-dir/`, `.pytest_cache/` | `.gitignore` |
-| M7 | Missing `useCallback`/`useMemo` in heavy components | `src/pages/ReaderPage.tsx`, `src/components/reader/ChapterReader.tsx` |
-| M8 | Polling overlap — duplicate setInterval on remount | `src/components/BulkStatusCenter.tsx` |
-| M9 | Silent API error swallowing (`.catch(() => {})`) | Multiple frontend files |
-| M10 | Hardcoded ports in 12+ places in launcher | `launcher.py` |
-| M11 | Banner shows "STARTING" then never auto-updates | `launcher.py` (Lines 211-214) |
-| M12 | Giant single-file pages (SettingsPage=1561 lines, ContextLib=60KB) | `src/pages/SettingsPage.tsx`, `src/pages/ContextLibraryPage.tsx` |
-| M13 | Manual `.env` parser breaks on quotes/escapes | `backend/services/ai/secrets.py` (Lines 68-83) |
-| M14 | Missing `DOM.Iterable` in tsconfig lib | `tsconfig.app.json` (Line 5) |
-| M15 | No format/lint-fix scripts in package.json | `package.json` |
+| # | Issue | File(s) | Status |
+|---|-------|---------|:------:|
+| M1 | Missing Vite proxy → relies on wide CORS | `vite.config.ts` | ⏳ Pending Phase 3 |
+| M2 | No production chunk splitting → massive vendor bundle | `vite.config.ts` | ⏳ Pending Phase 3 |
+| M3 | `user-scalable=no` blocks accessibility zoom | `index.html` | ⏳ Pending Phase 3 |
+| M4 | Missing `.prettierignore` → formats Python/DB files | Project root | ✅ **RESOLVED (Patch A)** |
+| M5 | ESLint scans backend/ and temp dirs | `eslint.config.js` | ✅ **RESOLVED (Patch A)** |
+| M6 | `.gitignore` missing `uploads/`, `ecc-temp-dir/`, `.pytest_cache/` | `.gitignore` | ⏳ Pending Phase 1 Clean |
+| M7 | Missing `useCallback`/`useMemo` in heavy components | `src/pages/ReaderPage.tsx`, `src/components/reader/ChapterReader.tsx` | ⏳ Pending Phase 3 |
+| M8 | Polling overlap — duplicate setInterval on remount | `src/components/BulkStatusCenter.tsx` | ⏳ Pending Phase 3 |
+| M9 | Silent API error swallowing (`.catch(() => {})`) | Multiple frontend files | ⏳ Pending Phase 3 |
+| M10 | Hardcoded ports in 12+ places in launcher | `launcher.py` | ⏳ Pending Phase 4 |
+| M11 | Banner shows "STARTING" then never auto-updates | `launcher.py` (Lines 211-214) | ⏳ Pending Phase 4 |
+| M12 | Giant single-file pages (SettingsPage=1561 lines, ContextLib=60KB) | `src/pages/SettingsPage.tsx`, `src/pages/ContextLibraryPage.tsx` | ⏳ Pending Phase 4 |
+| M13 | Manual `.env` parser breaks on quotes/escapes | `backend/services/ai/secrets.py` (Lines 68-83) | ⏳ Pending Phase 2 |
+| M14 | Missing `DOM.Iterable` in tsconfig lib | `tsconfig.app.json` (Line 5) | ✅ **RESOLVED (Patch A)** |
+| M15 | No format/lint-fix scripts in package.json | `package.json` | ⏳ Pending |
 
 ---
 
@@ -196,12 +171,14 @@ if %ERRORLEVEL% neq 0 (
 ## Recommended Fix Phases
 
 ### Phase 1: Critical + Quick Wins
-- Fix path traversal (`main.py` → pathlib)
-- Fix typecheck script (`package.json`)
-- Fix launcher (`sys.executable`, port constants, banner refresh)
-- Fix `start_app.bat` (venv detection + error pause)
-- Update `.env.example`, `index.html`, `.gitignore`, `eslint.config.js`
-- Create `.prettierignore`
+- [x] Fix path traversal (`backend/main.py`, `backend/routers/export.py` → `pathlib.Path.resolve()`) ✅ *(Commit `39504d2`)*
+- [x] Fix typecheck script (`package.json` → `tsc -b --noEmit`) ✅ *(Commit `39504d2`)*
+- [x] Enable TypeScript strict mode & `DOM.Iterable` (`tsconfig.app.json`, `tsconfig.node.json`) ✅ *(Commit `39504d2`)*
+- [x] Create `.prettierignore` ✅ *(Commit `39504d2`)*
+- [x] Scope ESLint ignores (`eslint.config.js`) ✅ *(Commit `39504d2`)*
+- [x] Update `.env.example` with `OPENROUTER_API_KEY` ✅ *(Commit `39504d2`)*
+- [x] Verify launcher (`sys.executable`) & `start_app.bat` (venv detection) ✅
+- [ ] Database Workspace Isolation & Concurrency Safety ⏳ *(Patch B - Design Ready)*
 
 ### Phase 2: Backend Code Quality
 - Refactor `init_db()` migration (240 → ~30 lines)
