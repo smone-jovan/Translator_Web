@@ -14,6 +14,16 @@ export default defineConfig({
   server: {
     host: true, // Allow access from local network (mobile)
     allowedHosts: true, // Allow .local and custom LAN hostnames for mobile devices
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/images': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
     watch: {
       ignored: [
         '**/backend/**',

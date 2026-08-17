@@ -10,6 +10,7 @@ import socket
 import subprocess
 import threading
 import webbrowser
+import re
 
 # ─── Platform Init ───────────────────────────────────────────────────────────
 if sys.platform == "win32":
@@ -65,12 +66,74 @@ _startup_time = time.time()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_local_ip() -> str:
+    """
+    Select active physical Wi-Fi/Ethernet LAN IPv4 address.
+    Filters out loopback, APIPA, Cloudflare WARP, VPN/tunnel, virtual,
+    Docker, WSL, Hyper-V, and Bluetooth adapters by adapter identity.
+    Does not exclude valid physical LANs on 172.16.0.0/12.
+    """
+    if sys.platform == "win32":
+        try:
+            res = subprocess.run(["ipconfig"], capture_output=True, text=True, errors="replace", timeout=2)
+            adapters = []
+            current = None
+            for line in res.stdout.splitlines():
+                line = line.rstrip()
+                if not line:
+                    continue
+                if not line.startswith(" ") and ":" in line:
+                    name = line.split("adapter ", 1)[-1].rstrip(":") if "adapter " in line else line.rstrip(":")
+                    current = {"name": name, "ip": None, "disconnected": False}
+                    adapters.append(current)
+                elif current:
+                    if "Media disconnected" in line or "Media State" in line:
+                        current["disconnected"] = True
+                    elif "IPv4 Address" in line or "IPv4" in line:
+                        m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                        if m:
+                            current["ip"] = m.group(1)
+
+            excluded_keywords = (
+                "warp", "cloudflare", "vpn", "tunnel", "tap", "tun", "wireguard",
+                "wsl", "vethernet", "virtualbox", "vmware", "docker", "hyper-v",
+                "bluetooth", "tailscale", "zerotier", "pseudo"
+            )
+
+            physical_candidates = []
+            other_candidates = []
+            for ad in adapters:
+                if ad.get("disconnected") or not ad.get("ip"):
+                    continue
+                ip = ad["ip"]
+                if ip.startswith("127.") or ip.startswith("169.254."):
+                    continue
+
+                ad_name_lower = ad["name"].lower()
+                if any(kw in ad_name_lower for kw in excluded_keywords):
+                    continue
+
+                if any(kw in ad_name_lower for kw in ("wi-fi", "wireless", "wlan", "ethernet", "lan")):
+                    physical_candidates.append(ip)
+                else:
+                    other_candidates.append(ip)
+
+            if physical_candidates:
+                return physical_candidates[0]
+            if other_candidates:
+                return other_candidates[0]
+        except Exception:
+            pass
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            probe_ip = s.getsockname()[0]
+            if not probe_ip.startswith("127.") and not probe_ip.startswith("169.254."):
+                return probe_ip
     except Exception:
-        return "127.0.0.1"
+        pass
+
+    return "127.0.0.1"
 
 def check_port(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
