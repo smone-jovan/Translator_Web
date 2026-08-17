@@ -1,6 +1,6 @@
 """
-ReadOmni AI — Modern CLI Launcher
-Inspired by Claude Code, Vite, and Next.js dev server aesthetics.
+Translator Web — Control Hub Launcher
+Clean, modern CLI launcher and pre-flight diagnostics.
 """
 
 import sys
@@ -11,6 +11,8 @@ import subprocess
 import threading
 import webbrowser
 import re
+import argparse
+import shutil
 
 # ─── Platform Init ───────────────────────────────────────────────────────────
 if sys.platform == "win32":
@@ -47,6 +49,7 @@ FAINT   = "\033[38;2;100;116;139m"  # Tertiary / timestamps
 SLATE   = "\033[38;2;71;85;105m"    # Borders, dividers
 
 # ─── Configuration ───────────────────────────────────────────────────────────
+APP_NAME      = "Translator Web"
 VERSION       = "2.0"
 ROOT_DIR      = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR   = os.path.join(ROOT_DIR, "backend")
@@ -135,6 +138,7 @@ def get_local_ip() -> str:
 
     return "127.0.0.1"
 
+
 def check_port(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.3)
@@ -142,6 +146,7 @@ def check_port(port: int) -> bool:
             return s.connect_ex(("127.0.0.1", port)) == 0
         except Exception:
             return False
+
 
 def open_url(url: str):
     """Reliable URL opener for Windows and other OS."""
@@ -155,6 +160,7 @@ def open_url(url: str):
             webbrowser.open(url)
         except Exception:
             pass
+
 
 def uptime_str() -> str:
     elapsed = int(time.time() - _startup_time)
@@ -181,6 +187,7 @@ def log(prefix: str, msg: str, color: str = GRAY):
         sys.stdout.write(f"  {FAINT}{ts}{RESET}  {color}{prefix:<10}{RESET} {DIM}{clean}{RESET}\n")
         sys.stdout.flush()
 
+
 def log_reader(proc, prefix, color):
     """Read subprocess stdout line by line and log it."""
     try:
@@ -201,6 +208,7 @@ def status_dot(online: bool, label: str, port: int) -> str:
         return f"  {TEAL}●{RESET}  {WHITE}{label}{RESET} {FAINT}:{port}{RESET}"
     return f"  {AMBER}○{RESET}  {GRAY}{label}{RESET} {FAINT}:{port} starting...{RESET}"
 
+
 def print_banner():
     with print_lock:
         os.system("cls" if sys.platform == "win32" else "clear")
@@ -212,7 +220,7 @@ def print_banner():
 
         # ── Header
         sys.stdout.write(f"""
-  {TEAL}{BOLD}ReadOmni AI{RESET}  {FAINT}v{VERSION}{RESET}
+  {TEAL}{BOLD}{APP_NAME}{RESET}  {FAINT}v{VERSION}{RESET}
   {FAINT}Self-hosted AI novel translator & reader{RESET}
 
 """)
@@ -311,6 +319,7 @@ def stop_backend():
     stop_process(backend_proc, "backend")
     backend_proc = None
 
+
 def stop_frontend():
     global frontend_proc
     stop_process(frontend_proc, "frontend")
@@ -333,8 +342,8 @@ def ensure_firewall_rules():
         return
 
     rules = [
-        ("ReadOmni AI - Frontend (Vite)", FRONTEND_PORT),
-        ("ReadOmni AI - Backend (FastAPI)", BACKEND_PORT),
+        (f"{APP_NAME} - Frontend (Vite)", FRONTEND_PORT),
+        (f"{APP_NAME} - Backend (FastAPI)", BACKEND_PORT),
     ]
 
     for rule_name, port in rules:
@@ -356,7 +365,7 @@ def ensure_firewall_rules():
             pass
 
 
-def wait_for_services(timeout: float = 15.0):
+def wait_for_services(timeout: float = 15.0, open_browser: bool = False):
     """Poll ports until both services are online, then refresh banner."""
     start = time.time()
     while time.time() - start < timeout:
@@ -365,6 +374,153 @@ def wait_for_services(timeout: float = 15.0):
         time.sleep(0.5)
     print_banner()
     log("ready", f"Semua layanan online dalam {time.time() - start:.1f}s", TEAL)
+    if open_browser:
+        open_url(f"http://localhost:{FRONTEND_PORT}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Diagnostics (Doctor)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_doctor() -> int:
+    """
+    Perform read-only environment and pre-flight diagnostics.
+    Result categories: PASS, WARN, FAIL, SKIP.
+    Never creates, migrates, writes, or mutates any database or files.
+    Returns 0 if no FAIL items, 1 if any FAIL item occurs.
+    """
+    sys.stdout.write(f"\n  {TEAL}{BOLD}{APP_NAME} — Environment Doctor{RESET}\n")
+    sys.stdout.write(f"  {FAINT}Read-only system & pre-flight diagnostics{RESET}\n\n")
+    sys.stdout.write(f"  {SLATE}{'─' * 60}{RESET}\n")
+
+    results = []
+
+    def record(category: str, title: str, details: str = ""):
+        results.append(category)
+        if category == "PASS":
+            cat_badge = f"{TEAL}[PASS]{RESET}"
+        elif category == "WARN":
+            cat_badge = f"{AMBER}[WARN]{RESET}"
+        elif category == "FAIL":
+            cat_badge = f"{RED}[FAIL]{RESET}"
+        else:
+            cat_badge = f"{GRAY}[SKIP]{RESET}"
+        sys.stdout.write(f"  {cat_badge} {WHITE}{title}{RESET}\n")
+        if details:
+            sys.stdout.write(f"         {FAINT}{details}{RESET}\n")
+
+    # 1. Python Runtime
+    py_ver = sys.version_info
+    py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}"
+    if py_ver >= (3, 11):
+        record("PASS", f"Python Runtime: v{py_str}", f"Executable: {sys.executable}")
+    else:
+        record("FAIL", f"Python Runtime: v{py_str}", "Python 3.11+ is required.")
+
+    # 2. Node.js & npm
+    node_bin = shutil.which("node")
+    npm_bin = shutil.which("npm.cmd" if sys.platform == "win32" else "npm")
+    if node_bin:
+        try:
+            node_ver = subprocess.run([node_bin, "-v"], capture_output=True, text=True, timeout=2).stdout.strip()
+            record("PASS", f"Node.js Runtime: {node_ver}", f"Binary: {node_bin}")
+        except Exception:
+            record("PASS", "Node.js Runtime found", f"Binary: {node_bin}")
+    else:
+        record("FAIL", "Node.js Runtime missing", "Node.js v20+ is required to build/run the Vite frontend.")
+
+    if npm_bin:
+        try:
+            npm_ver = subprocess.run([npm_bin, "-v"], capture_output=True, text=True, timeout=2).stdout.strip()
+            record("PASS", f"Package Manager: npm v{npm_ver}", f"Binary: {npm_bin}")
+        except Exception:
+            record("PASS", "Package Manager: npm found", f"Binary: {npm_bin}")
+    else:
+        record("FAIL", "npm missing", "npm is required to run the frontend.")
+
+    # 3. Project Directory Structure
+    req_paths = [
+        ("Backend Entry", os.path.join(BACKEND_DIR, "main.py")),
+        ("Frontend Config", os.path.join(ROOT_DIR, "package.json")),
+        ("Vite Config", os.path.join(ROOT_DIR, "vite.config.ts")),
+        ("Uploads Directory", os.path.join(BACKEND_DIR, "uploads", "images")),
+    ]
+    all_paths_ok = True
+    for label, p in req_paths:
+        if not os.path.exists(p):
+            all_paths_ok = False
+            record("FAIL", f"Missing Project File: {label}", f"Path: {p}")
+    if all_paths_ok:
+        record("PASS", "Project Directory Structure", f"Root: {ROOT_DIR}")
+
+    # 4. Database File (Read-Only Check — Never Mutates)
+    db_path = os.path.join(BACKEND_DIR, "app.db")
+    if os.path.exists(db_path) and os.path.isfile(db_path):
+        size_kb = os.path.getsize(db_path) / 1024
+        record("PASS", "Database File: app.db present", f"Size: {size_kb:.1f} KB (Read-only check)")
+    else:
+        record("WARN", "Database File: app.db not found", "Database will be initialized on first server start.")
+
+    # 5. Port Availability
+    b_busy = check_port(BACKEND_PORT)
+    f_busy = check_port(FRONTEND_PORT)
+    if not b_busy and not f_busy:
+        record("PASS", f"Port Availability: Ports {BACKEND_PORT} & {FRONTEND_PORT} free", "No conflict with other local processes.")
+    elif b_busy and f_busy:
+        record("WARN", f"Port Status: Ports {BACKEND_PORT} & {FRONTEND_PORT} in use", "Existing server instances may already be running.")
+    elif b_busy:
+        record("WARN", f"Port Status: Backend port {BACKEND_PORT} in use", "Another service is listening on port 8000.")
+    else:
+        record("WARN", f"Port Status: Frontend port {FRONTEND_PORT} in use", "Another service is listening on port 5173.")
+
+    # 6. Physical LAN IP Discovery
+    lan_ip = get_local_ip()
+    if lan_ip and not lan_ip.startswith("127."):
+        record("PASS", f"Active LAN IPv4: {lan_ip}", f"Mobile access URL: http://{lan_ip}:{FRONTEND_PORT}")
+    else:
+        record("WARN", "No Physical LAN IPv4 Detected", "Server will only be accessible locally (http://localhost:5173).")
+
+    # 7. Windows Firewall Rules (Platform-Aware)
+    if sys.platform == "win32":
+        rules = [
+            (f"{APP_NAME} - Frontend (Vite)", FRONTEND_PORT),
+            (f"{APP_NAME} - Backend (FastAPI)", BACKEND_PORT),
+        ]
+        fw_ok = True
+        for rule_name, port in rules:
+            try:
+                check = subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+                )
+                if check.returncode != 0:
+                    fw_ok = False
+            except Exception:
+                fw_ok = False
+        if fw_ok:
+            record("PASS", "Windows Firewall: Inbound rules configured", "Ports 5173 and 8000 allowed for private LAN.")
+        else:
+            record("WARN", "Windows Firewall: Inbound rules missing", "Run setup_mobile_access.bat as Admin if remote devices cannot connect.")
+    else:
+        record("SKIP", "Windows Firewall Check", "Non-Windows platform; firewall check skipped.")
+
+    # Summary
+    pass_cnt = results.count("PASS")
+    warn_cnt = results.count("WARN")
+    fail_cnt = results.count("FAIL")
+    skip_cnt = results.count("SKIP")
+
+    sys.stdout.write(f"  {SLATE}{'─' * 60}{RESET}\n")
+    sys.stdout.write(f"  {DIM}Doctor Summary:{RESET} {TEAL}{pass_cnt} PASS{RESET}  ")
+    if warn_cnt:
+        sys.stdout.write(f"{AMBER}{warn_cnt} WARN{RESET}  ")
+    if fail_cnt:
+        sys.stdout.write(f"{RED}{fail_cnt} FAIL{RESET}  ")
+    if skip_cnt:
+        sys.stdout.write(f"{GRAY}{skip_cnt} SKIP{RESET}  ")
+    sys.stdout.write("\n\n")
+
+    return 1 if fail_cnt > 0 else 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -408,7 +564,7 @@ def handle_key(ch: str) -> bool:
     return True
 
 
-def main():
+def main(open_browser: bool = False):
     global running
     print_banner()
 
@@ -419,7 +575,7 @@ def main():
     start_frontend()
 
     # Auto-refresh banner when services come online
-    threading.Thread(target=wait_for_services, daemon=True).start()
+    threading.Thread(target=wait_for_services, args=(15.0, open_browser), daemon=True).start()
 
     try:
         while running:
@@ -453,5 +609,39 @@ def main():
         time.sleep(0.5)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="launcher.py",
+        description=f"{APP_NAME} — Control Hub Launcher",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+commands:
+  doctor           Run read-only pre-flight environment diagnostics (PASS/WARN/FAIL/SKIP)
+
+options:
+  -h, --help       Show this help message and exit
+  --no-browser     Start services without launching a browser window
+"""
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Start services without launching a browser window."
+    )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser(
+        "doctor",
+        help="Run read-only pre-flight environment diagnostics (PASS/WARN/FAIL/SKIP)."
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    cli_args = parse_args()
+    if cli_args.command == "doctor":
+        sys.exit(run_doctor())
+    else:
+        main(open_browser=not cli_args.no_browser)
