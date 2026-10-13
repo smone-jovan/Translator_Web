@@ -19,6 +19,7 @@ import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import { getApiUrl } from '@/lib/api';
+import { useEngineLoadMode } from '@/lib/settingsSync';
 
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import Settings from '@mui/icons-material/Settings';
@@ -114,7 +115,7 @@ export default function BulkTranslateModal({
   isOpen, onClose, threadId, threadTitle, chapters, onStartBatch
 }: BulkTranslateModalProps) {
   const [mode, setMode] = useState<'easy' | 'advanced'>('easy');
-  const [loadMode, setLoadMode] = useState<'soft' | 'hard'>('soft');
+  const [loadMode, setLoadMode] = useEngineLoadMode();
   const [range, setRange] = useState<number>(5);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [aiExtract, setAiExtract] = useState<boolean>(true);
@@ -145,6 +146,16 @@ export default function BulkTranslateModal({
 
   useEffect(() => {
     if (isOpen) {
+      fetch(getApiUrl('/api/settings'))
+        .then(res => res.json())
+        .then(data => {
+          const mode = data?.load_mode || data?.prefetch_mode;
+          if (mode === 'hard' || mode === 'soft') {
+            setLoadMode(mode);
+          }
+        })
+        .catch(() => {});
+
       if (!hasInitialized) {
         // Fetch lorebook count to determine recommendation
         fetch(getApiUrl(`/api/threads/${threadId}/lorebook`))
@@ -237,26 +248,29 @@ export default function BulkTranslateModal({
             background: 'var(--card)', 
             backgroundImage: 'radial-gradient(circle at top left, var(--primary), transparent)',
             border: '1px solid var(--border)',
-            borderRadius: '28px',
+            borderRadius: { xs: '0px', sm: '28px' },
             color: 'var(--foreground)',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            m: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100dvh', sm: '90vh' },
+            height: { xs: '100%', sm: 'auto' }
           }
         }
       }}
     >
       <DialogTitle sx={{ 
         m: 0, 
-        p: 4, 
-        pb: 1, 
+        p: { xs: 2, sm: 3.5 }, 
+        pb: { xs: 1, sm: 1 }, 
         display: 'flex', 
         alignItems: 'center', 
-        gap: 3 
+        gap: { xs: 1.5, sm: 2.5 } 
       }}>
         <Box sx={{ 
-          width: 56, 
-          height: 56, 
-          borderRadius: '18px', 
+          width: { xs: 44, sm: 54 }, 
+          height: { xs: 44, sm: 54 }, 
+          borderRadius: { xs: '14px', sm: '18px' }, 
           background: 'var(--primary)',
           display: 'flex',
           alignItems: 'center',
@@ -264,28 +278,29 @@ export default function BulkTranslateModal({
           boxShadow: '0 8px 20px var(--primary)',
           flexShrink: 0
         }}>
-          <AutoAwesome sx={{ color: 'var(--primary-foreground)', fontSize: 28 }} />
+          <AutoAwesome sx={{ color: 'var(--primary-foreground)', fontSize: { xs: 22, sm: 28 } }} />
         </Box>
-        <Box sx={{ flexGrow: 1 }}>
-          <Typography variant="h5" sx={{ fontWeight: 900, color: 'var(--foreground)', letterSpacing: '-0.5px' }}>
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="h6" sx={{ fontWeight: 900, color: 'var(--foreground)', letterSpacing: '-0.5px', fontSize: { xs: '1.05rem', sm: '1.25rem' }, lineHeight: 1.2 }}>
             Batch Translation Studio
           </Typography>
-          <Typography variant="body2" sx={{ color: 'var(--muted-foreground)', fontWeight: 500 }}>
+          <Typography variant="body2" sx={{ color: 'var(--muted-foreground)', fontWeight: 500, fontSize: { xs: '0.75rem', sm: '0.85rem' }, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {threadTitle || 'Novel batch processor'}
           </Typography>
         </Box>
         <IconButton
           onClick={onClose}
           sx={{
-            color: 'rgba(255,255,255,0.2)',
-            '&:hover': { color: '#fff', background: 'rgba(255,255,255,0.05)' }
+            color: 'rgba(255,255,255,0.4)',
+            '&:hover': { color: '#fff', background: 'rgba(255,255,255,0.05)' },
+            flexShrink: 0
           }}
         >
-          <Close />
+          <Close fontSize="small" />
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ px: 4, pt: 2, pb: 0 }}>
+      <DialogContent sx={{ px: { xs: 2, sm: 4 }, pt: 2, pb: 0, flex: 1, overflowY: 'auto' }}>
         {/* Toggle Mode Mode Selector */}
         <Box sx={{ mb: 3.5, display: 'flex', justifyContent: 'center' }}>
           <ToggleButtonGroup
@@ -959,15 +974,15 @@ export default function BulkTranslateModal({
         )}
       </DialogContent>
 
-      <DialogActions sx={{ p: 4, pt: 2 }}>
+      <DialogActions sx={{ p: { xs: 2, sm: 3.5 }, pt: { xs: 1.5, sm: 2 }, borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.1)' }}>
         <Button
           fullWidth
           variant="contained"
           onClick={handleStart}
           disabled={isStarting || selectedIds.length === 0}
-          startIcon={isStarting ? <CircularProgress size={20} color="inherit" /> : <PlayArrow />}
+          startIcon={isStarting ? <CircularProgress size={18} color="inherit" /> : <PlayArrow />}
           sx={{
-            py: 2,
+            py: { xs: 1.5, sm: 2 },
             borderRadius: '16px',
             background: 'var(--primary)',
             color: 'var(--primary-foreground)',

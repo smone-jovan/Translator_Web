@@ -147,6 +147,27 @@ class HallucinationDetector:
         return cleaned.strip()
 
     @staticmethod
+    def strip_repetitive_character_loops(text: str) -> str:
+        """
+        Collapse degenerate repetitive character runs (e.g. 50+ '□', '■', '•', or identical tokens)
+        caused by model decoder loops / token degeneration.
+        """
+        if not text:
+            return ""
+
+        # 1. Collapse runaway placeholder symbols (e.g. 4+ '□', '■', '•', or Unicode square boxes) to max 3
+        collapsed = re.sub(r"([□■•\ufffd\u25a0-\u25ff])\1{3,}", r"\1\1\1", text)
+
+        # 2. Collapse extreme runs of any non-alphanumeric symbol (8+ identical chars) to max 3
+        collapsed = re.sub(r"([^\s\w\u4e00-\u9fff])\1{7,}", r"\1\1\1", collapsed)
+
+        # 3. Collapse runaway repetitive identical words (e.g. 8+ 'the the the ...')
+        collapsed = re.sub(r"\b(\w+)(?:\s+\1){7,}\b", r"\1 \1 \1", collapsed, flags=re.IGNORECASE)
+
+        return collapsed
+
+
+    @staticmethod
     def summarize_text_audit(text: str, threshold: int = 10) -> dict:
         matches = HallucinationDetector.detect_repeated_words(text, threshold=threshold)
         return {

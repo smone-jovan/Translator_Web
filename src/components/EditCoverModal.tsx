@@ -233,23 +233,26 @@ export default function EditCoverModal({
           background: 'var(--card)',
           border: '1px solid var(--border)',
           color: 'var(--foreground)',
-          borderRadius: '16px',
-          padding: '8px',
+          borderRadius: { xs: '0px', sm: '24px' },
+          padding: { xs: '0px', sm: '8px' },
           boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          m: { xs: 0, sm: 2 },
+          maxHeight: { xs: '100dvh', sm: '90vh' },
+          height: { xs: '100%', sm: 'auto' }
         }
       }}
     >
-      <div className="flex justify-between items-center px-6 py-4 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)]">
+      <div className="flex justify-between items-center px-4 sm:px-6 py-3.5 sm:py-4 border-b border-[var(--border)]">
+        <div className="flex items-center gap-2 min-w-0 pr-2">
+          <div className="p-2 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)] shrink-0">
             <Sparkles size={18} />
           </div>
-          <div>
-            <DialogTitle style={{ padding: 0, fontSize: '1.1rem', fontWeight: 700 }} className="text-[var(--foreground)]">
+          <div className="min-w-0">
+            <DialogTitle style={{ padding: 0, fontSize: '1.05rem', fontWeight: 700 }} className="text-[var(--foreground)] truncate">
               Customize Book Cover
             </DialogTitle>
-            <p className="text-[11px] text-[var(--muted-foreground)] line-clamp-1 mt-0.5">
+            <p className="text-[11px] text-[var(--muted-foreground)] truncate mt-0.5">
               {threadTitle}
             </p>
           </div>
@@ -257,15 +260,15 @@ export default function EditCoverModal({
         <IconButton 
           onClick={onClose} 
           size="small" 
-          sx={{ color: 'var(--muted-foreground)', '&:hover': { color: 'var(--foreground)', background: 'rgba(255,255,255,0.05)' } }}
+          sx={{ color: 'var(--muted-foreground)', '&:hover': { color: 'var(--foreground)', background: 'rgba(255,255,255,0.05)' }, flexShrink: 0 }}
         >
           <X size={18} />
         </IconButton>
       </div>
 
-      <DialogContent className="p-6 flex flex-col md:flex-row gap-6 mt-2">
+      <DialogContent className="p-4 sm:p-6 flex flex-col md:flex-row gap-4 sm:gap-6 mt-1 overflow-y-auto flex-1">
         {/* Left Side: Forms */}
-        <div className="flex-1 flex flex-col justify-between space-y-5">
+        <div className="flex-1 flex flex-col justify-between space-y-4 sm:space-y-5">
           {/* Tab Headers */}
           <div className="flex bg-[var(--secondary)] p-1 rounded-lg border border-[var(--border)]">
             <button
@@ -299,7 +302,7 @@ export default function EditCoverModal({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all ${
+              className={`border-2 border-dashed rounded-xl p-5 sm:p-8 flex flex-col items-center justify-center gap-2.5 sm:gap-3 cursor-pointer transition-all ${
                 isDragOver
                   ? 'border-[var(--primary)] bg-[var(--primary)]/5 scale-[0.99]'
                   : 'border-[var(--border)] hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/30'
@@ -312,8 +315,8 @@ export default function EditCoverModal({
                 accept="image/*"
                 className="hidden"
               />
-              <div className="w-12 h-12 rounded-full bg-[var(--secondary)] border border-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)] group-hover:text-[var(--primary)]">
-                <UploadCloud size={24} />
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[var(--secondary)] border border-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)] group-hover:text-[var(--primary)]">
+                <UploadCloud size={20} />
               </div>
               <div className="text-center">
                 <p className="text-xs font-bold text-[var(--foreground)]">Drag & drop your cover image here</p>
@@ -420,7 +423,7 @@ export default function EditCoverModal({
         </div>
       </DialogContent>
 
-      <DialogActions className="px-6 py-4 border-t border-[var(--border)] flex justify-end gap-2 bg-[var(--secondary)]/20">
+      <DialogActions className="px-4 sm:px-6 py-3 sm:py-4 border-t border-[var(--border)] flex justify-end gap-2 bg-[var(--secondary)]/20 flex-shrink-0">
         <Button
           variant="outline"
           onClick={onClose}

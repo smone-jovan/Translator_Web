@@ -165,3 +165,50 @@ def test_calculate_concurrency_limit_with_multiple_keys():
     many_keys = '["k1"' + ',"k2"' * 10 + ']'
     limit = BackgroundTranslator._calculate_concurrency_limit("gemini", many_keys)
     assert limit <= 20
+
+@pytest.mark.asyncio
+async def test_enforce_pacing_rotates_keys_in_db(db_session):
+    """Test that _enforce_pacing rotates and persists the active key index in GlobalSetting."""
+    import json
+    from database import GlobalSetting
+    from sqlalchemy import select
+    
+    gs = GlobalSetting(
+        llm_provider="gemini",
+        gemini_api_keys=json.dumps(["keyA", "keyB", "keyC"]),
+        gemini_active_key_index=0
+    )
+    db_session.add(gs)
+    db_session.commit()
+    
+    # Call _enforce_pacing first time
+    await BackgroundTranslator._enforce_pacing(model="gemini-3.5-flash-lite", gs=gs)
+    db_session.refresh(gs)
+    assert gs.gemini_active_key_index == 1, "First pacing call should advance active key to 1"
+    
+    # Call _enforce_pacing second time
+    await BackgroundTranslator._enforce_pacing(model="gemini-3.5-flash-lite", gs=gs)
+    db_session.refresh(gs)
+    assert gs.gemini_active_key_index == 2, "Second pacing call should advance active key to 2"
+    
+    # Call _enforce_pacing third time (wrap around)
+    await BackgroundTranslator._enforce_pacing(model="gemini-3.5-flash-lite", gs=gs)
+    db_session.refresh(gs)
+    assert gs.gemini_active_key_index == 0, "Third pacing call should wrap around to 0"
+
+
+@pytest.mark.asyncio
+async def test_start_batch_load_mode_storage():
+    """Verify that start_batch correctly stores load_mode on the ActiveBatch object."""
+    mock_worker = AsyncMock()
+    with patch("services.background_translator.BackgroundTranslator._run_batch_worker", new=mock_worker):
+        await BackgroundTranslator.start_batch(
+            thread_id=99,
+            chapter_ids=[1],
+            target_lang="Indonesian",
+            load_mode="hard"
+        )
+        batch = active_batches.get(99)
+        assert batch is not None
+        assert getattr(batch, "load_mode", None) == "hard"
+

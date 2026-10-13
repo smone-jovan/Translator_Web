@@ -59,14 +59,20 @@ backend/cf_blocked.png
 !.agent/skills/my-custom-skill/
 !.agent/skills/custom-skills-discovery-rule.md
 
-# Temporary Test Scripts
+# Temporary Test Scripts & Scratch
 backend/test_*.py
+backend/test.py
+backend/test2.py
+backend/simulate.py
 backend/check_status.py
 backend/reset_chapters.py
 backend/trigger_batch.py
 backend/test_links.txt
+test_links.txt
 test_*.py
 translate_*.py
+nul
+*.bak*
 !backend/tests/
 !backend/tests/**
 backend/tests/**/__pycache__/

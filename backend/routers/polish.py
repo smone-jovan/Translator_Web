@@ -10,7 +10,8 @@ from services.ai.factory import AIProviderFactory
 from services.prompt_templates import (
     build_title_cleaning_prompt,
     build_synopsis_translation_prompt,
-    build_title_translation_prompt
+    build_title_translation_prompt,
+    detect_source_language
 )
 
 router = APIRouter(prefix="/api", tags=["Polish"])
@@ -31,10 +32,13 @@ def clean_and_format_chapter_title(title: str, order_num: int, total_chapters: i
         prev = t
         # Strip existing volume-aware prefixes like V1-098. or V2. or v1_99:
         t = re.sub(r'(?i)^v\d+[-_]?\d*\s*[\.\-:：~\s]*', '', t).strip()
-        # Strip "Chapter X", "Bab X", "Vol X", "Ch X", "Volume X" (case insensitive)
-        t = re.sub(r'(?i)^(chapter|bab|vol|volume|ch)\s*\d+\s*[\.\-:：~\s]*', '', t).strip()
+        # Strip "Chapter X", "Bab X", "Vol X", "Ch X", "Volume X", "EP X" (case insensitive)
+        t = re.sub(r'(?i)^(chapter|bab|vol|volume|ch|ep|episode)\.?\s*\d+\s*[\.\-:：~\s]*', '', t).strip()
         # Strip Chinese chapter prefixes: 第X章 or 第X话 or 第X节 or 第X回 or 第X卷
         t = re.sub(r'^第\s*\d+\s*[章节话回卷节]\s*[\.\-:：~\s]*', '', t).strip()
+        # Strip Korean chapter prefixes: 제X화, 제X편, 제X장, or X화
+        t = re.sub(r'^제\s*\d+\s*[화편장회]\s*[\.\-:：~\s]*', '', t).strip()
+        t = re.sub(r'^\d+\s*화\s*[\.\-:：~\s]*', '', t).strip()
         # Strip leading numbers with dots, dashes, colons: e.g. "1. ", "01 - ", "12: "
         t = re.sub(r'^\d+\s*[\.\-:：~\s]+\s*', '', t).strip()
         # Strip just leading digits if they are separated by space
@@ -159,6 +163,11 @@ async def translate_titles(
             return False
         return any('\u4e00' <= char <= '\u9fff' for char in text)
 
+    def contains_source_script(text: str) -> bool:
+        if not text:
+            return False
+        return bool(re.search(r"[\u4e00-\u9fff\uac00-\ud7a3\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff]", text))
+
     # Clean thread original title and translate thread synopsis/description if bulk polishing
     if not chapter_id:
         # A. Clean Original Title (ADR-020 Compliance)
@@ -193,6 +202,15 @@ async def translate_titles(
                 ]
                 translated_syn = await provider.chat_completion(messages=messages_syn, temperature=0.3)
                 translated_syn = translated_syn.strip()
+                if translated_syn.startswith("```") and translated_syn.endswith("```"):
+                    translated_syn = re.sub(r"^```[a-zA-Z]*\n?", "", translated_syn)
+                    translated_syn = re.sub(r"\n?```$", "", translated_syn).strip()
+                translated_syn = re.sub(
+                    r"^(?:(?:Here is|Here's|Below is)\s+the\s+(?:translated\s+)?synopsis:?|###\s*Translation:?)\s*\n+",
+                    "",
+                    translated_syn,
+                    flags=re.IGNORECASE
+                ).strip()
                 if translated_syn:
                     print(f"✅ Successfully translated synopsis.")
                     thread.synopsis = translated_syn
@@ -228,7 +246,9 @@ async def translate_titles(
         # Strip common volume prefixes like v\d+[-_]? or Volume \d+ (case-insensitive) to prevent matching the volume number
         title_to_parse = re.sub(r'(?i)^(?:vol(?:ume)?\s*\d+[-_.]?\s*|v\d+[-_.]?\s*)', '', first_ch.title_original).strip()
         # Standard Arabic digit patterns first (prioritize chapter markers over volume markers)
-        match = re.search(r'(?i)(?:chapter|bab|ch|第)\s*(\d+)', title_to_parse)
+        match = re.search(r'(?i)(?:chapter|bab|ch|ep|episode|第|제)\s*(\d+)', title_to_parse)
+        if not match:
+            match = re.search(r'(\d+)\s*화', title_to_parse)
         if not match:
             match = re.search(r'(?i)(?:vol|volume)\s*(\d+)', title_to_parse)
         if match:
@@ -342,8 +362,8 @@ async def translate_titles(
             indices.append(-1)
 
     for i, c in enumerate(chapters):
-        # Process if untranslated OR if repolish requested OR if current translation still contains Chinese (when target_lang is not Chinese)
-        is_untranslated = not c.title_translated or (target_lang.lower() != "chinese" and contains_chinese(c.title_translated))
+        # Process if untranslated OR if repolish requested OR if current translation still contains source script (when target_lang is not source)
+        is_untranslated = not c.title_translated or (target_lang.lower() not in ("chinese", "mandarin") and contains_source_script(c.title_translated))
         if c.title_original and (is_untranslated or repolish):
             titles_to_process.append(c.title_original)
             indices.append(i)
@@ -382,7 +402,8 @@ async def translate_titles(
                 label = "BOOK_TITLE" if abs_idx == -1 else f"CHAPTER_{abs_idx}"
                 prompt_lines.append(f"[{label}]: {title}")
 
-            sys_prompt = build_title_translation_prompt(target_lang)
+            chunk_source_lang = detect_source_language(" ".join(chunk_titles))
+            sys_prompt = build_title_translation_prompt(target_lang, source_lang=chunk_source_lang)
             user_prompt = "\n".join(prompt_lines)
 
             try:

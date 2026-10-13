@@ -7,6 +7,7 @@ from services.ai.factory import AIProviderFactory
 from services.scrapers.base import ScrapedNovelMetadata
 from services.scrapers.novel_updates import NovelUpdatesAdapter
 from services.scrapers.sfacg import SFACGAdapter
+from services.scrapers.novalpie import NovalpieAdapter
 
 class MetadataScraperEngine:
 
@@ -18,7 +19,8 @@ class MetadataScraperEngine:
     def __init__(self):
         self.adapters = {
             "novelupdates": NovelUpdatesAdapter(),
-            "sfacg": SFACGAdapter()
+            "sfacg": SFACGAdapter(),
+            "novalpie": NovalpieAdapter(),
         }
 
     async def clean_title_with_ai(self, raw_title: str, base_url: str) -> str:
@@ -74,8 +76,12 @@ class MetadataScraperEngine:
                 lm_url = gs.lm_url
 
         # 2. Check source bypass/override based on query content
-        is_sfacg = (source == "sfacg") or ("sfacg.com" in query)
-        active_source = "sfacg" if is_sfacg else "novelupdates"
+        if source == "novalpie" or ("novalpie.cc" in query):
+            active_source = "novalpie"
+        elif source == "sfacg" or ("sfacg.com" in query):
+            active_source = "sfacg"
+        else:
+            active_source = "novelupdates"
         
         # 3. Clean query title if not a direct URL/ID
         cleaned_query = query
@@ -110,8 +116,12 @@ class MetadataScraperEngine:
                 lm_url = gs.lm_url
 
         # 2. Check source bypass/override based on query content
-        is_sfacg = (source == "sfacg") or ("sfacg.com" in query)
-        active_source = "sfacg" if is_sfacg else "novelupdates"
+        if source == "novalpie" or ("novalpie.cc" in query):
+            active_source = "novalpie"
+        elif source == "sfacg" or ("sfacg.com" in query):
+            active_source = "sfacg"
+        else:
+            active_source = "novelupdates"
         
         # 3. Clean query title if not a direct URL/ID
         cleaned_query = query

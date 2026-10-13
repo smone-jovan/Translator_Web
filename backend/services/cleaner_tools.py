@@ -94,6 +94,7 @@ class CleanerTools:
 
         cleaned = "\n".join(cleaned_lines)
         if is_translated:
+            cleaned = HallucinationDetector.strip_repetitive_character_loops(cleaned)
             cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
         return cleaned, removed

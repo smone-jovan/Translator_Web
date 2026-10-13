@@ -16,16 +16,21 @@ interface BookmarksPageProps {
   onOpenLibrary: () => void;
 }
 
-export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: BookmarksPageProps) {
-  const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>([]);
-  const [loading, setLoading] = useState(true);
+let memoryBookmarksCache: BookmarkedChapter[] | null = null;
 
-  const fetchBookmarks = async () => {
+export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: BookmarksPageProps) {
+  const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>(() => memoryBookmarksCache ?? []);
+  const [loading, setLoading] = useState(() => memoryBookmarksCache === null);
+
+  const fetchBookmarks = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await fetch(getApiUrl('/api/bookmarks'));
       const data = await res.json();
-      if (Array.isArray(data)) setBookmarks(data);
+      if (Array.isArray(data)) {
+        setBookmarks(data);
+        memoryBookmarksCache = data;
+      }
     } catch (err) {
       console.error('Failed to fetch bookmarks:', err);
     } finally {
@@ -38,7 +43,7 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
     const load = async () => {
       await Promise.resolve();
       if (!active) return;
-      fetchBookmarks();
+      fetchBookmarks(memoryBookmarksCache !== null);
     };
     load();
     return () => {
@@ -97,45 +102,52 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
           </button>
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-6 sm:space-y-8">
           {Object.entries(groupedBookmarks).map(([threadId, group]) => (
-            <div key={threadId} className="bg-[var(--card)] rounded-3xl border border-[var(--border)] shadow-sm overflow-hidden">
-              <div className="bg-[var(--muted)]/30 px-6 py-4 border-b border-[var(--border)]">
-                <h2 className="font-semibold text-lg line-clamp-1" title={group.title}>{group.title}</h2>
+            <div key={threadId} className="bg-[var(--card)] rounded-2xl sm:rounded-3xl border border-[var(--border)] shadow-sm overflow-hidden">
+              <div className="bg-[var(--muted)]/30 px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--border)] flex items-center justify-between">
+                <h2 className="font-bold text-base sm:text-lg truncate text-[var(--foreground)]" title={group.title}>{group.title}</h2>
+                <span className="text-xs text-[var(--muted-foreground)] font-semibold shrink-0 ml-2">
+                  {group.chapters.length} bab
+                </span>
               </div>
               <div className="divide-y divide-[var(--border)]">
                 {group.chapters.map(ch => (
                   <div 
                     key={ch.id} 
-                    className="flex items-center justify-between p-4 px-6 hover:bg-[var(--accent)]/50 transition-colors cursor-pointer group"
+                    className="flex items-center justify-between p-3 sm:p-4 px-4 sm:px-6 hover:bg-[var(--accent)]/50 transition-colors cursor-pointer group gap-2"
                     onClick={() => onOpenChapter(ch.thread_id, ch.id)}
                   >
-                    <div className="flex-1 min-w-0 pr-4">
+                    <div className="flex-1 min-w-0 pr-2">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[var(--primary)]/10 text-[var(--primary)] shrink-0">
-                          Ch {ch.order}
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[var(--primary)]/10 text-[var(--primary)] shrink-0 font-mono">
+                          Bab {ch.order}
                         </span>
-                        <h3 className="font-medium truncate group-hover:text-[var(--primary)] transition-colors">
+                        <h3 className="font-semibold text-xs sm:text-sm truncate group-hover:text-[var(--primary)] transition-colors text-[var(--foreground)]">
                           {ch.title_translated || ch.title_original || `Chapter ${ch.order}`}
                         </h3>
                       </div>
-                      <p className="text-xs text-[var(--muted-foreground)] truncate">
-                        {ch.title_original}
-                      </p>
+                      {ch.title_original && (
+                        <p className="text-[11px] text-[var(--muted-foreground)] truncate">
+                          {ch.title_original}
+                        </p>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
+                        type="button"
                         onClick={(e) => removeBookmark(ch.thread_id, ch.id, e)}
-                        className="p-2 rounded-xl text-yellow-500 hover:bg-yellow-500/10 transition-colors"
-                        title="Remove bookmark"
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-yellow-500 hover:bg-yellow-500/10 active:scale-95 transition-all cursor-pointer"
+                        title="Hapus bookmark"
                       >
-                        <Star size={20} className="fill-current" />
+                        <Star size={18} className="fill-current" />
                       </button>
                       <button
-                        className="p-2 rounded-xl text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] transition-colors opacity-0 group-hover:opacity-100"
-                        title="Read Chapter"
+                        type="button"
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] active:scale-95 transition-all opacity-80 sm:opacity-0 group-hover:opacity-100"
+                        title="Baca Bab Ini"
                       >
-                        <BookOpen size={20} />
+                        <BookOpen size={18} />
                       </button>
                     </div>
                   </div>

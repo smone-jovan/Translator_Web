@@ -127,8 +127,16 @@ async def upload_epub(
     if dc_title:
         book_title = dc_title[0][0]
 
+    # Get author metadata (DC creator) with fallback "SMONE"
+    author_name = "SMONE"
+    dc_creator = book.get_metadata("DC", "creator")
+    if dc_creator and dc_creator[0] and dc_creator[0][0]:
+        creator_val = str(dc_creator[0][0]).strip()
+        if creator_val:
+            author_name = creator_val
+
     # Create thread
-    thread = Thread(title=book_title, original_title=book_title, source_type="epub")
+    thread = Thread(title=book_title, original_title=book_title, author=author_name, source_type="epub")
     db.add(thread)
     db.flush()
 

@@ -12,7 +12,7 @@ import json
 import asyncio
 
 from sqlalchemy import select, func
-from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting
+from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting, get_db_workspace
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -54,6 +54,8 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
     if not req.chapter_id:
         raise HTTPException(400, "chapter_id is required for streaming")
 
+    ws = get_db_workspace(db)
+
     # Start the persistent background job if needed
     asyncio.create_task(
         BackgroundTranslator.run_chapter_translation(
@@ -62,16 +64,24 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
             target_lang=target_lang,
             model=selected_model,
             lm_url=ai_url,
-            force_overwrite=req.force_overwrite
+            force_overwrite=req.force_overwrite,
+            workspace=ws,
         )
     )
 
     async def sse_wrapper():
         q = asyncio.Queue()
+        queue_key = (str(ws).lower(), req.chapter_id)
+        if queue_key not in translation_queues:
+            translation_queues[queue_key] = []
+        translation_queues[queue_key].append(q)
+
+        # Legacy fallback key for callers expecting single int
         if req.chapter_id not in translation_queues:
             translation_queues[req.chapter_id] = []
-        translation_queues[req.chapter_id].append(q)
-        
+        if q not in translation_queues[req.chapter_id]:
+            translation_queues[req.chapter_id].append(q)
+
         try:
             while True:
                 content = await q.get()
@@ -79,10 +89,16 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
                     break
                 yield f"data: {json.dumps({'content': content})}\n\n"
         finally:
-            translation_queues[req.chapter_id].remove(q)
-            if not translation_queues[req.chapter_id]:
-                del translation_queues[req.chapter_id]
-        
+            if queue_key in translation_queues and q in translation_queues[queue_key]:
+                translation_queues[queue_key].remove(q)
+                if not translation_queues[queue_key]:
+                    del translation_queues[queue_key]
+
+            if req.chapter_id in translation_queues and q in translation_queues[req.chapter_id]:
+                translation_queues[req.chapter_id].remove(q)
+                if not translation_queues[req.chapter_id]:
+                    del translation_queues[req.chapter_id]
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(sse_wrapper(), media_type="text/event-stream")
@@ -135,6 +151,9 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
             clean_translation = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_translation, flags=re.IGNORECASE)
             if img_md not in clean_translation:
                 clean_translation += f"\n\n{img_md}\n\n"
+
+        if req.thread_id:
+            clean_translation = ContextEngine.enforce_glossary_locking(db, req.thread_id, clean_translation)
 
         return TranslateResponse(
             translation=clean_translation,

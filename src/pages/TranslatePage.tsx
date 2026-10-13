@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Settings2, ArrowUp, UploadCloud, History, ChevronDown, Loader2, Eraser, Cpu, Bot, BookOpen, Plus, Check, ListTree } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,6 +79,29 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
   const [isProcessing, setIsProcessing] = useState(false);
   const [recentThreads, setRecentThreads] = useState<ThreadItem[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  
+  const isToc = useMemo(() => {
+    const trimmed = inputText.trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+
+    // Novalpie novel/book root (e.g. https://novalpie.cc/book/352285 or /novel/352285 without chapter ID)
+    if (/^https?:\/\/(?:www\.)?novalpie\.cc\/(?:book|novel)\/\d+\/?$/i.test(trimmed)) {
+      return true;
+    }
+    // Novel Updates series (e.g. https://www.novelupdates.com/series/.../)
+    if (/^https?:\/\/(?:www\.)?novelupdates\.com\/series\/[^\s/]+\/?$/i.test(trimmed)) {
+      return true;
+    }
+    // SFACG novel index (e.g. https://book.sfacg.com/b/123456/ or m.sfacg.com/b/123456/)
+    if (/^https?:\/\/(?:[a-zA-Z0-9-]+\.)?sfacg\.com\/b\/\d+\/?$/i.test(trimmed)) {
+      return true;
+    }
+    // General table of contents indicators
+    if (/(?:table-of-contents|index|\/toc|\/catalog|\/dir)\/?$/i.test(trimmed)) {
+      return true;
+    }
+    return false;
+  }, [inputText]);
   
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('lm_model') || '');
   const [selectedThreadId, setSelectedThreadId] = useState<string>('new');
@@ -182,6 +205,12 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
   const handleProcess = async () => {
     if (!inputText.trim()) return;
     
+    // Auto-detect: If user pasted a Novel Table of Contents (TOC) link, route directly to TOC Extraction!
+    if (isToc) {
+      await handleTocExtract();
+      return;
+    }
+
     const isUrl = inputText.trim().startsWith('http');
     setIsProcessing(true);
 
@@ -199,13 +228,24 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
         body: JSON.stringify(body),
       });
       
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        // Seamless fallback: If backend flags this as a TOC URL, auto-route to TOC import!
+        if (typeof errData.detail === 'string' && errData.detail.toLowerCase().includes('toc')) {
+          await handleTocExtract();
+          return;
+        }
+        throw new Error(errData.detail || 'Operation failed.');
+      }
+
       const data = await res.json();
       if (data.thread_id) {
         setInputText('');
         onOpenThread?.(data.thread_id);
       }
-    } catch {
-      toast.error('Operation failed.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Operation failed.';
+      toast.error(msg);
     } finally {
       setIsProcessing(false);
     }
@@ -271,8 +311,9 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
     }
   };
 
-  const handleTocExtract = async () => {
-    if (!inputText.trim().startsWith('http')) {
+  const handleTocExtract = async (overrideUrl?: string) => {
+    const targetUrl = (overrideUrl || inputText).trim();
+    if (!targetUrl.startsWith('http')) {
       toast.error('Please enter a valid URL first.');
       return;
     }
@@ -281,9 +322,12 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
       const res = await fetch(getApiUrl('/api/threads/scrape-toc'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: inputText.trim() }),
+        body: JSON.stringify({ url: targetUrl }),
       });
-      if (!res.ok) throw new Error('Failed to scrape TOC');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Failed to scrape TOC');
+      }
       const data = await res.json();
       if (!data.chapters || data.chapters.length === 0) {
         toast.error('No chapters found at this URL.');
@@ -291,7 +335,7 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
       }
       setTocNovelTitle(data.title);
       setTocChapters(data.chapters);
-      setTocBaseUrl(inputText.trim());
+      setTocBaseUrl(targetUrl);
       setIsTocModalOpen(true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'TOC Extraction failed.';
@@ -302,35 +346,51 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] w-full py-12">
-      <div className="w-full max-w-3xl px-4">
-        <header className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-[var(--foreground)] mb-3 tracking-tight">
+    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] w-full py-6 sm:py-12">
+      <div className="w-full max-w-3xl px-3 sm:px-4">
+        <header className="text-center mb-6 sm:mb-10">
+          <h1 className="text-2xl sm:text-4xl font-bold text-[var(--foreground)] mb-2 sm:mb-3 tracking-tight">
             What can I translate for you?
           </h1>
-          <p className="text-[var(--muted-foreground)] text-lg">
+          <p className="text-[var(--muted-foreground)] text-sm sm:text-lg">
             Paste a URL, upload an EPUB, or enter text to start.
           </p>
-          <p className="text-[var(--muted-foreground)] text-sm mt-2">
+          <p className="text-[var(--muted-foreground)] text-xs sm:text-sm mt-1 sm:mt-2">
             Need quick cleanup only? Upload `.txt` and download cleaned file.
           </p>
         </header>
 
-        <Card className="rounded-3xl bg-[var(--card)] border-[var(--border)] shadow-2xl mb-12 ring-1 ring-black/5 dark:ring-white/5">
+        <Card className="rounded-3xl bg-[var(--card)] border-[var(--border)] shadow-2xl mb-8 sm:mb-12 ring-1 ring-black/5 dark:ring-white/5">
           <CardContent className="p-0">
-            <div className="p-8 pb-2 overflow-hidden">
+            <div className="p-4 sm:p-8 pb-2 overflow-hidden">
               <Textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && isToc) {
+                    e.preventDefault();
+                    handleProcess();
+                  }
+                }}
                 placeholder="Paste a URL or text to translate..."
-                className="min-h-[200px] bg-transparent border-none text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] resize-none focus-visible:ring-0 text-xl leading-relaxed font-hyperlegible"
+                className="min-h-[160px] sm:min-h-[200px] bg-transparent border-none text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] resize-none focus-visible:ring-0 text-base sm:text-xl leading-relaxed font-hyperlegible"
               />
             </div>
 
+            {/* Auto-detected TOC Banner */}
+            {isToc && (
+              <div className="flex items-center gap-2 px-3.5 py-2 mx-4 sm:mx-8 mb-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-medium rounded-xl border border-emerald-500/20 animate-in fade-in slide-in-from-top-1 duration-200">
+                <ListTree size={16} className="shrink-0 animate-pulse text-emerald-500" />
+                <span className="flex-1">
+                  <strong>Link Novel Table of Contents (TOC) Terdeteksi.</strong> Tombol proses di bawah otomatis beralih ke <strong>Import TOC</strong> untuk mengekstrak seluruh bab.
+                </span>
+              </div>
+            )}
+
             {/* Bottom Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 bg-[var(--muted)]/30 border-t border-[var(--border)] gap-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 bg-[var(--muted)]/30 border-t border-[var(--border)] gap-3 sm:gap-4">
               {/* Left Icons */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 justify-start overflow-x-auto pb-1 sm:pb-0 [scrollbar-width:none]">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -354,57 +414,63 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  className="rounded-xl h-9 w-9 sm:h-10 sm:w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10 shrink-0"
                   onClick={() => fileInputRef.current?.click()}
                   title="Upload EPUB"
                 >
-                  <UploadCloud size={20} />
+                  <UploadCloud size={18} />
                 </Button>
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  className="rounded-xl h-9 w-9 sm:h-10 sm:w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10 shrink-0"
                   onClick={() => txtCleanerInputRef.current?.click()}
                   title="TXT Cleaner"
                 >
-                  <Eraser size={20} />
+                  <Eraser size={18} />
                 </Button>
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
-                  title="Detect TOC / Bulk Import"
-                  onClick={handleTocExtract}
+                  className={cn(
+                    "rounded-xl h-9 w-9 sm:h-10 sm:w-10 shrink-0 transition-all duration-200",
+                    isToc 
+                      ? "text-emerald-500 bg-emerald-500/15 hover:bg-emerald-500/25 ring-1 ring-emerald-500/30" 
+                      : "text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  )}
+                  title={isToc ? "Novel TOC Terdeteksi! Klik untuk mengekstrak bab" : "Detect TOC / Bulk Import"}
+                  onClick={() => handleTocExtract()}
                   disabled={isProcessing || !inputText.trim().startsWith('http')}
                 >
-                  <ListTree size={20} />
+                  <ListTree size={18} />
                 </Button>
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  className="rounded-xl h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                  className="rounded-xl h-9 w-9 sm:h-10 sm:w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10 shrink-0"
                   title="Quick Settings"
                   onClick={() => onNavigateToSettings?.()}
                 >
-                  <Settings2 size={20} />
+                  <Settings2 size={18} />
                 </Button>
               </div>
 
               {/* Right Controls */}
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <div className="flex items-center gap-2 bg-[var(--secondary)] rounded-full border border-[var(--border)] p-1 pr-3 flex-1 sm:flex-initial overflow-visible">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                <div className="flex items-center gap-1.5 sm:gap-2 bg-[var(--secondary)] rounded-2xl sm:rounded-full border border-[var(--border)] p-1 pr-2 sm:pr-3 flex-1 sm:flex-initial overflow-visible">
                   {/* Model Dropdown */}
-                  <div ref={modelDropdownRef} className="relative flex-1 sm:flex-initial">
+                  <div ref={modelDropdownRef} className="relative flex-1 min-w-0 sm:flex-initial">
                     <button
+                      type="button"
                       onClick={() => { setOpenModelDropdown(!openModelDropdown); setOpenThreadDropdown(false); }}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-[var(--foreground)] hover:bg-[var(--primary)]/10 transition-colors cursor-pointer w-full sm:min-w-[140px] sm:max-w-[220px]"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-medium text-[var(--foreground)] hover:bg-[var(--primary)]/10 transition-colors cursor-pointer w-full sm:min-w-[130px] sm:max-w-[200px]"
                     >
-                      <Cpu size={14} className="text-[var(--primary)] shrink-0" />
-                      <span className="truncate">{selectedModel || 'Select Model'}</span>
-                      <ChevronDown size={12} className={cn("ml-auto shrink-0 text-[var(--muted-foreground)] transition-transform", openModelDropdown && "rotate-180")} />
+                      <Cpu size={13} className="text-[var(--primary)] shrink-0" />
+                      <span className="truncate flex-1 text-left">{selectedModel || 'Select Model'}</span>
+                      <ChevronDown size={11} className={cn("ml-auto shrink-0 text-[var(--muted-foreground)] transition-transform", openModelDropdown && "rotate-180")} />
                     </button>
                     {openModelDropdown && (
-                      <div className="absolute top-full left-0 mt-2 w-72 max-h-64 overflow-y-auto bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl z-50 py-2 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="absolute top-full left-0 mt-2 w-72 max-w-[calc(100vw-32px)] max-h-64 overflow-y-auto bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl z-50 py-2 animate-in fade-in zoom-in-95 duration-150">
                         <div className="px-3 py-2 flex items-center gap-2 border-b border-[var(--border)] mb-1">
                           <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">{providerLabel}</span>
                         </div>
@@ -439,22 +505,23 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
                   <div className="w-px h-5 bg-[var(--border)] shrink-0" />
 
                   {/* Thread Dropdown */}
-                  <div ref={threadDropdownRef} className="relative flex-1 sm:flex-initial">
+                  <div ref={threadDropdownRef} className="relative flex-1 min-w-0 sm:flex-initial">
                     <button
+                      type="button"
                       onClick={() => { setOpenThreadDropdown(!openThreadDropdown); setOpenModelDropdown(false); }}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-[var(--foreground)] hover:bg-[var(--primary)]/10 transition-colors cursor-pointer w-full sm:min-w-[120px] sm:max-w-[200px]"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-medium text-[var(--foreground)] hover:bg-[var(--primary)]/10 transition-colors cursor-pointer w-full sm:min-w-[110px] sm:max-w-[180px]"
                     >
-                      <BookOpen size={14} className="text-[var(--primary)] shrink-0" />
-                      <span className="truncate">
+                      <BookOpen size={13} className="text-[var(--primary)] shrink-0" />
+                      <span className="truncate flex-1 text-left">
                         {selectedThreadId === 'new'
                           ? 'New Thread'
                           : recentThreads.find(t => String(t.id) === selectedThreadId)?.title || 'Select Thread'
                         }
                       </span>
-                      <ChevronDown size={12} className={cn("ml-auto shrink-0 text-[var(--muted-foreground)] transition-transform", openThreadDropdown && "rotate-180")} />
+                      <ChevronDown size={11} className={cn("ml-auto shrink-0 text-[var(--muted-foreground)] transition-transform", openThreadDropdown && "rotate-180")} />
                     </button>
                     {openThreadDropdown && (
-                      <div className="absolute top-full right-0 sm:left-0 mt-2 w-72 max-h-64 overflow-y-auto bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl z-50 py-2 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="absolute top-full right-0 sm:left-0 mt-2 w-72 max-w-[calc(100vw-32px)] max-h-64 overflow-y-auto bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl z-50 py-2 animate-in fade-in zoom-in-95 duration-150">
                         <button
                           onClick={() => { setSelectedThreadId('new'); setOpenThreadDropdown(false); }}
                           className={cn(
@@ -502,10 +569,32 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
                 <Button
                   onClick={handleProcess}
                   disabled={!inputText.trim() || isProcessing}
-                  size="icon"
-                  className="rounded-full w-12 h-12 bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-[var(--primary-foreground)] shadow-xl transition-all active:scale-90 shrink-0"
+                  size="default"
+                  title={isToc ? "Import Novel Table of Contents (TOC)" : "Translate / Process"}
+                  className={cn(
+                    "rounded-2xl sm:rounded-full h-10 sm:h-12 shadow-lg transition-all active:scale-95 shrink-0 flex items-center justify-center gap-2 font-bold text-xs",
+                    isToc
+                      ? "px-4 sm:px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/20 ring-2 ring-emerald-400/30 animate-in zoom-in-95 duration-200"
+                      : "sm:w-12 bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-[var(--primary-foreground)]"
+                  )}
                 >
-                  {isProcessing ? <Loader2 className="animate-spin" size={24} /> : <ArrowUp size={24} />}
+                  {isProcessing ? (
+                    <Loader2 className="animate-spin" size={20} />
+                  ) : isToc ? (
+                    <>
+                      <ListTree size={18} className="shrink-0" />
+                      <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        Import TOC
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUp size={20} className="hidden sm:inline" />
+                      <span className="sm:hidden flex items-center gap-1.5">
+                        <ArrowUp size={16} /> Translate
+                      </span>
+                    </>
+                  )}
                 </Button>
               </div>
             </div>

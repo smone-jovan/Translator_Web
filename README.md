@@ -43,6 +43,8 @@ ReadOmni AI lets you read, crawl, and translate Chinese web novels using local o
 - **Markdown rendering** — Bold/italic formatting preserved in reader and EPUB export
 
 ### Library Management
+- **Status filter tabs** — Segment library into All, Currently Reading, Unread, and Completed with live counter badges
+- **Smart sorting** — Order library by Recently Read (default), Recently Added, Reading Progress %, or Title A-Z
 - **EPUB import/export** — Upload EPUBs, compile translations back with custom covers
 - **URL scraping** — Crawl chapters from web URLs with ad/noise stripping
 - **SFACG integration** — Direct metadata and chapter scraping from SFACG
@@ -158,7 +160,7 @@ Translator_Web/
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/
-    ├── decisions/              # 90 Architectural Decision Records (ADR-004 to ADR-093)
+    ├── decisions/              # 108 Architectural Decision Records (ADR-004 to ADR-111)
     ├── Handoff.md              # Developer onboarding guide
     └── SDLC.md                 # Development lifecycle docs
 ```
@@ -171,7 +173,7 @@ Translator_Web/
 |----------|-------------|
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
 | [SDLC](docs/SDLC.md) | Software development lifecycle |
-| [ADRs](docs/decisions/) | 90 architectural decision records (ADR-004 to ADR-093) |
+| [ADRs](docs/decisions/) | 108 architectural decision records (ADR-004 to ADR-111) |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
 ---

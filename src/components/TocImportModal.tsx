@@ -98,23 +98,31 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
       onClose={() => !isImporting && onOpenChange(false)}
       fullWidth
       maxWidth="md"
-      {...({ PaperProps: { sx: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '16px', color: 'var(--foreground)' } } } as Record<string, unknown>)}
+      {...({ PaperProps: { sx: { 
+        background: 'var(--card)', 
+        border: '1px solid var(--border)', 
+        borderRadius: { xs: '0px', sm: '24px' }, 
+        color: 'var(--foreground)',
+        m: { xs: 0, sm: 2 },
+        maxHeight: { xs: '100dvh', sm: '90vh' },
+        height: { xs: '100%', sm: 'auto' }
+      } } } as Record<string, unknown>)}
     >
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Box>
-          <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Import Table of Contents</Typography>
-          <Typography variant="body2" sx={{ color: 'var(--muted-foreground)' }}>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: { xs: 2, sm: 3 } }}>
+        <Box sx={{ minWidth: 0, pr: 1 }}>
+          <Typography variant="h6" sx={{ fontWeight: 'bold', fontSize: { xs: '1.05rem', sm: '1.25rem' } }}>Import Table of Contents</Typography>
+          <Typography variant="body2" sx={{ color: 'var(--muted-foreground)', fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
             Found {chapters.length} chapters for <strong>{novelTitle}</strong>.
           </Typography>
         </Box>
-        <IconButton onClick={() => onOpenChange(false)} disabled={isImporting} sx={{ color: 'var(--muted-foreground)' }}>
+        <IconButton onClick={() => onOpenChange(false)} disabled={isImporting} sx={{ color: 'var(--muted-foreground)', flexShrink: 0 }}>
           <Close />
         </IconButton>
       </DialogTitle>
       
-      <DialogContent dividers sx={{ borderColor: 'var(--border)', p: 0 }}>
+      <DialogContent dividers sx={{ borderColor: 'var(--border)', p: 0, flex: 1 }}>
         {(!threadId || threadId === 'new') && (
-          <Box sx={{ p: 2, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box sx={{ p: { xs: 1.5, sm: 2 }, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 1 }}>
             <Typography variant="caption" sx={{ fontWeight: 'bold', textTransform: 'uppercase', color: 'var(--muted-foreground)' }}>
               Genres (comma-separated)
             </Typography>
@@ -123,12 +131,12 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
               placeholder="e.g. Fantasy, Xianxia, Romance"
               value={genres}
               onChange={(e) => setGenres(e.target.value)}
-              className="w-full bg-[var(--input)] border border-[var(--border)] rounded-lg py-2 px-3 text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]"
+              className="w-full bg-[var(--input)] border border-[var(--border)] rounded-xl py-2 px-3 text-xs sm:text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--primary)]"
               disabled={isImporting}
             />
           </Box>
         )}
-        <List dense sx={{ maxHeight: '50vh', overflow: 'auto', p: 1 }}>
+        <List dense sx={{ maxHeight: { xs: 'calc(100vh - 280px)', sm: '50vh' }, overflow: 'auto', p: 1 }}>
           {chapters.length === 0 ? (
             <Typography sx={{ textAlign: 'center', p: 4, color: 'var(--muted-foreground)' }}>
               No chapters selected.
@@ -148,7 +156,7 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
                 }}
               >
                 <ListItemText 
-                  primary={<Box sx={{ fontWeight: 600, color: 'var(--foreground)' }}>{chap.title}</Box>} 
+                  primary={<Box sx={{ fontWeight: 600, color: 'var(--foreground)', fontSize: { xs: '0.8rem', sm: '0.9rem' } }}>{chap.title}</Box>} 
                   secondary={<Box sx={{ color: 'var(--primary)', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{chap.url}</Box>}
                 />
               </ListItem>
@@ -157,19 +165,19 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
         </List>
       </DialogContent>
       
-      <DialogActions sx={{ p: 2, justifyContent: 'space-between' }}>
-        <Typography variant="body2" sx={{ color: 'var(--muted-foreground)' }}>
-          Total to import: {chapters.length}
+      <DialogActions sx={{ p: { xs: 2, sm: 2.5 }, display: 'flex', flexDirection: { xs: 'column-reverse', sm: 'row' }, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between', gap: 1.5 }}>
+        <Typography variant="body2" sx={{ color: 'var(--muted-foreground)', textAlign: { xs: 'center', sm: 'left' } }}>
+          Total to import: <strong>{chapters.length}</strong>
         </Typography>
-        <Box>
-          <Button onClick={() => onOpenChange(false)} disabled={isImporting} sx={{ mr: 1, color: 'var(--foreground)' }}>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button onClick={() => onOpenChange(false)} disabled={isImporting} sx={{ flex: { xs: 1, sm: 'initial' }, color: 'var(--foreground)', borderRadius: '12px' }}>
             Cancel
           </Button>
           <Button 
             variant="contained" 
             onClick={handleImport} 
             disabled={isImporting || chapters.length === 0}
-            sx={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+            sx={{ flex: { xs: 1, sm: 'initial' }, background: 'var(--primary)', color: 'var(--primary-foreground)', borderRadius: '12px', fontWeight: 'bold' }}
             startIcon={isImporting ? <CircularProgress size={16} color="inherit" /> : null}
           >
             {isImporting ? 'Importing...' : 'Import All'}

@@ -48,7 +48,7 @@ export default function ScrapeNUModal({
   const [candidates, setCandidates] = useState<ScrapedMetadata[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<ScrapedMetadata | null>(null);
   const [successData, setSuccessData] = useState<ScrapedMetadata | null>(null);
-  const [source, setSource] = useState<'novelupdates' | 'sfacg'>('novelupdates');
+  const [source, setSource] = useState<'novelupdates' | 'sfacg' | 'novalpie'>('novelupdates');
   const [searchBy, setSearchBy] = useState<'original' | 'translated'>('original');
 
   // Initialize values
@@ -62,11 +62,16 @@ export default function ScrapeNUModal({
         setIsSaving(false);
         setIncludeCover(true);
         
-        // Auto-detect SFACG source from original title or title
+        // Auto-detect source from original title or title
+        const isNovalpie = (threadOriginalTitle && threadOriginalTitle.includes('novalpie.cc')) || 
+                           (threadTitle && threadTitle.includes('novalpie.cc'));
         const isSfacg = (threadOriginalTitle && threadOriginalTitle.includes('sfacg.com')) || 
                         (threadTitle && threadTitle.includes('sfacg.com'));
         
-        if (isSfacg) {
+        if (isNovalpie) {
+          setSource('novalpie');
+          setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
+        } else if (isSfacg) {
           setSource('sfacg');
           setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
         } else {
@@ -80,7 +85,13 @@ export default function ScrapeNUModal({
 
   const handleSearchCandidates = async () => {
     if (!originalTitleInput.trim()) {
-      setErrorMsg(source === 'sfacg' ? 'SFACG URL or Novel ID cannot be empty.' : 'Original title or URL cannot be empty.');
+      setErrorMsg(
+        source === 'sfacg' 
+          ? 'SFACG URL or Novel ID cannot be empty.' 
+          : source === 'novalpie'
+          ? 'Novalpie URL or Novel ID cannot be empty.'
+          : 'Original title or URL cannot be empty.'
+      );
       return;
     }
 
@@ -192,29 +203,32 @@ export default function ScrapeNUModal({
             background: 'var(--background)',
             backdropFilter: 'blur(20px)',
             border: '1px solid var(--border)',
-            borderRadius: '16px',
+            borderRadius: { xs: '0px', sm: '24px' },
             color: 'var(--foreground)',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            m: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100dvh', sm: '90vh' },
+            height: { xs: '100%', sm: 'auto' }
           }
         }
       }}
     >
       {/* Title Header */}
-      <DialogTitle className="flex justify-between items-center px-6 py-4 border-b border-[var(--border)] bg-[var(--secondary)]/10">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)]">
+      <DialogTitle className="flex justify-between items-center px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--border)] bg-[var(--secondary)]/10 flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0 pr-2">
+          <div className="p-1.5 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)] shrink-0">
             <Globe size={18} />
           </div>
-          <div>
-            <h3 className="text-sm font-bold tracking-tight">Scrape Novel Metadata</h3>
-            <p className="text-[10px] text-[var(--muted-foreground)]">Enrich tags, genres, synopsis & cover image via Novel Updates or SFACG</p>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold tracking-tight truncate">Scrape Novel Metadata</h3>
+            <p className="text-[10px] text-[var(--muted-foreground)] truncate">Enrich tags, genres, synopsis & cover image via Novel Updates or SFACG</p>
           </div>
         </div>
         {!isLoading && !isSaving && (
           <IconButton 
             onClick={onClose} 
             size="small" 
-            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]"
+            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)] shrink-0"
           >
             <X size={16} />
           </IconButton>
@@ -222,7 +236,7 @@ export default function ScrapeNUModal({
       </DialogTitle>
 
       {/* Main Content Area */}
-      <DialogContent className="p-6">
+      <DialogContent className="p-3 sm:p-6 overflow-y-auto flex-1">
         {isLoading || isSaving ? (
           // BEAUTIFUL SCANNING LOADING STATE
           <div className="flex flex-col items-center justify-center py-12 gap-6 select-none">
@@ -378,9 +392,9 @@ export default function ScrapeNUModal({
           </div>
         ) : showSelection ? (
           // BEAUTIFUL CANDIDATE SELECTION LAYOUT
-          <div className="flex flex-col md:flex-row gap-6 h-[440px]">
+          <div className="flex flex-col md:flex-row gap-4 md:gap-6 min-h-[360px] md:h-[460px] overflow-hidden">
             {/* Left Column - Scrollable Candidate Cards */}
-            <div className="w-full md:w-[280px] shrink-0 flex flex-col gap-2 overflow-hidden h-full">
+            <div className="w-full md:w-[280px] shrink-0 flex flex-col gap-2 max-h-[180px] md:max-h-none overflow-hidden">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--muted-foreground)] block">
                 Matching Candidates ({candidates.length})
               </span>
@@ -391,7 +405,7 @@ export default function ScrapeNUModal({
                     <div
                       key={idx}
                       onClick={() => setSelectedCandidate(cand)}
-                      className={`p-3 rounded-xl border transition-all duration-200 cursor-pointer flex gap-3 items-center ${
+                      className={`p-2.5 sm:p-3 rounded-xl border transition-all duration-200 cursor-pointer flex gap-3 items-center ${
                         isSelected
                           ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-md'
                           : 'bg-[var(--secondary)]/40 border-[var(--border)] hover:bg-[var(--secondary)]/70'
@@ -445,7 +459,7 @@ export default function ScrapeNUModal({
             </div>
 
             {/* Right Column - Highlighted Candidate Metadata Details */}
-            <div className="flex-1 flex flex-col border border-[var(--border)] rounded-xl bg-[var(--secondary)]/20 overflow-hidden h-full">
+            <div className="flex-1 flex flex-col border border-[var(--border)] rounded-xl bg-[var(--secondary)]/20 overflow-hidden min-h-[220px]">
               {selectedCandidate ? (
                 <div className="flex-1 p-4 overflow-y-auto custom-scrollbar flex flex-col gap-4">
                   {/* Title + Cover Header */}
@@ -562,20 +576,20 @@ export default function ScrapeNUModal({
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
                 Metadata Source
               </span>
-              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-[var(--secondary)] border border-[var(--border)]">
+              <div className="grid grid-cols-3 gap-2 p-1 rounded-xl bg-[var(--secondary)] border border-[var(--border)]">
                 <button
                   type="button"
                   onClick={() => {
                     setSource('novelupdates');
                     setOriginalTitleInput(threadOriginalTitle || threadTitle || '');
                   }}
-                  className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all duration-200 ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-bold rounded-lg transition-all duration-200 ${
                     source === 'novelupdates'
                       ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-md'
                       : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/60'
                   }`}
                 >
-                  <Globe size={14} />
+                  <Globe size={13} />
                   Novel Updates
                 </button>
                 <button
@@ -584,7 +598,7 @@ export default function ScrapeNUModal({
                     setSource('sfacg');
                     setOriginalTitleInput(threadOriginalTitle && threadOriginalTitle.includes('sfacg.com') ? threadOriginalTitle : '');
                   }}
-                  className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all duration-200 ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-bold rounded-lg transition-all duration-200 ${
                     source === 'sfacg'
                       ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-md'
                       : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/60'
@@ -592,6 +606,21 @@ export default function ScrapeNUModal({
                 >
                   <span>🍍</span>
                   SFACG (菠萝包)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSource('novalpie');
+                    setOriginalTitleInput(threadOriginalTitle && threadOriginalTitle.includes('novalpie.cc') ? threadOriginalTitle : '');
+                  }}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-bold rounded-lg transition-all duration-200 ${
+                    source === 'novalpie'
+                      ? 'bg-[var(--primary)] text-[var(--primary-foreground)] shadow-md'
+                      : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/60'
+                  }`}
+                >
+                  <span>🥧</span>
+                  Novalpie (CC)
                 </button>
               </div>
             </div>
@@ -649,10 +678,15 @@ export default function ScrapeNUModal({
                       <strong className="text-[var(--foreground)]">Pro tip:</strong> You can also paste a direct Novel Updates link (e.g. <code>https://www.novelupdates.com/series/...</code>) below to load it instantly.
                     </>
                   )
-                ) : (
+                ) : source === 'sfacg' ? (
                   <>
                     Directly scraping metadata from <strong>SFACG (book.sfacg.com)</strong>.
                     Please paste the SFACG URL or enter the Novel ID below. We will fetch the raw Chinese title, synopsis, genres, and cover directly.
+                  </>
+                ) : (
+                  <>
+                    Directly scraping metadata from <strong>Novalpie (novalpie.cc)</strong>.
+                    Please paste the Novalpie Book URL or enter the Novel ID below. We will fetch the title, synopsis, tags, and original cover image directly.
                   </>
                 )}
               </p>
@@ -663,7 +697,9 @@ export default function ScrapeNUModal({
               <label htmlFor="original-title-input" className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
                 {source === 'novelupdates' 
                   ? 'Novel Title or Direct Novel Updates URL'
-                  : 'SFACG Book URL or Novel ID'
+                  : source === 'sfacg'
+                  ? 'SFACG Book URL or Novel ID'
+                  : 'Novalpie Book URL or Novel ID'
                 }
               </label>
               <div className="relative">
@@ -675,9 +711,12 @@ export default function ScrapeNUModal({
                     setOriginalTitleInput(e.target.value);
                     setErrorMsg(null);
                   }}
-                  placeholder={source === 'novelupdates'
-                    ? 'e.g. 我怎么可能是圣女？ or paste https://www.novelupdates.com/series/... link'
-                    : 'e.g. https://book.sfacg.com/Novel/529683/ or 529683'
+                  placeholder={
+                    source === 'novelupdates'
+                      ? 'e.g. 我怎么可能是圣女？ or paste https://www.novelupdates.com/series/... link'
+                      : source === 'sfacg'
+                      ? 'e.g. https://book.sfacg.com/Novel/529683/ or 529683'
+                      : 'e.g. https://novalpie.cc/book/12345 or 12345'
                   }
                   className="w-full bg-[var(--secondary)] border border-[var(--border)] focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)] rounded-xl py-2 px-3.5 pr-10 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/60 outline-none transition-all duration-200"
                 />
@@ -697,7 +736,7 @@ export default function ScrapeNUModal({
                 className="w-4 h-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--primary)] bg-[var(--secondary)]"
               />
               <label htmlFor="update-cover-checkbox" className="text-xs font-semibold text-[var(--foreground)] cursor-pointer select-none">
-                Update book cover image with {source === 'sfacg' ? 'SFACG' : 'Novel Updates'} cover
+                Update book cover image with {source === 'sfacg' ? 'SFACG' : source === 'novalpie' ? 'Novalpie' : 'Novel Updates'} cover
               </label>
             </div>
 

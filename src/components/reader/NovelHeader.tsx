@@ -69,7 +69,7 @@ export default function NovelHeader({
                 {thread.title}
               </h1>
               <p className="text-sm text-[var(--muted-foreground)] font-medium mb-6">
-                by <span className="text-[var(--foreground)] font-semibold">{thread.source_type || 'AI Platform'}</span>
+                by <span className="text-[var(--foreground)] font-semibold">{thread.author || 'SMONE'}</span>
               </p>
 
               {/* Action Buttons */}

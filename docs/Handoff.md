@@ -33,6 +33,7 @@
 │   │   ├── discovery.py        # Novel discovery endpoints
 │   │   ├── epub.py             # EPUB files uploading, unzipping, extraction & indexing
 │   │   ├── export.py           # Premium book compiles (EPUB/TXT cover generator + selective exports)
+│   │   ├── images.py           # Image proxying, cache statistics, clear cache, and thread image list (ADR-103, ADR-104)
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
 │   │   ├── polish.py           # Title polishing (NDJSON streaming, HARD/SOFT mode) & TOC skip logic
 │   │   ├── relationships.py    # Character relationship graph extraction & D3 data
@@ -64,6 +65,7 @@
 │   │   ├── fidelity_checker.py # Post-translation fidelity & truncation verification (ADR-072, ADR-080)
 │   │   ├── genre_presets.py    # Cultivation & genre preset term dictionaries (ADR-073)
 │   │   ├── hallucination_detector.py # Garbled output detection, repeated word analysis, suspicious char patterns
+│   │   ├── image_cacher.py     # Central concurrent image prefetcher, magic-byte detector, path validator (ADR-103)
 │   │   └── prompt_templates.py # Centralized prompt templates & system instructions (ADR-074)
 │   └── tests/
 │       ├── conftest.py         # Shared test fixtures (SQLite in-memory DB)
@@ -79,6 +81,7 @@
 │   │   ├── EditCoverModal.tsx  # Dynamic HTML5 canvas drawing and base64 compression modal
 │   │   ├── ErrorBoundary.tsx   # React runtime error boundary shield
 │   │   ├── ExportModal.tsx     # Compilation controls, metadata forms, checklists
+│   │   ├── FidelityManagementModal.tsx # Fidelity Management Hub & Selective Repair modal (ADR-094)
 │   │   ├── Layout.tsx          # App shell layout with sidebar + content area
 │   │   ├── RelationshipGraph.tsx # Interactive character relationship visualization (react-force-graph-2d)
 │   │   ├── ScrapeNUModal.tsx   # Novel Updates & SFACG metadata scraper interface
@@ -87,7 +90,8 @@
 │   │   ├── reader/
 │   │   │   ├── ChapterGrid.tsx # Chapter grid with delete button, fidelity warning icons & title polish actions
 │   │   │   ├── ChapterReader.tsx # Chapter content display with markdown rendering & fidelity warning banner
-│   │   │   ├── ChapterListControls.tsx # Chapter list toolbar (bulk translate, polish, export)
+│   │   │   ├── ChapterListControls.tsx # Chapter list toolbar (bulk translate, polish, export, Illustrated & Images tabs)
+│   │   │   ├── ThreadImageGallery.tsx # Interactive full-novel image gallery with lazy-loaded proxy & lightbox (ADR-104)
 │   │   │   ├── NovelHeader.tsx  # Novel title, cover, metadata display
 │   │   │   └── SettingsOverlay.tsx # In-reader settings overlay
 │   │   └── ui/                 # shadcn/ui primitives (Button, Card, etc.)
@@ -104,7 +108,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-004 through ADR-093)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-114)
 ```
 
 ---
@@ -163,6 +167,7 @@ erDiagram
         string translation_status
         boolean is_bookmarked
         text fidelity_warning
+        int image_count
         datetime created_at
     }
     
@@ -380,7 +385,7 @@ Every code change must adhere to the highest standard of type checking and compi
 
 Here are the immediate strategic features you are tasked to build next:
 
-Recent completed platform work (ADR-034 through ADR-093):
+Recent completed platform work (ADR-034 through ADR-114):
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 - ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging
@@ -441,6 +446,29 @@ Recent completed platform work (ADR-034 through ADR-093):
 - ADR-091: translation notes prompt instruction alignment, automatic glossary slash-splitting sanitization, and robust empty-translation detection
 - ADR-092: punctuation false-positive elimination and fidelity warning clarity
 - ADR-093: chained bulk web chapter crawler with real-time SSE streaming progress and reader quick-action button
+- ADR-094: fidelity management hub, checklist-based diagnostic categorization, and selective bulk/single repair actions
+- ADR-095: library reading status filters (Reading/Unread/Completed) and smart sorting strategies
+- ADR-096: comprehensive mobile responsiveness and touch ergonomics
+- ADR-097: instant SWR client cache and scroll restoration
+- ADR-098: Novalpie novel crawler and metadata adapter
+- ADR-099: Novalpie headless fallback and Cloudflare bypass
+- ADR-100: illustrated chapter badge, image counter, and "Illustrated" filter discovery system
+- ADR-101: configurable scraper concurrency (1–5 workers) and Playwright thread-local browser context reuse
+- ADR-102: universal bi-directional engine load mode synchronization (BulkTranslateModal, Settings, Reader, Library)
+- ADR-103: one-click thread image cacher, reader proxying, and persistent cache settings
+- ADR-104: novel thread images gallery, visual browser, and interactive full-screen lightbox
+- ADR-105: resilient image proxy, cache-busting refresh (`force=true`), and interactive retry states across reader and gallery
+- ADR-106: glossary hard-locking & deterministic aliasing engine (hybrid semantic prompt, auto-pinyin extraction, regex whole-word boundary enforcement, stopword safety guardrails, and zero-token retroactive sync)
+- ADR-107: export-time glossary hard-locking safety net (guaranteeing 100% term accuracy in EPUB & TXT exports), in-reader zero-token term synchronization, and 3x Playwright bulk fetch retry loop
+- ADR-108: single-pass non-overlapping glossary locking & idempotent self-contained term protection (eliminating cascading domino duplications like 'Bai She (White Serpent) (White Serpent)' and ensuring strict idempotency f(f(x))=f(x))
+- ADR-109: gender-aware glossary extraction token, database column backfill, and pronoun consistency prompt injection
+- ADR-110: non-human entity sanitization (`is_non_human_term`), visual gender badge emblems (♂ / ♀), segmented filtering, and anti-hallucination extraction controls
+- ADR-111: adaptive source language prompt engine (`detect_source_language`), direct Korean translation guidelines (anti-double-translate), and Korean chapter title cleaning (`제X화`, `X화`, `EP.X`)
+- ADR-112: Novalpie dual-mode authenticated scraper for age-restricted novels (720h/30-day gate), credentials securely stored in `.env`, and session injection into Playwright
+- ADR-113: Novalpie illustration pipeline, multi-CDN normalization (`jpg.freenovel.sbs`, R2, `novelkit.top`), placeholder resolution, and empirical debunking of the 60-day image restriction myth
+- ADR-114: Novalpie guest access verification, transient server signature desync analysis, and resilient scraper polling architecture
+- ADR-115: Defense-in-depth SSRF redirect traversal protection, strict non-global IP rejection (RFC 6598 CGNAT), dual-database compound key workspace isolation, non-destructive secret masking reconciliation, and pure request-scoped workspace resolution
+- ADR-116: Dedicated SFACG TOC & chapter scraper, async SSRF redirect event hook bugfix, zero-Playwright HTTP scraper pipeline, and Novalpie UI control isolation
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

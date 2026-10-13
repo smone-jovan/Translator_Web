@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   X, Plus, BookOpen, Globe, FileText, Sparkles,
   Loader2, Search, Filter, Trash2, Lock,
-  Settings2, Zap, Edit2, ScanSearch
+  Settings2, Zap, Edit2, ScanSearch, RefreshCw
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ interface LorebookEntry {
   original_term: string;
   translated_term: string;
   notes?: string;
+  gender?: 'MALE' | 'FEMALE' | null;
   auto_extracted?: boolean;
   is_locked?: boolean;
   is_archived?: boolean;
@@ -34,6 +35,7 @@ interface ExtractedTerm {
   original_term: string;
   translated_term?: string;
   notes?: string;
+  gender?: 'MALE' | 'FEMALE' | null;
 }
 
 export default function ContextLibraryPage() {
@@ -53,13 +55,14 @@ export default function ContextLibraryPage() {
   // Glossary
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female' | 'genderless'>('all');
   const [showAddForm, setShowAddForm] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
   
   useEffect(() => {
     setVisibleCount(50);
-  }, [searchQuery]);
-  const [newEntry, setNewEntry] = useState({ original: '', translated: '', notes: '' });
+  }, [searchQuery, genderFilter]);
+  const [newEntry, setNewEntry] = useState({ original: '', translated: '', notes: '', gender: '' });
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
 
   // AI Extract
@@ -75,6 +78,25 @@ export default function ContextLibraryPage() {
   const [presets, setPresets] = useState<{ key: string; name: string; description: string; entry_count: number }[]>([]);
   const [showPresetsModal, setShowPresetsModal] = useState(false);
   const [isApplyingPreset, setIsApplyingPreset] = useState<string | null>(null);
+  const [isReapplyingAll, setIsReapplyingAll] = useState(false);
+
+  const handleReapplyGlossaryAll = async () => {
+    if (!selectedThreadId) return;
+    setIsReapplyingAll(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${selectedThreadId}/reapply-glossary`), {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Gagal menyinkronkan glosarium');
+      const data = await res.json();
+      toast.success(`Glosarium berhasil disinkronkan ke ${data.chapters_updated} dari ${data.total_chapters} bab! (0 token)`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Gagal menerapkan glosarium ke bab');
+    } finally {
+      setIsReapplyingAll(false);
+    }
+  };
 
   // Refs
   const formRef = useRef<HTMLDivElement>(null);
@@ -236,6 +258,7 @@ export default function ContextLibraryPage() {
           original_term: newEntry.original,
           translated_term: newEntry.translated,
           notes: newEntry.notes || undefined,
+          gender: newEntry.gender || undefined,
           is_locked: isLockedVal
         })
       });
@@ -249,7 +272,7 @@ export default function ContextLibraryPage() {
         setSuggestions(prev => prev.filter(sug => sug.original_term.trim().toLowerCase() !== newEntry.original.trim().toLowerCase()));
       }
       
-      setNewEntry({ original: '', translated: '', notes: '' });
+      setNewEntry({ original: '', translated: '', notes: '', gender: '' });
       setEditingEntryId(null);
       setShowAddForm(false);
     } catch (e) {
@@ -267,6 +290,7 @@ export default function ContextLibraryPage() {
           original_term: sug.original_term,
           translated_term: sug.translated_term || '',
           notes: sug.notes || undefined,
+          gender: sug.gender || undefined,
           is_locked: isLocked
         })
       });
@@ -293,6 +317,48 @@ export default function ContextLibraryPage() {
     }
   };
 
+  const getEntryGender = (entry: LorebookEntry): 'MALE' | 'FEMALE' | null => {
+    if (entry.gender === 'MALE' || entry.gender === 'FEMALE') return entry.gender;
+    if (!entry.notes) return null;
+    const m = entry.notes.match(/\b(MALE|FEMALE)\b\s*[\u2014\u2013\-\ufffd—–-]/i);
+    if (m) return m[1].toUpperCase() as 'MALE' | 'FEMALE';
+    return null;
+  };
+
+  const handleCycleGender = async (entry: LorebookEntry) => {
+    const current = getEntryGender(entry);
+    const nextGender: 'MALE' | 'FEMALE' | null = 
+      current === null ? 'MALE' : current === 'MALE' ? 'FEMALE' : null;
+
+    try {
+      const res = await fetch(getApiUrl(`/api/lorebook/${entry.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          original_term: entry.original_term,
+          translated_term: entry.translated_term,
+          notes: entry.notes || undefined,
+          gender: nextGender === null ? '' : nextGender,
+          is_locked: entry.is_locked,
+          is_archived: entry.is_archived
+        })
+      });
+      if (!res.ok) throw new Error('Failed to update gender');
+      const data = await res.json();
+      setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, gender: data.gender } : e));
+      toast.success(
+        nextGender === 'MALE'
+          ? `"${entry.translated_term}" diset ke ♂ Laki-laki`
+          : nextGender === 'FEMALE'
+          ? `"${entry.translated_term}" diset ke ♀ Perempuan`
+          : `"${entry.translated_term}" diset ke Netral/Benda`
+      );
+    } catch (err) {
+      console.error('Failed to cycle gender', err);
+      toast.error('Gagal mengubah gender');
+    }
+  };
+
   const handleDismissSuggestion = (originalTerm: string) => {
     setSuggestions(prev => prev.filter(s => s.original_term.toLowerCase() !== originalTerm.toLowerCase()));
   };
@@ -301,7 +367,8 @@ export default function ContextLibraryPage() {
     setNewEntry({
       original: entry.original_term,
       translated: entry.translated_term,
-      notes: entry.notes || ''
+      notes: entry.notes || '',
+      gender: entry.gender || '',
     });
     setEditingEntryId(entry.id);
     setShowAddForm(true);
@@ -398,11 +465,23 @@ export default function ContextLibraryPage() {
 
   const selectedThread = threads.find(t => t.id === selectedThreadId);
 
-  const filteredEntries = entries.filter(e => 
-    e.original_term.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.translated_term.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (e.notes || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const maleCount = entries.filter(e => getEntryGender(e) === 'MALE').length;
+  const femaleCount = entries.filter(e => getEntryGender(e) === 'FEMALE').length;
+  const genderlessCount = entries.filter(e => getEntryGender(e) === null).length;
+
+  const filteredEntries = entries.filter(e => {
+    const g = getEntryGender(e);
+    if (genderFilter === 'male' && g !== 'MALE') return false;
+    if (genderFilter === 'female' && g !== 'FEMALE') return false;
+    if (genderFilter === 'genderless' && g !== null) return false;
+
+    const q = searchQuery.toLowerCase();
+    return (
+      e.original_term.toLowerCase().includes(q) ||
+      e.translated_term.toLowerCase().includes(q) ||
+      (e.notes || '').toLowerCase().includes(q)
+    );
+  });
 
   const displayedEntries = filteredEntries.slice(0, visibleCount);
 
@@ -437,8 +516,9 @@ export default function ContextLibraryPage() {
           <select
             value={selectedThreadId ?? ''}
             onChange={(e) => setSelectedThreadId(e.target.value ? parseInt(e.target.value, 10) : null)}
-            className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm outline-none"
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] px-4 py-3 text-sm outline-none cursor-pointer"
           >
+            <option value="">All Threads (Global Context)</option>
             {threads.map(thread => (
               <option key={thread.id} value={thread.id}>{thread.title}</option>
             ))}
@@ -464,7 +544,13 @@ export default function ContextLibraryPage() {
         </div>
 
         <div className="p-4 border-t border-[var(--border)] bg-[var(--card)]">
-          <button className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--border)] text-sm font-medium text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-all">
+          <button 
+            onClick={() => {
+              window.location.hash = '#translate';
+              toast.info('Impor novel atau masukkan URL baru untuk membuat profil context otomatis.');
+            }}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--border)] text-sm font-medium text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition-all cursor-pointer shadow-sm"
+          >
             <Plus size={16} /> New Context
           </button>
         </div>
@@ -485,17 +571,18 @@ export default function ContextLibraryPage() {
                     Manage terminology and translation behavior.
                   </p>
                 </div>
-                <div className="flex items-center gap-3 relative self-start lg:self-auto">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 relative self-start lg:self-auto">
                   <div className="flex items-center bg-[var(--card)] border border-[var(--border)] rounded-xl p-1 shadow-sm">
                     <Button 
                       variant="ghost" 
                       size="sm" 
                       className={cn(
-                        "rounded-lg gap-2 h-8 px-3 transition-all",
+                        "rounded-lg gap-2 h-8 px-2.5 sm:px-3 transition-all cursor-pointer",
                         isExtracting ? "opacity-50" : "hover:bg-[var(--accent)] hover:text-[var(--primary)]"
                       )}
                       onClick={handleExtractContext}
                       disabled={isExtracting}
+                      title="Ekstrak istilah penting dari bab novel menggunakan AI"
                     >
                       {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="text-yellow-500" />}
                       <span className="hidden sm:inline">AI Extract</span>
@@ -504,136 +591,34 @@ export default function ContextLibraryPage() {
                     <button 
                       onClick={() => setShowExtractSettings(!showExtractSettings)}
                       className={cn(
-                        "p-1.5 rounded-lg transition-colors hover:bg-[var(--secondary)]",
+                        "p-1.5 rounded-lg transition-colors hover:bg-[var(--secondary)] cursor-pointer",
                         showExtractSettings ? "text-[var(--primary)] bg-[var(--accent)]" : "text-[var(--muted-foreground)]"
                       )}
+                      aria-label="Extraction Settings"
+                      title="Pengaturan Jangkauan Ekstraksi"
                     >
                       <Settings2 size={14} />
                     </button>
                   </div>
 
-                  {/* Extract Settings Popover */}
-                  {showExtractSettings && (
-                    <div className="absolute top-full right-0 mt-4 w-72 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] z-[100] p-5 animate-in fade-in slide-in-from-top-2 duration-200">
-                      <div className="flex items-center justify-between mb-4">
-                        <h4 className="text-sm font-bold flex items-center gap-2">
-                          <Zap size={14} className="text-yellow-500" /> Extraction Scope
-                        </h4>
-                        <button 
-                          onClick={() => setExtractMode(prev => prev === 'easy' ? 'advanced' : 'easy')}
-                          className={cn(
-                            "px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all border",
-                            extractMode === 'advanced' 
-                              ? "bg-[var(--accent)] text-[var(--primary)] border-[var(--primary)]/20 shadow-sm" 
-                              : "bg-[var(--secondary)] text-[var(--muted-foreground)] border-transparent hover:border-[var(--border)]"
-                          )}
-                        >
-                          {extractMode === 'advanced' ? "FINE-TUNED" : "ADVANCED"}
-                        </button>
-                      </div>
-
-                      {/* Presets - Always Visible for quick selection */}
-                      <div className="grid grid-cols-3 gap-2 mb-4">
-                        {[
-                          { id: 'quick', label: 'Quick', ch: 5, size: 1000 },
-                          { id: 'normal', label: 'Normal', ch: 15, size: 1000 },
-                          { id: 'deep', label: 'Deep', ch: 25, size: 1000 }
-                        ].map(p => {
-                          const active = extractSettings.chapterCount === p.ch && extractSettings.sampleSize === p.size;
-                          return (
-                            <button
-                              key={p.id}
-                              onClick={() => {
-                                setPreset(p.id as any);
-                                setExtractMode('easy');
-                              }}
-                              className={cn(
-                                "flex flex-col items-center py-2 rounded-xl border-2 transition-all duration-200",
-                                active
-                                  ? "border-[var(--primary)] bg-[var(--primary)]/5 text-[var(--primary)] shadow-sm"
-                                  : "border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:border-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                              )}
-                            >
-                              <span className="text-[10px] font-bold uppercase">{p.label}</span>
-                              <span className="text-[9px] opacity-75 mt-0.5">{p.ch} Ch</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Collapsible Sliders in Advanced Mode */}
-                      {extractMode === 'advanced' && (
-                        <div className="space-y-4 mb-4 pt-3 border-t border-dashed border-[var(--border)] animate-in fade-in slide-in-from-top-1 duration-200">
-                          <div>
-                            <div className="flex justify-between mb-1">
-                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Chapters Ahead</label>
-                              <span className="text-[10px] font-mono font-bold text-[var(--primary)]">{extractSettings.chapterCount} Ch</span>
-                            </div>
-                            <input 
-                              type="range" min="1" max="50" step="1"
-                              value={extractSettings.chapterCount}
-                              onChange={e => {
-                                const val = parseInt(e.target.value);
-                                setExtractSettings(prev => {
-                                  const next = { ...prev, chapterCount: val };
-                                  saveExtractSettings(next.chapterCount, next.sampleSize);
-                                  return next;
-                                });
-                              }}
-                              className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
-                            />
-                          </div>
-                          <div>
-                            <div className="flex justify-between mb-1">
-                              <label className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Sample Size</label>
-                              <span className="text-[10px] font-mono font-bold text-[var(--primary)]">{extractSettings.sampleSize} Chars</span>
-                            </div>
-                            <input 
-                              type="range" min="200" max="20000" step="100"
-                              value={extractSettings.sampleSize}
-                              onChange={e => {
-                                const val = parseInt(e.target.value);
-                                setExtractSettings(prev => {
-                                  const next = { ...prev, sampleSize: val };
-                                  saveExtractSettings(next.chapterCount, next.sampleSize);
-                                  return next;
-                                });
-                              }}
-                              className="w-full h-1.5 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="pt-3 border-t border-[var(--border)] space-y-2">
-                        <div className="grid grid-cols-2 gap-2 text-left">
-                          <div>
-                            <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)] block">Est. Input</span>
-                            <span className="text-xs font-mono font-bold text-[var(--foreground)]">~{estInputTokens.toLocaleString()} tokens</span>
-                          </div>
-                          <div>
-                            <span className="text-[9px] font-bold uppercase text-[var(--muted-foreground)] block">Max Output</span>
-                            <span className="text-xs font-mono font-bold text-[var(--foreground)]">~1,500 tokens</span>
-                          </div>
-                        </div>
-                        <div className="pt-2 border-t border-dashed border-[var(--border)] flex items-center justify-between">
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-bold uppercase text-[var(--primary)]">Context Needed</span>
-                            <span className="text-sm font-mono font-bold text-[var(--primary)]">~{estTotalTokens.toLocaleString()} tokens</span>
-                          </div>
-                          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded-lg" onClick={() => setShowExtractSettings(false)}>
-                            Done
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <Button 
+                    variant="outline"
+                    size="sm" 
+                    className="rounded-xl gap-2 h-9 px-3 sm:px-4 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400 cursor-pointer"
+                    onClick={handleReapplyGlossaryAll}
+                    disabled={isReapplyingAll}
+                    title="Terapkan seluruh aturan glosarium terbaru ke seluruh bab yang sudah diterjemahkan (0 token, instan)"
+                  >
+                    <RefreshCw size={14} className={cn("text-emerald-500", isReapplyingAll ? "animate-spin" : "")} />
+                    <span className="hidden sm:inline">Sync to Chapters</span>
+                  </Button>
 
                   <Button 
                     variant="outline"
                     size="sm" 
-                    className="rounded-xl gap-2 h-9 px-4"
+                    className="rounded-xl gap-2 h-9 px-3 sm:px-4 cursor-pointer"
                     onClick={() => setShowPresetsModal(true)}
+                    title="Terapkan Preset Glosarium Genre"
                   >
                     <Sparkles size={14} className="text-[var(--primary)]" />
                     <span className="hidden sm:inline">Apply Preset</span>
@@ -641,12 +626,13 @@ export default function ContextLibraryPage() {
 
                   <Button 
                     size="sm" 
-                    className="rounded-xl gap-2 shadow-lg shadow-[var(--primary)]/20"
+                    className="rounded-xl gap-2 h-9 px-3 sm:px-4 shadow-lg shadow-[var(--primary)]/20 cursor-pointer"
                     onClick={() => {
                       setEditingEntryId(null);
-                      setNewEntry({ original: '', translated: '', notes: '' });
+                      setNewEntry({ original: '', translated: '', notes: '', gender: '' });
                       setShowAddForm(true);
                     }}
+                    title="Tambah Istilah Baru"
                   >
                     <Plus size={14} /> <span className="hidden sm:inline">Add Term</span>
                   </Button>
@@ -654,11 +640,11 @@ export default function ContextLibraryPage() {
               </div>
 
               {/* Sub-Tabs */}
-              <div className="flex gap-8 border-b border-[var(--border)] -mb-6">
+              <div className="flex gap-4 sm:gap-8 border-b border-[var(--border)] -mb-6 overflow-x-auto no-scrollbar">
                 <button 
                   onClick={() => setActiveSubTab('glossary')}
                   className={cn(
-                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2 shrink-0 cursor-pointer",
                     activeSubTab === 'glossary' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
@@ -668,7 +654,7 @@ export default function ContextLibraryPage() {
                 <button 
                   onClick={() => setActiveSubTab('context')}
                   className={cn(
-                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2 shrink-0 cursor-pointer",
                     activeSubTab === 'context' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
@@ -678,7 +664,7 @@ export default function ContextLibraryPage() {
                 <button
                   onClick={() => setActiveSubTab('relationships')}
                   className={cn(
-                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2",
+                    "pb-4 text-sm font-semibold transition-all relative flex items-center gap-2 shrink-0 cursor-pointer",
                     activeSubTab === 'relationships' ? "text-[var(--primary)]" : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
@@ -694,7 +680,7 @@ export default function ContextLibraryPage() {
                 <div className="space-y-8">
                   {/* ... (Glossary content same as before) ... */}
                   {/* Search & Filter Bar */}
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1 relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" size={18} />
                       <input 
@@ -705,7 +691,68 @@ export default function ContextLibraryPage() {
                         className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                       />
                     </div>
-                    <Button variant="outline" size="icon" className="rounded-xl"><Filter size={18} /></Button>
+                    {/* Gender Filters */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 shrink-0">
+                      <button
+                        onClick={() => setGenderFilter('all')}
+                        className={cn(
+                          "px-3 py-2 rounded-xl text-xs font-semibold transition-all border cursor-pointer",
+                          genderFilter === 'all'
+                            ? "bg-[var(--primary)] text-white border-[var(--primary)] shadow-sm"
+                            : "bg-[var(--card)] text-[var(--muted-foreground)] border-[var(--border)] hover:text-[var(--foreground)]"
+                        )}
+                      >
+                        All ({entries.length})
+                      </button>
+                      <button
+                        onClick={() => setGenderFilter('male')}
+                        className={cn(
+                          "px-3 py-2 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 cursor-pointer",
+                          genderFilter === 'male'
+                            ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                            : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 hover:bg-blue-500/20"
+                        )}
+                        title="Tampilkan hanya karakter laki-laki"
+                      >
+                        <span>♂ Male</span>
+                        <span className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                          genderFilter === 'male' ? "bg-white/20 text-white" : "bg-blue-500/20 text-blue-600 dark:text-blue-300"
+                        )}>{maleCount}</span>
+                      </button>
+                      <button
+                        onClick={() => setGenderFilter('female')}
+                        className={cn(
+                          "px-3 py-2 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 cursor-pointer",
+                          genderFilter === 'female'
+                            ? "bg-pink-600 text-white border-pink-600 shadow-sm"
+                            : "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20 hover:bg-pink-500/20"
+                        )}
+                        title="Tampilkan hanya karakter perempuan"
+                      >
+                        <span>♀ Female</span>
+                        <span className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                          genderFilter === 'female' ? "bg-white/20 text-white" : "bg-pink-500/20 text-pink-600 dark:text-pink-300"
+                        )}>{femaleCount}</span>
+                      </button>
+                      <button
+                        onClick={() => setGenderFilter('genderless')}
+                        className={cn(
+                          "px-3 py-2 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 cursor-pointer",
+                          genderFilter === 'genderless'
+                            ? "bg-slate-700 text-white border-slate-700 shadow-sm"
+                            : "bg-[var(--card)] text-[var(--muted-foreground)] border-[var(--border)] hover:text-[var(--foreground)]"
+                        )}
+                        title="Tampilkan benda, tempat, sekte, dan istilah genderless"
+                      >
+                        <span>Benda/Netral</span>
+                        <span className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                          genderFilter === 'genderless' ? "bg-white/20 text-white" : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                        )}>{genderlessCount}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Add Entry Form */}
@@ -725,7 +772,7 @@ export default function ContextLibraryPage() {
                                 <button 
                                   onClick={() => {
                                     setEditingEntryId(null);
-                                    setNewEntry({ original: '', translated: '', notes: '' });
+                                    setNewEntry({ original: '', translated: '', notes: '', gender: '' });
                                     setShowAddForm(false);
                                   }}
                                   className="text-xs font-semibold text-red-500 hover:underline"
@@ -737,7 +784,7 @@ export default function ContextLibraryPage() {
                                 onClick={() => {
                                   setShowAddForm(false);
                                   setEditingEntryId(null);
-                                  setNewEntry({ original: '', translated: '', notes: '' });
+                                  setNewEntry({ original: '', translated: '', notes: '', gender: '' });
                                 }}
                                 className="p-2 hover:bg-[var(--secondary)] rounded-full transition-colors"
                               >
@@ -766,20 +813,37 @@ export default function ContextLibraryPage() {
                               />
                             </div>
                           </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Notes / Context</label>
-                            <input 
-                              value={newEntry.notes}
-                              onChange={e => setNewEntry({...newEntry, notes: e.target.value})}
-                              placeholder="e.g. Name of the protagonist's sword style." 
-                              className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none"
-                            />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Notes / Context</label>
+                              <input 
+                                value={newEntry.notes}
+                                onChange={e => setNewEntry({...newEntry, notes: e.target.value})}
+                                placeholder="e.g. Master of the Heavenly Cloud Sect." 
+                                className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)] ml-1">Character Gender (Tokoh Manusia)</label>
+                              <select 
+                                value={newEntry.gender}
+                                onChange={e => setNewEntry({...newEntry, gender: e.target.value})}
+                                className="w-full bg-[var(--card)] border-2 border-[var(--border)] focus:border-[var(--primary)] rounded-xl px-4 py-3 text-sm transition-all outline-none cursor-pointer"
+                              >
+                                <option value="">Genderless / Netral (Kota, Sekte, Jurus, Benda)</option>
+                                <option value="MALE">♂ Laki-laki (MALE - he/him)</option>
+                                <option value="FEMALE">♀ Perempuan (FEMALE - she/her)</option>
+                              </select>
+                              <p className="text-[10px] text-[var(--muted-foreground)] ml-1 italic">
+                                *Khusus nama tokoh/manusia. Jangan beri gender pada kota, sekte, atau benda.
+                              </p>
+                            </div>
                           </div>
                           <div className="flex justify-end gap-3 pt-4 border-t border-[var(--border)]">
                             <Button variant="ghost" className="rounded-xl px-6" onClick={() => {
                               setShowAddForm(false);
                               setEditingEntryId(null);
-                              setNewEntry({ original: '', translated: '', notes: '' });
+                              setNewEntry({ original: '', translated: '', notes: '', gender: '' });
                             }}>Cancel</Button>
                             <Button className="rounded-xl px-8 shadow-lg shadow-[var(--primary)]/20" onClick={addEntry}>
                               {editingEntryId ? 'Update Term' : 'Save Term'}
@@ -827,9 +891,21 @@ export default function ContextLibraryPage() {
                             <CardContent className="p-4 flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="font-bold text-sm truncate">{sug.original_term}</div>
-                                {sug.translated_term && (
-                                  <div className="text-xs font-semibold text-[var(--primary)] mb-1">{sug.translated_term}</div>
-                                )}
+                                <div className="flex items-center gap-1.5 flex-wrap my-0.5">
+                                  {sug.translated_term && (
+                                    <div className="text-xs font-semibold text-[var(--primary)]">{sug.translated_term}</div>
+                                  )}
+                                  {sug.gender === 'MALE' && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                                      ♂ Male
+                                    </span>
+                                  )}
+                                  {sug.gender === 'FEMALE' && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-500/10 text-pink-500 border border-pink-500/20">
+                                      ♀ Female
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="text-[10px] text-[var(--muted-foreground)] mt-1 line-clamp-2">{sug.notes}</div>
                               </div>
                               <div className="flex flex-col gap-1.5 shrink-0">
@@ -852,7 +928,8 @@ export default function ContextLibraryPage() {
                                     setNewEntry({ 
                                       original: sug.original_term, 
                                       translated: sug.translated_term || '', 
-                                      notes: sug.notes || '' 
+                                      notes: sug.notes || '',
+                                      gender: sug.gender || '',
                                     });
                                     setShowAddForm(true);
                                     setEditingEntryId(null);
@@ -881,40 +958,84 @@ export default function ContextLibraryPage() {
 
                   {/* Term Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {displayedEntries.map(entry => (
+                    {displayedEntries.map(entry => {
+                      const g = getEntryGender(entry);
+                      return (
                       <Card key={entry.id} className="group hover:border-[var(--primary)]/50 transition-all duration-300 shadow-sm hover:shadow-md relative overflow-hidden">
                         <CardContent className="p-6">
                           <div className="flex justify-between items-start mb-4">
-                            <div className="w-10 h-10 rounded-xl bg-[var(--accent)] flex items-center justify-center text-[var(--primary)] font-bold">
-                              {entry.original_term.charAt(0)}
-                            </div>
+                            {/* Avatar Logo: Male (Blue with ♂ badge), Female (Pink with ♀ badge), or Neutral */}
+                            {g === 'MALE' ? (
+                              <button 
+                                type="button"
+                                className="relative group/avatar cursor-pointer text-left focus:outline-none" 
+                                onClick={() => handleCycleGender(entry)} 
+                                title="Tokoh Laki-laki (♂). Klik untuk ubah ke ♀ Perempuan atau Netral."
+                              >
+                                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 border-2 border-blue-500/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-lg shadow-sm group-hover/avatar:scale-105 transition-transform">
+                                  {entry.original_term.charAt(0)}
+                                </div>
+                                <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-black shadow-md ring-2 ring-[var(--card)]">
+                                  ♂
+                                </span>
+                              </button>
+                            ) : g === 'FEMALE' ? (
+                              <button 
+                                type="button"
+                                className="relative group/avatar cursor-pointer text-left focus:outline-none" 
+                                onClick={() => handleCycleGender(entry)} 
+                                title="Tokoh Perempuan (♀). Klik untuk ubah ke Netral atau ♂ Laki-laki."
+                              >
+                                <div className="w-12 h-12 rounded-2xl bg-pink-500/15 border-2 border-pink-500/40 text-pink-600 dark:text-pink-400 flex items-center justify-center font-bold text-lg shadow-sm group-hover/avatar:scale-105 transition-transform">
+                                  {entry.original_term.charAt(0)}
+                                </div>
+                                <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-pink-600 text-white flex items-center justify-center text-xs font-black shadow-md ring-2 ring-[var(--card)]">
+                                  ♀
+                                </span>
+                              </button>
+                            ) : (
+                              <button 
+                                type="button"
+                                className="relative group/avatar cursor-pointer text-left focus:outline-none" 
+                                onClick={() => handleCycleGender(entry)} 
+                                title="Benda / Wilayah / Netral (Genderless). Klik jika ini tokoh manusia."
+                              >
+                                <div className="w-12 h-12 rounded-2xl bg-[var(--accent)] border border-[var(--border)] text-[var(--primary)] flex items-center justify-center font-bold text-base shadow-xs group-hover/avatar:scale-105 transition-transform">
+                                  {entry.original_term.charAt(0)}
+                                </div>
+                              </button>
+                            )}
+
                             <div className="flex gap-1.5 items-center">
-                              {/* Lock Toggle Button - Always visible if locked, hover visible if unlocked */}
+                              {/* Lock Toggle Button - Always visible on mobile, hover visible if unlocked on desktop */}
                               <button 
                                 onClick={() => toggleLock(entry)}
                                 className={cn(
-                                  "p-1.5 rounded-lg hover:scale-110 active:scale-95 transition-all",
+                                  "p-2 sm:p-1.5 rounded-lg active:scale-95 transition-all cursor-pointer",
                                   entry.is_locked 
-                                    ? "bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm" 
-                                    : "bg-slate-50 dark:bg-slate-950/20 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 opacity-0 group-hover:opacity-100 transition-all duration-300"
+                                    ? "bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm opacity-100" 
+                                    : "bg-slate-100 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all duration-300"
                                 )}
                                 title={entry.is_locked ? "Unlock Term (Allow Auto-Eviction)" : "Lock & Protect Term"}
+                                aria-label={entry.is_locked ? "Unlock Term" : "Lock Term"}
                               >
                                 <Lock size={14} className={cn(entry.is_locked ? "fill-amber-500/20" : "")} />
                               </button>
 
-                              <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                              <div className="flex gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all duration-300">
                                 <button 
                                   onClick={() => startEditing(entry)}
-                                  className="p-1.5 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
+                                  className="p-2 sm:p-1.5 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded-lg active:scale-95 transition-all cursor-pointer"
                                   title="Edit term"
+                                  aria-label="Edit term"
                                 >
                                   <Edit2 size={14} />
                                 </button>
                                 <button 
                                   onClick={() => removeEntry(entry.id)} 
-                                  className="p-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 rounded-lg hover:scale-110 active:scale-95 transition-all"
+                                  className="p-2 sm:p-1.5 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg active:scale-95 transition-all cursor-pointer"
                                   title="Delete term"
+                                  aria-label="Delete term"
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -923,7 +1044,29 @@ export default function ContextLibraryPage() {
                           </div>
                           
                           <div className="space-y-1">
-                            <h3 className="font-bold text-lg text-[var(--foreground)] leading-tight">{entry.translated_term}</h3>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-bold text-lg text-[var(--foreground)] leading-tight">{entry.translated_term}</h3>
+                              {g === 'MALE' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCycleGender(entry)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shadow-xs hover:bg-blue-500/25 transition-all cursor-pointer"
+                                  title="Tokoh Laki-laki (♂). Klik untuk ubah gender."
+                                >
+                                  ♂ Male
+                                </button>
+                              )}
+                              {g === 'FEMALE' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCycleGender(entry)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-500/15 text-pink-600 dark:text-pink-400 border border-pink-500/30 shadow-xs hover:bg-pink-500/25 transition-all cursor-pointer"
+                                  title="Tokoh Perempuan (♀). Klik untuk ubah gender."
+                                >
+                                  ♀ Female
+                                </button>
+                              )}
+                            </div>
                             <p className="text-xs text-[var(--muted-foreground)] font-medium">{entry.original_term}</p>
                           </div>
                           
@@ -941,7 +1084,8 @@ export default function ContextLibraryPage() {
                           )}
                         </CardContent>
                       </Card>
-                    ))}
+                    );
+                    })}
 
                     {filteredEntries.length === 0 && (
                       <div className="col-span-full py-20 text-center border-2 border-dashed border-[var(--border)] rounded-3xl">
@@ -1041,13 +1185,13 @@ export default function ContextLibraryPage() {
                           desc: "Follow source language norms. Translate Chinese honorifics to English (e.g., Senior Brother, Elder, Young Master). Retain common Japanese/Korean suffixes if applicable." 
                         }
                       ].map((rule, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-4 bg-[var(--card)]/20 border border-[var(--border)] rounded-xl group hover:border-[var(--primary)]/30 transition-all">
-                          <div className="flex-1 min-w-0 pr-4">
+                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-[var(--card)]/20 border border-[var(--border)] rounded-xl group hover:border-[var(--primary)]/30 transition-all gap-3">
+                          <div className="flex-1 min-w-0 pr-0 sm:pr-4">
                             <span className="text-sm font-medium text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors">
                               {rule.title}: <span className="font-normal opacity-70">{rule.desc}</span>
                             </span>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
+                          <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                             <span className="text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded bg-[var(--secondary)] text-[var(--muted-foreground)]">All terms</span>
                             <Trash2 size={16} className="text-[var(--muted-foreground)] opacity-40" />
                             <div className="p-1 bg-[var(--secondary)] rounded text-[var(--muted-foreground)]">
@@ -1096,6 +1240,159 @@ export default function ContextLibraryPage() {
           </div>
         )}
       </main>
+
+      {/* AI Extraction Scope Settings Modal */}
+      {showExtractSettings && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowExtractSettings(false);
+          }}
+        >
+          <div className="w-full max-w-md bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl p-5 sm:p-6 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-yellow-500/10 text-yellow-500 flex items-center justify-center shrink-0">
+                  <Zap size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[var(--foreground)] leading-tight">Extraction Scope</h3>
+                  <p className="text-xs text-[var(--muted-foreground)]">AI context extraction settings</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setExtractMode(prev => prev === 'easy' ? 'advanced' : 'easy')}
+                  className={cn(
+                    "px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all border cursor-pointer",
+                    extractMode === 'advanced' 
+                      ? "bg-[var(--accent)] text-[var(--primary)] border-[var(--primary)]/20 shadow-sm" 
+                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] border-transparent hover:border-[var(--border)]"
+                  )}
+                >
+                  {extractMode === 'advanced' ? "FINE-TUNED" : "ADVANCED"}
+                </button>
+                <button
+                  onClick={() => setShowExtractSettings(false)}
+                  className="p-1.5 rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Presets - Always Visible for quick selection */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-5">
+              {[
+                { id: 'quick', label: 'Quick', ch: 5, size: 1000 },
+                { id: 'normal', label: 'Normal', ch: 15, size: 1000 },
+                { id: 'deep', label: 'Deep', ch: 25, size: 1000 }
+              ].map(p => {
+                const active = extractSettings.chapterCount === p.ch && extractSettings.sampleSize === p.size;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      setPreset(p.id as any);
+                      setExtractMode('easy');
+                    }}
+                    className={cn(
+                      "flex flex-col items-center py-2.5 sm:py-3 px-2 rounded-xl border-2 transition-all duration-200 cursor-pointer",
+                      active
+                        ? "border-[var(--primary)] bg-[var(--primary)]/5 text-[var(--primary)] shadow-sm font-bold"
+                        : "border-[var(--border)] bg-transparent text-[var(--muted-foreground)] hover:border-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    )}
+                  >
+                    <span className="text-xs font-bold uppercase">{p.label}</span>
+                    <span className="text-[10px] opacity-75 mt-0.5">{p.ch} Ch</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Collapsible Sliders in Advanced Mode */}
+            {extractMode === 'advanced' && (
+              <div className="space-y-4 mb-5 pt-3 border-t border-dashed border-[var(--border)] animate-in fade-in slide-in-from-top-1 duration-200">
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs font-bold uppercase text-[var(--muted-foreground)]">Chapters Ahead</label>
+                    <span className="text-xs font-mono font-bold text-[var(--primary)]">{extractSettings.chapterCount} Ch</span>
+                  </div>
+                  <input 
+                    type="range" min="1" max="50" step="1"
+                    value={extractSettings.chapterCount}
+                    onChange={e => {
+                      const val = parseInt(e.target.value);
+                      setExtractSettings(prev => {
+                        const next = { ...prev, chapterCount: val };
+                        saveExtractSettings(next.chapterCount, next.sampleSize);
+                        return next;
+                      });
+                    }}
+                    className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                  />
+                  <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] mt-1 font-mono">
+                    <span>1 Ch</span>
+                    <span>25 Ch</span>
+                    <span>50 Ch</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs font-bold uppercase text-[var(--muted-foreground)]">Sample Size</label>
+                    <span className="text-xs font-mono font-bold text-[var(--primary)]">{extractSettings.sampleSize} Chars</span>
+                  </div>
+                  <input 
+                    type="range" min="200" max="20000" step="100"
+                    value={extractSettings.sampleSize}
+                    onChange={e => {
+                      const val = parseInt(e.target.value);
+                      setExtractSettings(prev => {
+                        const next = { ...prev, sampleSize: val };
+                        saveExtractSettings(next.chapterCount, next.sampleSize);
+                        return next;
+                      });
+                    }}
+                    className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                  />
+                  <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] mt-1 font-mono">
+                    <span>200</span>
+                    <span>10,000</span>
+                    <span>20,000</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-[var(--border)] space-y-3">
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-[var(--secondary)]/30 border border-[var(--border)] text-left">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-[var(--muted-foreground)] block">Est. Input</span>
+                  <span className="text-xs sm:text-sm font-mono font-bold text-[var(--foreground)]">~{estInputTokens.toLocaleString()} tokens</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-[var(--muted-foreground)] block">Max Output</span>
+                  <span className="text-xs sm:text-sm font-mono font-bold text-[var(--foreground)]">~1,500 tokens</span>
+                </div>
+              </div>
+              <div className="pt-2 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold uppercase text-[var(--primary)]">Context Needed</span>
+                  <span className="text-sm sm:text-base font-mono font-bold text-[var(--primary)]">~{estTotalTokens.toLocaleString()} tokens</span>
+                </div>
+                <Button 
+                  size="sm" 
+                  className="h-9 px-5 rounded-xl font-semibold shadow-md shadow-[var(--primary)]/20 cursor-pointer" 
+                  onClick={() => setShowExtractSettings(false)}
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPresetsModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">

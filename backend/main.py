@@ -3,6 +3,11 @@ FastAPI main entry point — AI Translator Web Backend
 """
 
 import sys
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
@@ -18,15 +23,42 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 
-from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system
+from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Inisialisasi database saat server pertama kali jalan."""
-    init_db()
-    print("[OK] Database initialized - app.db ready.")
+    init_db(target="all")
+    try:
+        from database import SessionLocalMain, SessionLocalGhost, Chapter
+        from sqlalchemy import update
+        for session_factory, db_name in [(SessionLocalMain, "app.db"), (SessionLocalGhost, "ghost.db")]:
+            try:
+                with session_factory() as db:
+                    db.execute(
+                        update(Chapter)
+                        .where(Chapter.translation_status == "processing")
+                        .values(translation_status="idle")
+                    )
+                    db.commit()
+            except Exception as ex:
+                print(f"[WARN] Failed to reset stale processing chapters in {db_name}: {ex}")
+    except Exception as e:
+        print(f"[WARN] Failed to reset stale processing chapters: {e}")
+    print("[OK] Database initialized - all databases ready.")
     yield
+    print("🛑 [Shutdown] Stopping background tasks and cleaning up resources...")
+    try:
+        from services.background_translator import BackgroundTranslator
+        await BackgroundTranslator.stop_all_batches()
+    except Exception as e:
+        print(f"[WARN] Error stopping background translation batches: {e}")
+    try:
+        from services.scrapers.novalpie import _cleanup_all_browsers
+        _cleanup_all_browsers()
+    except Exception as e:
+        print(f"[WARN] Error cleaning up browser processes: {e}")
 
 
 app = FastAPI(
@@ -36,10 +68,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — izinkan request dari frontend Vite (wildcard acceptable for self-hosted LAN app)
+# CORS — Restrict to loopback, private LAN (RFC 1918), and local mDNS to prevent arbitrary internet origin abuse
+allowed_origins_env = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+cors_origin_regex = (
+    r"^https?://(localhost|127\.0\.0\.1|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|"
+    r"[a-zA-Z0-9-]+\.local)(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
+    allow_origins=allowed_origins_env if allowed_origins_env else [],
+    allow_origin_regex=cors_origin_regex if not allowed_origins_env else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,3 +154,4 @@ app.include_router(relationships.router)
 app.include_router(discovery.router)
 app.include_router(toc.router)
 app.include_router(system.router)
+app.include_router(images.router)

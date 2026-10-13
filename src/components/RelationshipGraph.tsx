@@ -81,11 +81,18 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
   }, [relationships]);
 
   return (
-    <div ref={containerRef} className="w-full h-full min-h-[500px] bg-[var(--secondary)]/20 rounded-[2rem] overflow-hidden border border-[var(--border)] relative shadow-inner">
+    <div ref={containerRef} className="w-full h-full min-h-[380px] sm:min-h-[500px] bg-[var(--secondary)]/20 rounded-2xl sm:rounded-[2rem] overflow-hidden border border-[var(--border)] relative shadow-inner">
+      {relationships.length > 0 && (
+        <div className="absolute top-3 right-3 pointer-events-none flex justify-end z-10">
+          <span className="text-[10px] font-semibold bg-[var(--card)]/90 backdrop-blur-md px-2.5 py-1 rounded-full border border-[var(--border)] text-[var(--muted-foreground)] shadow-sm">
+            💡 Sentuh node untuk info • Geser di luar kanvas untuk scroll
+          </span>
+        </div>
+      )}
       {relationships.length === 0 ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40">
-          <p className="font-bold text-lg">No relationships found.</p>
-          <p className="text-sm">Click 'Scan Relationships' to extract character connections.</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 p-4 text-center">
+          <p className="font-bold text-base sm:text-lg">No relationships found.</p>
+          <p className="text-xs sm:text-sm mt-1">Click 'Scan Relationships' to extract character connections.</p>
         </div>
       ) : (
         <ForceGraph2D

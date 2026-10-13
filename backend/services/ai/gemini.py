@@ -38,7 +38,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
             "Content-Type": "application/json"
         }
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
@@ -69,6 +69,10 @@ class GeminiAdapter(BaseAIProviderAdapter):
 
     async def chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None) -> str:
         models_to_try = [self.model]
+        if self.model == "gemini-3.5-flash-lite":
+            models_to_try.append("gemini-3.1-flash-lite")
+        elif self.model == "gemini-3.1-flash-lite":
+            models_to_try.append("gemini-3.5-flash-lite")
         
         last_error = ""
         for model in models_to_try:
@@ -106,10 +110,12 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 if any(p in err_str for p in ["prohibited", "content_filter", "safety", "blocked", "block reason", "policy", "rejected"]):
                     return PROHIBITED_MARKER
                 
-                # If Gemini threw 429 Quota Exceeded, mark key as exhausted for today so other requests rotate immediately
+                # If Gemini threw 429 Quota Exceeded, only mark key as exhausted for the day if it's a true daily limit (RPD), NOT temporary per-minute RPM limit
+                is_per_minute = "perminute" in err_str or "per minute" in err_str or "requestsperminute" in err_str
                 if "429" in err_str and any(q in err_str for q in ["quota", "exhausted", "resource_exhausted"]):
-                    from services.ai.secrets import mark_key_exhausted
-                    mark_key_exhausted("gemini", self.api_key, model)
+                    if not is_per_minute and any(d in err_str for d in ["perday", "per day", "requestsperday", "daily"]):
+                        from services.ai.secrets import mark_key_exhausted
+                        mark_key_exhausted("gemini", self.api_key, model)
                 
                 # Add delay before next attempt for flash-lite to handle rate limits
                 if "gemini-3.1-flash-lite" in model.lower() and "empty content" in str(e).lower():

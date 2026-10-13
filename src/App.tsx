@@ -78,8 +78,7 @@ export default function App() {
     };
   }, [activeTab, openThreadId, openChapterId]);
 
-  const openReaderFromLibrary = (threadId: number, chapterId?: number) => {
-    setActiveTab('library');
+  const openReader = (threadId: number, chapterId?: number) => {
     setOpenThreadId(threadId);
     if (chapterId) {
       setOpenChapterId(chapterId);
@@ -122,7 +121,7 @@ export default function App() {
         {(activeTab) => {
           switch (activeTab) {
             case 'translate': return <TranslatePage
-              onOpenThread={openReaderFromLibrary}
+              onOpenThread={openReader}
               onNavigateToSettings={() => {
                 setActiveTab('settings');
                 setIsReadingChapter(false);
@@ -134,10 +133,10 @@ export default function App() {
                 setOpenThreadId(null);
               }}
             />;
-            case 'library': return <LibraryPage onOpenThread={openReaderFromLibrary} />;
+            case 'library': return <LibraryPage onOpenThread={openReader} />;
             case 'context': return <ContextLibraryPage />;
             case 'settings': return <SettingsPage />;
-            case 'bookmarks': return <BookmarksPage onOpenChapter={(tid, cid) => openReaderFromLibrary(tid, cid)} onOpenLibrary={() => setActiveTab('library')} />;
+            case 'bookmarks': return <BookmarksPage onOpenChapter={(tid, cid) => openReader(tid, cid)} onOpenLibrary={() => setActiveTab('library')} />;
           }
         }}
       </Layout>

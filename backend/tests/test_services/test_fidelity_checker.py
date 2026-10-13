@@ -49,7 +49,7 @@ def test_verify_fidelity_ignores_image_markers():
     assert result["translated_paragraphs"] == 3
 
 def test_valid_novel_endings_no_false_positive():
-    """Test that valid web novel punctuation (quotes, brackets, emojis, semicolons) are not flagged as truncated."""
+    """Test that valid web novel punctuation (quotes, brackets, emojis, semicolons, end tags, cliffhangers) are not flagged as truncated."""
     assert is_truncated_mid_sentence("Kalimat selesai dengan petik tunggal '") is False
     assert is_truncated_mid_sentence("Kalimat selesai dengan petik ganda \"") is False
     assert is_truncated_mid_sentence("Notifikasi sistem selesai [Status Level Up: Max]") is False
@@ -58,6 +58,15 @@ def test_valid_novel_endings_no_false_positive():
     assert is_truncated_mid_sentence("Kalimat penutup berurutan;") is False
     assert is_truncated_mid_sentence("Format penekanan dialog *'Pasti tidak akan kalah.'*") is False
     assert is_truncated_mid_sentence("**Bab Selesai.**") is False
+    # Chapter-ending markers
+    assert is_truncated_mid_sentence("- The End") is False
+    assert is_truncated_mid_sentence("It was Celine Alice.\n\n- The End") is False
+    assert is_truncated_mid_sentence("[To be continued]") is False
+    assert is_truncated_mid_sentence("第164章 完") is False
+    # Original matching cliffhanger endings
+    assert is_truncated_mid_sentence("My mother", original_text="我的母亲——") is False
+    assert is_truncated_mid_sentence("Taking the first step toward the judgment of the Beldia family", original_text="向着审判贝尔迪亚家族的第一步——") is False
+
 
 def test_real_truncations_detected():
     """Test that genuine mid-sentence cutoffs are properly flagged."""
@@ -66,3 +75,22 @@ def test_real_truncations_detected():
     assert is_truncated_mid_sentence("Listening to explanations couldn't") is True
     assert is_truncated_mid_sentence("Dissolving instantly, it transformed into a") is True
     assert is_truncated_mid_sentence("") is True
+
+
+def test_verify_fidelity_paragraph_consolidation_not_suspicious():
+    """Test that micro-line web novel text consolidated into prose with healthy char length is not flagged as suspicious."""
+    # 30 short lines (avg ~15 chars each = 450 chars)
+    original = "\n\n".join([f"短行内容测试第 {i} 句。" for i in range(30)])
+    # 5 standard English prose paragraphs (avg ~150 chars each = 750 chars, char_ratio = 1.66x)
+    translated = "\n\n".join([
+        f"This is a properly consolidated narrative paragraph number {i} grouping multiple short source sentences together with complete phrasing and proper punctuation."
+        for i in range(5)
+    ])
+
+    result = verify_translation_fidelity(original, translated, chapter_id=99)
+    assert result["paragraph_ratio"] < 0.3  # 5 / 30 = 0.17
+    assert result["char_ratio"] >= 1.0
+    assert result["is_truncated"] is False
+    assert result["is_suspicious"] is False
+    assert any("Paragraph count consolidated" in w for w in result["warnings"])
+

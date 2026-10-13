@@ -81,3 +81,18 @@ class TestHallucinationDetector:
         assert "TRANSLATOR NOTES" not in cleaned
         assert "investigations analyses" not in cleaned
         assert "She stepped into the cave dwelling." in cleaned
+
+    def test_strip_repetitive_character_loops_boxes(self):
+        """Test collapsing runaway degenerate box/placeholder loops."""
+        text = "Dialogue said: That" + "□" * 500 + "and then he stopped."
+        cleaned = HallucinationDetector.strip_repetitive_character_loops(text)
+        assert "□" * 5 not in cleaned
+        assert "Dialogue said: That□□□and then he stopped." == cleaned
+
+    def test_strip_repetitive_character_loops_integration_clean_final_translation(self):
+        """Test ContextEngine.clean_final_translation collapses degenerate symbol loops."""
+        text = "What is going on? " + "■" * 100 + "\n\nNormal continuation."
+        cleaned = ContextEngine.clean_final_translation(text, always_hide_thoughts=True)
+        assert "■" * 5 not in cleaned
+        assert "What is going on? ■■■\n\nNormal continuation." == cleaned
+

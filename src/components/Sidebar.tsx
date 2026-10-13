@@ -1,10 +1,23 @@
 /* eslint-disable react-refresh/only-export-components */
-import { BookOpen, Languages, Library, Settings, User, Star, X } from 'lucide-react';
-import { type ReactNode, useState, useRef } from 'react';
-import { cn } from '@/lib/utils';
-import { getApiUrl } from '@/lib/api';
+import {
+  BookOpen,
+  Languages,
+  Library,
+  Settings,
+  User,
+  Star,
+  X,
+} from "lucide-react";
+import { type ReactNode, useState, useRef } from "react";
+import { cn } from "@/lib/utils";
+import { getApiUrl } from "@/lib/api";
 
-export type TabId = 'translate' | 'library' | 'context' | 'settings' | 'bookmarks';
+export type TabId =
+  | "translate"
+  | "library"
+  | "context"
+  | "settings"
+  | "bookmarks";
 
 interface NavItem {
   id: TabId;
@@ -13,10 +26,10 @@ interface NavItem {
 }
 
 export const navItems: NavItem[] = [
-  { id: 'translate', icon: <Languages size={24} />, label: 'Translate' },
-  { id: 'library', icon: <Library size={24} />, label: 'Library' },
-  { id: 'context', icon: <BookOpen size={24} />, label: 'Context' },
-  { id: 'settings', icon: <Settings size={24} />, label: 'Settings' },
+  { id: "translate", icon: <Languages size={24} />, label: "Translate" },
+  { id: "library", icon: <Library size={24} />, label: "Library" },
+  { id: "context", icon: <BookOpen size={24} />, label: "Context" },
+  { id: "settings", icon: <Settings size={24} />, label: "Settings" },
 ];
 
 interface SidebarProps {
@@ -26,9 +39,13 @@ interface SidebarProps {
   onClose: () => void;
 }
 
-export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProps) {
+export default function Sidebar({
+  activeTab,
+  onTabChange,
+  onClose,
+}: SidebarProps) {
   const [showPinModal, setShowPinModal] = useState(false);
-  const [pinInput, setPinInput] = useState('');
+  const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,15 +64,19 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
 
   const handlePinSubmit = async () => {
     try {
-      const res = await fetch(getApiUrl('/api/system/workspace'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace: 'toggle', pin: pinInput })
+      const res = await fetch(getApiUrl("/api/system/workspace"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: "toggle", pin: pinInput }),
       });
       if (!res.ok) {
         setPinError(true);
-        setPinInput('');
+        setPinInput("");
         return;
+      }
+      const data = await res.json().catch(() => null);
+      if (data?.workspace) {
+        localStorage.setItem("readomni_workspace", data.workspace);
       }
       window.location.reload();
     } catch (e) {
@@ -76,10 +97,13 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
 
         {/* Main Nav */}
         <nav className="flex-1 space-y-6 w-full px-2">
-          {navItems.map(item => (
+          {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => { onTabChange(item.id); onClose(); }}
+              onClick={() => {
+                onTabChange(item.id);
+                onClose();
+              }}
               className={cn(
                 "w-full flex flex-col items-center gap-1 p-3 rounded-xl transition-all duration-200 group relative",
                 activeTab === item.id
@@ -88,13 +112,15 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
               )}
               title={item.label}
             >
-              <div className={cn(
-                "transition-transform group-hover:scale-110",
-                activeTab === item.id && "scale-110"
-              )}>
+              <div
+                className={cn(
+                  "transition-transform group-hover:scale-110",
+                  activeTab === item.id && "scale-110"
+                )}
+              >
                 {item.icon}
               </div>
-              
+
               {/* Tooltip (CSS only for simplicity) */}
               <div className="absolute left-full ml-4 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
                 {item.label}
@@ -105,22 +131,32 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
 
         {/* Bottom Section */}
         <div className="mt-auto space-y-6 w-full px-2">
-          <button 
-             onClick={() => { onTabChange('bookmarks'); onClose(); }}
-             title="Favorite Chapters"
-             className={cn(
-               "w-full flex flex-col items-center p-3 transition-colors group relative rounded-xl",
-               activeTab === 'bookmarks'
-                 ? "bg-yellow-500/10 text-yellow-500"
-                 : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-yellow-500"
-             )}
-           >
-            <Star size={22} className={activeTab === 'bookmarks' ? 'scale-110' : 'group-hover:scale-110 transition-transform'} />
+          <button
+            onClick={() => {
+              onTabChange("bookmarks");
+              onClose();
+            }}
+            title="Favorite Chapters"
+            className={cn(
+              "w-full flex flex-col items-center p-3 transition-colors group relative rounded-xl",
+              activeTab === "bookmarks"
+                ? "bg-yellow-500/10 text-yellow-500"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-yellow-500"
+            )}
+          >
+            <Star
+              size={22}
+              className={
+                activeTab === "bookmarks"
+                  ? "scale-110"
+                  : "group-hover:scale-110 transition-transform"
+              }
+            />
             <div className="absolute left-full ml-4 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
               Bookmarks
             </div>
           </button>
-          <div 
+          <div
             className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center mx-auto cursor-pointer hover:border-[var(--primary)] transition-all"
             onMouseDown={startPress}
             onMouseUp={endPress}
@@ -137,8 +173,12 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
       {showPinModal && (
         <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-[var(--card)] w-full max-w-sm p-6 rounded-2xl shadow-xl border border-[var(--border)] relative">
-            <button 
-              onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(false); }}
+            <button
+              onClick={() => {
+                setShowPinModal(false);
+                setPinInput("");
+                setPinError(false);
+              }}
               className="absolute top-4 right-4 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
               <X size={20} />
@@ -147,16 +187,25 @@ export default function Sidebar({ activeTab, onTabChange, onClose }: SidebarProp
             <input
               type="password"
               value={pinInput}
-              onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
-              onKeyDown={(e) => { if(e.key === 'Enter') handlePinSubmit(); }}
+              onChange={(e) => {
+                setPinInput(e.target.value);
+                setPinError(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handlePinSubmit();
+              }}
               className={cn(
                 "w-full bg-[var(--background)] border p-3 rounded-xl outline-none focus:ring-2 focus:ring-[var(--primary)] transition-all",
-                pinError ? "border-red-500 text-red-500" : "border-[var(--border)]"
+                pinError
+                  ? "border-red-500 text-red-500"
+                  : "border-[var(--border)]"
               )}
               placeholder="•••••"
               autoFocus
             />
-            {pinError && <p className="text-red-500 text-sm mt-2">Invalid PIN</p>}
+            {pinError && (
+              <p className="text-red-500 text-sm mt-2">Invalid PIN</p>
+            )}
             <button
               onClick={handlePinSubmit}
               className="mt-4 w-full bg-[var(--primary)] text-[var(--primary-foreground)] p-3 rounded-xl font-medium hover:opacity-90 transition-opacity"

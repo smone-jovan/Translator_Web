@@ -4,6 +4,58 @@ import datetime
 
 ENV_FILE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
+
+def mask_secret(secret: str | None) -> str:
+    """Mask a secret key to prevent shoulder-surfing and network exfiltration."""
+    if not secret:
+        return ""
+    s = secret.strip()
+    if len(s) <= 8:
+        return "********"
+    return f"{s[:4]}...{s[-4:]}"
+
+
+def is_masked_secret(value: str | None) -> bool:
+    """Check if a string represents a masked secret."""
+    if not value:
+        return False
+    v = value.strip()
+    return "..." in v or v == "********"
+
+
+def resolve_masked_keys(submitted_keys: list[str], existing_keys: list[str]) -> list[str]:
+    """
+    Reconstruct full unmasked keys from submitted list containing masked placeholders.
+    Preserves existing keys when placeholders are submitted, allows addition of new keys,
+    and supports deletion/reordering without data loss.
+    """
+    resolved: list[str] = []
+    available_existing = list(existing_keys)
+
+    for sub in submitted_keys:
+        if not sub or not isinstance(sub, str):
+            continue
+        sub = sub.strip()
+        if not sub:
+            continue
+
+        if is_masked_secret(sub):
+            matched = None
+            if "..." in sub:
+                prefix, suffix = sub.split("...", 1)
+                for idx, ex in enumerate(available_existing):
+                    if ex.startswith(prefix) and ex.endswith(suffix):
+                        matched = ex
+                        available_existing.pop(idx)
+                        break
+            if matched:
+                resolved.append(matched)
+        else:
+            resolved.append(sub)
+
+    return resolved
+
+
 class QuotaExhaustedError(Exception):
     """Raised when all available API keys for a provider have hit their RPD quota limits."""
     pass
@@ -61,7 +113,8 @@ def load_secrets() -> dict:
     secrets = {
         "openai_api_key": "",
         "gemini_api_key": "",
-        "openrouter_api_key": ""
+        "openrouter_api_key": "",
+        "novalpie_cookie": ""
     }
     if os.path.exists(ENV_FILE_PATH):
         try:
@@ -80,6 +133,8 @@ def load_secrets() -> dict:
                             secrets["gemini_api_key"] = val
                         elif key == "OPENROUTER_API_KEY":
                             secrets["openrouter_api_key"] = val
+                        elif key == "NOVALPIE_COOKIE":
+                            secrets["novalpie_cookie"] = val
         except Exception as e:
             print(f"[SECRETS] Failed to read {ENV_FILE_PATH}: {e}")
     
@@ -90,11 +145,13 @@ def load_secrets() -> dict:
         secrets["gemini_api_key"] = os.environ.get("GEMINI_API_KEY", "")
     if not secrets["openrouter_api_key"]:
         secrets["openrouter_api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+    if not secrets["novalpie_cookie"]:
+        secrets["novalpie_cookie"] = os.environ.get("NOVALPIE_COOKIE", "")
         
     return secrets
 
 
-def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None = None, openrouter_api_key: str | None = None):
+def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None = None, openrouter_api_key: str | None = None, novalpie_cookie: str | None = None):
     """
     Save API keys safely to backend/.env.
     """
@@ -105,15 +162,18 @@ def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None =
         secrets["gemini_api_key"] = gemini_api_key
     if openrouter_api_key is not None:
         secrets["openrouter_api_key"] = openrouter_api_key
+    if novalpie_cookie is not None:
+        secrets["novalpie_cookie"] = novalpie_cookie
         
     try:
         # Write back to backend/.env safely
         with open(ENV_FILE_PATH, "w", encoding="utf-8") as f:
-            f.write("# LLM Provider API Keys (Do not commit this file to Git!)\n")
-            f.write(f"OPENAI_API_KEY={secrets['openai_api_key']}\n")
-            f.write(f"GEMINI_API_KEY={secrets['gemini_api_key']}\n")
-            f.write(f"OPENROUTER_API_KEY={secrets['openrouter_api_key']}\n")
-        print(f"[SECRETS] API keys saved successfully to {ENV_FILE_PATH}")
+            f.write("# LLM Provider API Keys & Scraper Tokens (Do not commit this file to Git!)\n")
+            f.write(f"OPENAI_API_KEY={secrets.get('openai_api_key', '')}\n")
+            f.write(f"GEMINI_API_KEY={secrets.get('gemini_api_key', '')}\n")
+            f.write(f"OPENROUTER_API_KEY={secrets.get('openrouter_api_key', '')}\n")
+            f.write(f"NOVALPIE_COOKIE={secrets.get('novalpie_cookie', '')}\n")
+        print(f"[SECRETS] Secrets saved successfully to {ENV_FILE_PATH}")
     except Exception as e:
         print(f"[SECRETS] Failed to write to {ENV_FILE_PATH}: {e}")
         raise e

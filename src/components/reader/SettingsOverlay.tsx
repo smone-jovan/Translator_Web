@@ -5,6 +5,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { syncEngineLoadMode, ENGINE_LOAD_MODE_EVENT } from '@/lib/settingsSync';
 
 interface SettingsOverlayProps {
   fontSize: number;
@@ -16,7 +17,7 @@ interface SettingsOverlayProps {
   prefetchCount: number;
   setPrefetchCount: (count: number) => void;
   prefetchMode: string;
-  setPrefetchMode: (mode: string) => void;
+  setPrefetchMode: (mode: 'soft' | 'hard') => void;
   alwaysHideThoughts: boolean;
   setAlwaysHideThoughts: (val: boolean) => void;
   onClose: () => void;
@@ -52,6 +53,17 @@ export default function SettingsOverlay({
         .catch(() => {});
     }
   }, [threadId]);
+
+  useEffect(() => {
+    const onModeChange = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail === 'soft' || detail === 'hard') {
+        setPrefetchMode(detail);
+      }
+    };
+    window.addEventListener(ENGINE_LOAD_MODE_EVENT, onModeChange);
+    return () => window.removeEventListener(ENGINE_LOAD_MODE_EVENT, onModeChange);
+  }, [setPrefetchMode]);
 
   const saveStyleGuide = async () => {
     if (!threadId) return;
@@ -223,12 +235,12 @@ export default function SettingsOverlay({
               </div>
 
               <div className="mt-4 pt-3 border-t border-[var(--border)]">
-                <label className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider block mb-2">Prefetch Mode</label>
+                <label className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-wider block mb-2">Engine Load Mode</label>
                 <div className="flex bg-[var(--secondary)] rounded-xl p-1">
                   <button
-                    onClick={async () => {
+                    onClick={() => {
                       setPrefetchMode('soft');
-                      saveSetting('prefetch_mode', 'soft');
+                      syncEngineLoadMode('soft');
                     }}
                     className={cn(
                       "flex-1 py-1.5 text-[9px] font-bold rounded-lg transition-all border-none bg-transparent cursor-pointer",
@@ -238,9 +250,9 @@ export default function SettingsOverlay({
                     SOFT
                   </button>
                   <button
-                    onClick={async () => {
+                    onClick={() => {
                       setPrefetchMode('hard');
-                      saveSetting('prefetch_mode', 'hard');
+                      syncEngineLoadMode('hard');
                     }}
                     className={cn(
                       "flex-1 py-1.5 text-[9px] font-bold rounded-lg transition-all border-none bg-transparent cursor-pointer",

@@ -7,6 +7,7 @@ import re
 from sqlalchemy import select
 from database import get_db, GlobalSetting, Thread, Chapter
 from services.ai.factory import AIProviderFactory
+from services.context_engine import ContextEngine
 
 router = APIRouter(prefix="/api", tags=["Context"])
 
@@ -20,6 +21,7 @@ class ExtractedTerm(BaseModel):
     original_term: str
     translated_term: str | None = None
     notes: str | None = None
+    gender: str | None = None
 
 @router.post("/threads/{thread_id}/extract-context")
 async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
@@ -77,22 +79,29 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     global_rules = (gs.global_context if gs else "") or ""
     target_lang = gs.target_language if gs else "Indonesian"
 
-    # Estimated tokens (Chinese characters average ~1.5 tokens per character in Qwen/Llama-3 tokenizers)
-    # plus static instructions prompt (~150 tokens) and global rules (~0.25 tokens per char)
+    # Detect source language dynamically (ADR-111)
+    from services.prompt_templates import detect_source_language
+    source_lang = detect_source_language(full_text)
+
+    # Estimated tokens
     est_tokens = int(150 + (len(global_rules) / 4) + (total_chars * 1.5))
     
+    pronoun_evidence = "pronouns (그/그녀) or kinship terms (형/누나/오빠/언니)" if source_lang == "Korean" else "pronouns (他/她)"
+    forbidden_lang = "Korean or Chinese" if source_lang == "Korean" else "Chinese"
+    
     prompt = (
-        f"You are an expert literary analyst specializing in Chinese web novels.\n"
+        f"You are an expert literary analyst specializing in {source_lang} web novels.\n"
         f"Your task is to identify and extract key proper nouns from the text provided, following these rules:\n\n"
-        f"CRITICAL LANGUAGE RULE: ALL output — translated_term AND notes — MUST be written entirely in {target_lang}. NEVER write notes, descriptions, or context in Chinese. The audience reads {target_lang} ONLY.\n\n"
+        f"CRITICAL LANGUAGE RULE: ALL output — translated_term AND notes — MUST be written entirely in {target_lang}. NEVER write notes, descriptions, or context in {forbidden_lang}. The audience reads {target_lang} ONLY.\n\n"
         f"RULES & ETHICS (MANDATORY):\n{global_rules}\n\n"
         f"EXTRACTION GUIDELINES:\n"
-        f"1. Focus on the MOST FREQUENT and SIGNIFICANT terms (Protagonist, key items, recurring locations, sects/clans, buildings/cities).\n"
+        f"1. Focus on the MOST FREQUENT and SIGNIFICANT terms (Protagonist, key items, recurring locations, sects/clans/guilds, ranks, buildings/cities).\n"
         f"2. Ignore generic or common words. Only take high-priority patterns.\n"
-        f"3. Provide: The original Chinese term, a natural {target_lang} translation, and brief notes IN {target_lang}.\n"
+        f"3. Provide: The original {source_lang} term, a natural {target_lang} translation, and brief notes IN {target_lang}.\n"
         f"4. MANDATORY FOR NOTES: The 'notes' MUST be in {target_lang} and MUST explicitly explain the entity's relationship/role (e.g., 'Master of X', 'Capital City of Y Empire', 'Rival Clan to Z'). Be descriptive about connections.\n"
-        f"5. Format STRICTLY as a raw JSON list without markdown backticks. Example:\n"
-        f'[{{\n  "original_term": "...",\n  "translated_term": "...",\n  "notes": "..."\n}}]\n'
+        f"5. GENDER RULE (HUMAN PERSONS ONLY): For human characters ONLY, if their gender is explicitly stated or proven by {pronoun_evidence} in the text, include 'gender': 'MALE' or 'FEMALE'. If uncertain, or if the entity is a place, city, sect, technique, item, or genderless concept, you MUST output 'gender': null. NEVER assign gender to cities, locations, sects, techniques, or objects.\n"
+        f"6. Format STRICTLY as a raw JSON list without markdown backticks. Example:\n"
+        f'[{{\n  "original_term": "...",\n  "translated_term": "...",\n  "notes": "...",\n  "gender": "MALE" | "FEMALE" | null\n}}]\n'
     )
     
     ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
@@ -136,6 +145,37 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
                 "reasoning": thought_process
             }
 
+        def sanitize_terms(terms_list):
+            out = []
+            for t in terms_list:
+                if not isinstance(t, dict):
+                    continue
+                orig = str(t.get("original_term") or "").strip()
+                trans = str(t.get("translated_term") or "").strip()
+                notes = str(t.get("notes") or "").strip()
+                raw_g = t.get("gender")
+                
+                gender = None
+                if raw_g and str(raw_g).upper() in ("MALE", "FEMALE"):
+                    gender = str(raw_g).upper()
+                elif notes:
+                    m = re.search(r"\b(MALE|FEMALE)\b\s*[—–-]", notes, re.IGNORECASE)
+                    if m:
+                        gender = m.group(1).upper()
+                
+                # Filter ketat: entitas non-manusia (kota, wilayah, sekte, jurus, benda)
+                # DILARANG membawa gender
+                if gender and ContextEngine.is_non_human_term(orig, trans, notes):
+                    gender = None
+
+                out.append({
+                    "original_term": orig,
+                    "translated_term": trans,
+                    "notes": notes,
+                    "gender": gender,
+                })
+            return out
+
         # Robust parsing logic
         # 1. Try to find and parse complete JSON block
         try:
@@ -145,7 +185,7 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
                 json_str = content[start_idx:end_idx+1]
                 terms = json.loads(json_str)
                 return {
-                    "terms": terms, 
+                    "terms": sanitize_terms(terms), 
                     "metadata": build_metadata()
                 }
         except:
@@ -157,16 +197,18 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
         originals = re.findall(r'"original_term"\s*:?\s*"([^"]+)"', content)
         translateds = re.findall(r'"translated_term"\s*:?\s*"([^"]+)"', content)
         notes = re.findall(r'"notes"\s*:?\s*"([^"]+)"', content)
+        genders = re.findall(r'"gender"\s*:?\s*"([^"]+)"', content)
         
         if originals:
             for i in range(len(originals)):
                 manual_terms.append({
                     "original_term": originals[i],
                     "translated_term": translateds[i] if i < len(translateds) else "",
-                    "notes": notes[i] if i < len(notes) else ""
+                    "notes": notes[i] if i < len(notes) else "",
+                    "gender": genders[i] if i < len(genders) else None
                 })
             return {
-                "terms": manual_terms, 
+                "terms": sanitize_terms(manual_terms), 
                 "metadata": build_metadata()
             }
 
@@ -181,11 +223,12 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
                     manual_terms.append({
                         "original_term": term,
                         "translated_term": "", # Placeholder if manual fallback fails
-                        "notes": parts[1].strip().strip('"')
+                        "notes": parts[1].strip().strip('"'),
+                        "gender": None
                     })
         
         return {
-            "terms": manual_terms,
+            "terms": sanitize_terms(manual_terms),
             "metadata": build_metadata()
         }
 

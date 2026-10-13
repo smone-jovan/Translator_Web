@@ -83,20 +83,59 @@ async def fetch_and_extract_links(url: str, client: httpx.AsyncClient):
 
     return novel_title, links, raw_links
 
+def is_domain(url: str, domain: str) -> bool:
+    """Check if URL host matches domain or subdomain exactly."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        return host == domain or host.endswith(f".{domain}")
+    except Exception:
+        return False
+
+
 @router.post("/threads/scrape-toc", response_model=TOCScrapeResponse)
 async def scrape_toc(req: TOCScrapeRequest):
-    """Scrape a novel index/TOC page and detect chapter links heuristically."""
+    """Scrape a novel index/TOC page and detect chapter links heuristically or via dedicated adapters."""
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
+    # SSRF guard: block requests to internal/private IPs
+    from services.security import validate_external_url, create_safe_async_client
+    validate_external_url(req.url)
+
+    # 1. Dedicated Adapter: Novalpie.cc
+    if is_domain(req.url, "novalpie.cc"):
+        try:
+            from services.scrapers.novalpie import NovalpieAdapter
+            novalpie = NovalpieAdapter()
+            novel_title, chapters_list = await novalpie.scrape_toc(req.url)
+            toc_chapters = [TOCChapterInfo(title=c["title"], url=c["url"]) for c in chapters_list]
+            return TOCScrapeResponse(title=novel_title, chapters=toc_chapters)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape novalpie.cc TOC: {e}")
+
+    # 2. Dedicated Adapter: SFACG (book.sfacg.com)
+    if is_domain(req.url, "sfacg.com"):
+        try:
+            from services.scrapers.sfacg import SFACGAdapter
+            sfacg = SFACGAdapter()
+            novel_title, chapters_list = await sfacg.scrape_toc(req.url)
+            toc_chapters = [TOCChapterInfo(title=c["title"], url=c["url"]) for c in chapters_list]
+            return TOCScrapeResponse(title=novel_title, chapters=toc_chapters)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape sfacg.com TOC: {e}")
+
     try:
-        async with httpx.AsyncClient(
+        async with create_safe_async_client(
             follow_redirects=True,
             timeout=30.0,
             headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
         ) as client:
             novel_title, links, raw_links = await fetch_and_extract_links(req.url, client)
-            
+
             # If we found too few links, we might be on the summary page.
             # Look for a dedicated TOC link (like /MainIndex/ or "点击阅读")
             if len(links) < 50:
@@ -105,14 +144,17 @@ async def scrape_toc(req: TOCScrapeRequest):
                     if "/MainIndex/" in url or "目录" in text or "点击阅读" in text:
                         toc_url = url
                         break
-                
+
                 if toc_url:
+                    validate_external_url(toc_url)
                     print(f"[TOC Scraper] Found <50 links. Automatically following TOC link: {toc_url}")
                     novel_title2, links2, _ = await fetch_and_extract_links(toc_url, client)
                     if len(links2) > len(links):
                         novel_title = novel_title2
                         links = links2
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"Failed to fetch URL: {e}")
 
@@ -129,7 +171,7 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
         thread = db.execute(select(Thread).where(Thread.id == req.thread_id)).scalar_one_or_none()
         if not thread:
             raise HTTPException(404, "Thread not found")
-            
+
         max_order = db.execute(
             select(func.max(Chapter.order)).where(Chapter.thread_id == thread.id)
         ).scalar() or 0
@@ -138,20 +180,35 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
         author = ""
         synopsis = ""
         cover_image = ""
-        
-        # Auto-fetch metadata if base_url is from SFACG
-        if req.base_url and "sfacg.com" in req.base_url:
+
+        # Auto-fetch metadata if base_url is provided
+        if req.base_url:
+            from services.security import validate_external_url
             try:
-                from services.scrapers.sfacg import SFACGAdapter
-                sfacg = SFACGAdapter()
-                meta = await sfacg.scrape_metadata(req.base_url)
-                if meta.success:
-                    title = meta.title or title
-                    author = meta.author or ""
-                    synopsis = meta.synopsis or ""
-                    cover_image = meta.cover_image or ""
+                validate_external_url(req.base_url)
+                if is_domain(req.base_url, "sfacg.com"):
+                    from services.scrapers.sfacg import SFACGAdapter
+                    sfacg = SFACGAdapter()
+                    meta = await sfacg.scrape_metadata(req.base_url)
+                    if meta.success:
+                        title = meta.title or title
+                        author = meta.author or ""
+                        synopsis = meta.synopsis or ""
+                        cover_image = meta.cover_image or ""
+                elif is_domain(req.base_url, "novalpie.cc"):
+                    from services.scrapers.novalpie import NovalpieAdapter
+                    novalpie = NovalpieAdapter()
+                    meta = await novalpie.scrape_metadata(req.base_url)
+                    if meta.success:
+                        title = meta.title or title
+                        author = meta.author or ""
+                        synopsis = meta.synopsis or ""
+                        cover_image = meta.cover_image or ""
+                        if not req.genres and meta.genres:
+                            req.genres = meta.genres
             except Exception as e:
                 print(f"[TOC Import] Auto-metadata failed: {e}")
+
 
         # Create new Thread
         thread = Thread(

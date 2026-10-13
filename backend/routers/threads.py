@@ -6,13 +6,14 @@ DELETE /api/threads/{id} — delete thread + cascade
 GET /api/threads/{id}/chapters/{chapter_id} — single chapter content
 """
 
+import time
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from typing import List, Optional
 
-from database import get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark
+from database import get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark, get_db_workspace
 from services.cleaner_tools import CleanerTools
 from services.hallucination_detector import HallucinationDetector
 
@@ -30,6 +31,7 @@ class ChapterOut(BaseModel):
     is_bookmarked: bool = False
     fidelity_warning: Optional[str] = None
     source_url: Optional[str] = None
+    image_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,6 +53,7 @@ class ThreadItemOut(BaseModel):
     created_at: Optional[str]
     last_read: Optional[str] = None
     last_read_id: Optional[int] = None
+    last_read_at: Optional[str] = None
     progress: int = 0
 
 
@@ -81,6 +84,7 @@ class ChapterContent(BaseModel):
     scroll_progress: float = 0.0
     is_bookmarked: bool = False
     fidelity_warning: Optional[str] = None
+    image_count: int = 0
     segments: List[TranslationSegmentOut] = []
 
 class HallucinationMatchOut(BaseModel):
@@ -118,6 +122,31 @@ class CleanerToolResponse(BaseModel):
     lines_removed: int
 
 
+class ChapterFidelityIssueOut(BaseModel):
+    chapter_id: int
+    chapter_order: int
+    title_original: Optional[str] = None
+    title_translated: Optional[str] = None
+    fidelity_warning: str
+    original_paragraphs: int = 0
+    translated_paragraphs: int = 0
+    paragraph_ratio: float = 0.0
+    is_truncated: bool = False
+    severity: str = "medium"
+    issue_types: List[str] = []
+
+
+class ThreadFidelityAuditOut(BaseModel):
+    thread_id: int
+    total_chapters: int
+    flagged_chapters_count: int
+    issues: List[ChapterFidelityIssueOut]
+
+
+class FidelityBatchActionRequest(BaseModel):
+    chapter_ids: List[int]
+
+
 class CleanupPreviewResponse(BaseModel):
     chapters_scanned: int
     chapters_deleted: int
@@ -152,12 +181,13 @@ def list_threads(db: Session = Depends(get_db)):
             UserBookmark.chapter_id,
             Chapter.title_translated,
             Chapter.title_original,
-            Chapter.order
+            Chapter.order,
+            UserBookmark.last_read_at
         )
         .join(Chapter, UserBookmark.chapter_id == Chapter.id)
     )
     bookmark_rows = db.execute(bookmarks_stmt).all()
-    bookmark_map = {row[0]: (row[1], row[2] or row[3], row[4]) for row in bookmark_rows}
+    bookmark_map = {row[0]: (row[1], row[2] or row[3], row[4], row[5]) for row in bookmark_rows}
     
     result = []
     for t in threads:
@@ -166,12 +196,14 @@ def list_threads(db: Session = Depends(get_db)):
         
         last_read_title = None
         last_read_id = None
+        last_read_at = None
         progress = 0
         
         if bookmark_info:
             last_read_id = bookmark_info[0]
             last_read_title = bookmark_info[1]
             last_order = bookmark_info[2]
+            last_read_at = str(bookmark_info[3]) if bookmark_info[3] else None
             if ch_count > 0:
                 progress = int(((last_order + 1) / ch_count) * 100)
         
@@ -192,6 +224,7 @@ def list_threads(db: Session = Depends(get_db)):
             created_at=str(t.created_at) if t.created_at else None,
             last_read=last_read_title,
             last_read_id=last_read_id,
+            last_read_at=last_read_at,
             progress=progress
         ))
     return result
@@ -254,13 +287,58 @@ def save_thread_context(thread_id: int, body: dict, db: Session = Depends(get_db
 @router.get("/threads/active-batch")
 def get_active_batch(db: Session = Depends(get_db)):
     """Get the currently active global batch translation progress if any."""
-    from services.background_translator import active_batches
-    
+    from services.background_translator import active_batches, recent_finished_batches
+
     gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
     from services.ai.secrets import get_key_stats
     stats = get_key_stats(gs.llm_provider if gs else "lm_studio", gs)
-    
-    if not active_batches:
+
+    ws = getattr(db, "_workspace", "main").lower()
+
+    # Filter active batches that belong strictly to the current workspace and are not finished
+    ws_batches = {}
+    for k, b in list(active_batches.items()):
+        if getattr(b, "is_stopped", False) is True or getattr(b, "is_completed", False) is True:
+            continue
+        b_ws = getattr(b, "workspace", None)
+        if isinstance(b_ws, str):
+            b_ws_str = b_ws.lower()
+        elif isinstance(k, tuple) and len(k) > 0 and isinstance(k[0], str):
+            b_ws_str = k[0].lower()
+        else:
+            b_ws_str = "main"
+
+        if b_ws_str == ws:
+            tid = getattr(b, "thread_id", None)
+            if not isinstance(tid, int):
+                tid = k[1] if (isinstance(k, tuple) and len(k) > 1 and isinstance(k[1], int)) else (k if isinstance(k, int) else None)
+            if tid is not None:
+                ws_batches[tid] = b
+
+    if not ws_batches:
+        last_b = recent_finished_batches.get(ws)
+        if last_b and (time.time() - last_b.get("finished_at", 0) <= 12.0):
+            # Return brief terminal transition state with active: False
+            stmt = select(Thread).where(Thread.id == last_b["thread_id"])
+            thread = db.execute(stmt).scalar_one_or_none()
+            thread_title = thread.title if thread else "Unknown Book"
+            return {
+                "active": False,
+                "thread_id": last_b["thread_id"],
+                "thread_title": thread_title,
+                "total": last_b["total"],
+                "completed": last_b["completed"],
+                "current_chapter_id": None,
+                "current_chapter_title": "All tasks completed successfully!" if last_b.get("status") == "completed" else f"Batch {last_b.get('status')}",
+                "failed_ids": last_b.get("failed_ids", []),
+                "quota_exhausted": last_b.get("quota_exhausted", False),
+                "total_keys": stats["total"],
+                "exhausted_keys": stats["exhausted"],
+                "queue_count": 0,
+                "is_waiting": False,
+                "status": last_b.get("status", "completed"),
+            }
+
         return {
             "active": False,
             "thread_id": None,
@@ -274,25 +352,33 @@ def get_active_batch(db: Session = Depends(get_db)):
             "total_keys": stats["total"],
             "exhausted_keys": stats["exhausted"],
             "queue_count": 0,
-            "is_waiting": False
+            "is_waiting": False,
+            "status": "idle",
         }
-    
+
     # Prioritize showing the currently running batch (not waiting)
     active_thread_id = None
-    for tid, b in list(active_batches.items()):
+    for tid, b in list(ws_batches.items()):
         if getattr(b, "is_waiting", False) is False:
             active_thread_id = tid
             break
-            
+
     if active_thread_id is None:
-        active_thread_id = list(active_batches.keys())[0]
-        
-    batch = active_batches[active_thread_id]
-    
+        active_thread_id = list(ws_batches.keys())[0]
+
+    batch = ws_batches[active_thread_id]
+
     stmt = select(Thread).where(Thread.id == active_thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
     thread_title = thread.title if thread else "Unknown Book"
-    
+
+    batch_status = getattr(batch, "status", "running")
+    if not isinstance(batch_status, str):
+        batch_status = "running"
+
+    raw_failed = getattr(batch, "failed_ids", [])
+    failed_list = list(raw_failed) if isinstance(raw_failed, (list, tuple)) else []
+
     return {
         "active": True,
         "thread_id": active_thread_id,
@@ -301,12 +387,13 @@ def get_active_batch(db: Session = Depends(get_db)):
         "completed": batch.completed,
         "current_chapter_id": batch.current_chapter_id,
         "current_chapter_title": batch.current_chapter_title,
-        "failed_ids": batch.failed_ids,
-        "quota_exhausted": getattr(batch, "quota_exhausted", False),
+        "failed_ids": failed_list,
+        "quota_exhausted": bool(getattr(batch, "quota_exhausted", False)),
         "total_keys": stats["total"],
         "exhausted_keys": stats["exhausted"],
-        "queue_count": len(active_batches) - 1,
-        "is_waiting": getattr(batch, "is_waiting", False)
+        "queue_count": max(0, len(ws_batches) - 1),
+        "is_waiting": bool(getattr(batch, "is_waiting", False)),
+        "status": batch_status,
     }
 
 
@@ -330,7 +417,8 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
             Chapter.translation_status,
             Chapter.is_bookmarked,
             Chapter.fidelity_warning,
-            Chapter.source_url
+            Chapter.source_url,
+            Chapter.image_count
         )
         .where(Chapter.thread_id == thread_id)
         .order_by(Chapter.order)
@@ -348,7 +436,8 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
             translation_status=row[6],
             is_bookmarked=bool(row[7]),
             fidelity_warning=row[8],
-            source_url=row[9]
+            source_url=row[9],
+            image_count=row[10] or 0
         )
         for row in ch_rows
     ]
@@ -373,7 +462,8 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
         chapter_count=len(ch_out),
         created_at=str(thread.created_at) if thread.created_at else None,
         chapters=ch_out,
-        last_read_id=bookmark.chapter_id if bookmark else None
+        last_read_id=bookmark.chapter_id if bookmark else None,
+        last_read_at=str(bookmark.last_read_at) if bookmark and bookmark.last_read_at else None
     )
 
 
@@ -645,26 +735,42 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
 
     # --- ON-DEMAND READ SCRAPING ---
     if not chapter.content_original and getattr(chapter, "source_url", None):
-        import httpx
-        from routers.scrape import html_to_markdown
         try:
-            with httpx.Client(
-                follow_redirects=True,
-                timeout=15.0,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-            ) as client:
-                resp = client.get(chapter.source_url)
-                resp.raise_for_status()
-            
-            fetched_title, fetched_markdown = html_to_markdown(resp.text)
-            
+            from services.security import validate_external_url
+            validate_external_url(chapter.source_url)
+
+            from routers.scrape import is_domain
+            if is_domain(chapter.source_url, "novalpie.cc"):
+                import asyncio
+                from services.scrapers.novalpie import NovalpieAdapter
+                novalpie = NovalpieAdapter()
+                fetched_title, fetched_markdown = asyncio.run(novalpie.scrape_chapter_content(chapter.source_url))
+            elif is_domain(chapter.source_url, "sfacg.com"):
+                import asyncio
+                from services.scrapers.sfacg import SFACGAdapter
+                sfacg = SFACGAdapter()
+                fetched_title, fetched_markdown = asyncio.run(sfacg.scrape_chapter_content(chapter.source_url))
+            else:
+                import httpx
+                from routers.scrape import html_to_markdown
+                with httpx.Client(
+                    follow_redirects=True,
+                    timeout=15.0,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+                ) as client:
+                    resp = client.get(chapter.source_url)
+                    resp.raise_for_status()
+
+                fetched_title, fetched_markdown = html_to_markdown(resp.text)
+
             is_vip = False
             if chapter.source_url and "/vip/" in chapter.source_url.lower():
                 is_vip = True
             elif fetched_title and "VIP章节" in fetched_title:
                 is_vip = True
             elif not fetched_markdown or len(fetched_markdown) < 50:
-                is_vip = True
+                if not (chapter.source_url and (is_domain(chapter.source_url, "novalpie.cc") or is_domain(chapter.source_url, "sfacg.com"))):
+                    is_vip = True
 
             if is_vip:
                 chapter.translation_status = "vip"
@@ -688,6 +794,8 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
     ai_url = resolve_active_base_url(gs)
     prefetch_on = gs.prefetch_enabled == 1 if gs else False
 
+    ws = get_db_workspace(db)
+
     if prefetch_on:
         # 1. Trigger background translation for CURRENT chapter if untranslated
         if chapter.translation_status == "idle" and not chapter.content_translated:
@@ -697,7 +805,8 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
                 thread_id=thread_id,
                 target_lang=target_lang,
                 model=model,
-                lm_url=ai_url
+                lm_url=ai_url,
+                workspace=ws,
             )
 
         # 2. Trigger prefetch check for NEXT chapter
@@ -707,7 +816,8 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
             thread_id=thread_id,
             target_lang=target_lang,
             model=model,
-            lm_url=ai_url
+            lm_url=ai_url,
+            workspace=ws,
         )
 
     return ChapterContent(
@@ -722,6 +832,7 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
         scroll_progress=current_scroll_progress,
         is_bookmarked=chapter.is_bookmarked,
         fidelity_warning=chapter.fidelity_warning,
+        image_count=chapter.image_count or 0,
         segments=[
             TranslationSegmentOut(
                 id=s.id,
@@ -761,6 +872,207 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
 
     db.commit()
     return {"reset": reset_count}
+
+
+@router.get("/threads/{thread_id}/fidelity-issues", response_model=ThreadFidelityAuditOut)
+def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
+    """Retrieve all chapters with fidelity warnings for a thread with diagnostic breakdown."""
+    stmt = select(Thread).where(Thread.id == thread_id)
+    thread = db.execute(stmt).scalar_one_or_none()
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+
+    from services.fidelity_checker import verify_translation_fidelity, is_truncated_mid_sentence
+
+    chapters_stmt = (
+        select(Chapter)
+        .where(Chapter.thread_id == thread_id)
+        .order_by(Chapter.order)
+    )
+    all_chapters = db.execute(chapters_stmt).scalars().all()
+
+    issues: list[ChapterFidelityIssueOut] = []
+    for ch in all_chapters:
+        warning_str = (ch.fidelity_warning or "").strip()
+        if not warning_str:
+            continue
+
+        orig_text = ch.content_original or ""
+        trans_text = ch.content_translated or ""
+
+        fidelity = verify_translation_fidelity(orig_text, trans_text, chapter_id=ch.id)
+        is_trunc = fidelity.get("is_truncated", False) or is_truncated_mid_sentence(trans_text)
+        para_ratio = fidelity.get("paragraph_ratio", 0.0)
+        char_ratio = fidelity.get("char_ratio", 0.0)
+
+        fresh_warnings = fidelity.get("warnings", [])
+        display_warning = " | ".join(fresh_warnings) if fresh_warnings else warning_str
+
+        issue_types = []
+        if is_trunc or "mid-sentence" in display_warning:
+            issue_types.append("truncated")
+        if "Nearly empty" in display_warning or "Critical" in display_warning:
+            issue_types.append("empty")
+
+        is_consolidated = (
+            "consolidated" in display_warning.lower() or 
+            (para_ratio < 0.3 and char_ratio >= 1.0 and not is_trunc)
+        )
+        if is_consolidated:
+            issue_types.append("consolidated")
+        elif para_ratio < 0.3 or "dropped significantly" in display_warning:
+            issue_types.append("severe_drop")
+        elif "dropped" in display_warning or para_ratio < 0.7:
+            issue_types.append("paragraph_drop")
+
+        if "inflated" in display_warning or para_ratio > 2.5:
+            issue_types.append("inflated")
+        if "Dialogue lines dropped" in display_warning:
+            issue_types.append("dialogue_drop")
+
+        if not is_trunc and 0.7 <= para_ratio <= 0.95 and "dropped significantly" not in display_warning and "Critical" not in display_warning:
+            issue_types.append("minor_ratio")
+
+        if not issue_types:
+            issue_types.append("other")
+
+        if "truncated" in issue_types or "empty" in issue_types or "severe_drop" in issue_types:
+            severity = "critical"
+        elif "consolidated" in issue_types or "minor_ratio" in issue_types:
+            severity = "minor"
+        else:
+            severity = "medium"
+
+        issues.append(ChapterFidelityIssueOut(
+            chapter_id=ch.id,
+            chapter_order=ch.order,
+            title_original=ch.title_original,
+            title_translated=ch.title_translated,
+            fidelity_warning=display_warning,
+            original_paragraphs=fidelity.get("original_paragraphs", 0),
+            translated_paragraphs=fidelity.get("translated_paragraphs", 0),
+            paragraph_ratio=para_ratio,
+            is_truncated=is_trunc,
+            severity=severity,
+            issue_types=issue_types,
+        ))
+
+    return ThreadFidelityAuditOut(
+        thread_id=thread_id,
+        total_chapters=len(all_chapters),
+        flagged_chapters_count=len(issues),
+        issues=issues,
+    )
+
+
+@router.post("/threads/{thread_id}/fidelity/dismiss")
+def dismiss_fidelity_warnings(thread_id: int, body: FidelityBatchActionRequest, db: Session = Depends(get_db)):
+    """Batch dismiss fidelity warnings for specified chapters."""
+    if not body.chapter_ids:
+        return {"dismissed_count": 0}
+
+    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.id.in_(body.chapter_ids))
+    chapters = db.execute(stmt).scalars().all()
+    for ch in chapters:
+        ch.fidelity_warning = None
+    db.commit()
+    return {"dismissed_count": len(chapters)}
+
+
+@router.post("/threads/{thread_id}/fidelity/retranslate")
+async def retranslate_fidelity_chapters(thread_id: int, body: FidelityBatchActionRequest, db: Session = Depends(get_db)):
+    """Batch reset and queue re-translation for specified chapters with fidelity warnings."""
+    if not body.chapter_ids:
+        return {"queued_count": 0}
+
+    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.id.in_(body.chapter_ids))
+    chapters = db.execute(stmt).scalars().all()
+    if not chapters:
+        return {"queued_count": 0}
+
+    from services.background_translator import BackgroundTranslator
+    from services.ai.settings import resolve_active_base_url, resolve_active_model
+
+    valid_ids = []
+    for ch in chapters:
+        ch.fidelity_warning = None
+        ch.translation_status = "idle"
+        ch.content_translated = None
+        valid_ids.append(ch.id)
+    db.commit()
+
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    lm_url = resolve_active_base_url(gs)
+    model = resolve_active_model(gs)
+    target_lang = gs.target_language if gs else "Indonesian"
+    translation_mode = gs.translation_mode if gs else "quality"
+
+    ws = get_db_workspace(db)
+
+    await BackgroundTranslator.start_batch(
+        thread_id=thread_id,
+        chapter_ids=valid_ids,
+        target_lang=target_lang,
+        model=model,
+        lm_url=lm_url,
+        force_extract=False,
+        force_overwrite=True,
+        translation_mode=translation_mode,
+        fetch_only=False,
+        workspace=ws,
+    )
+    return {"queued_count": len(valid_ids)}
+
+
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/dismiss-fidelity")
+def dismiss_chapter_fidelity(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
+    """Dismiss fidelity warning for a single chapter."""
+    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.id == chapter_id)
+    chapter = db.execute(stmt).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+
+    chapter.fidelity_warning = None
+    db.commit()
+    return {"dismissed": True, "chapter_id": chapter_id}
+
+
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/retranslate-fidelity")
+async def retranslate_chapter_fidelity(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
+    """Reset and immediately queue a single chapter with fidelity warning."""
+    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.id == chapter_id)
+    chapter = db.execute(stmt).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+
+    from services.background_translator import BackgroundTranslator
+    from services.ai.settings import resolve_active_base_url, resolve_active_model
+
+    chapter.fidelity_warning = None
+    chapter.translation_status = "idle"
+    chapter.content_translated = None
+    db.commit()
+
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    lm_url = resolve_active_base_url(gs)
+    model = resolve_active_model(gs)
+    target_lang = gs.target_language if gs else "Indonesian"
+    translation_mode = gs.translation_mode if gs else "quality"
+    ws = get_db_workspace(db)
+
+    await BackgroundTranslator.start_batch(
+        thread_id=thread_id,
+        chapter_ids=[chapter_id],
+        target_lang=target_lang,
+        model=model,
+        lm_url=lm_url,
+        force_extract=False,
+        force_overwrite=True,
+        translation_mode=translation_mode,
+        fetch_only=False,
+        workspace=ws,
+    )
+    return {"queued": True, "chapter_id": chapter_id}
 
 
 @router.delete("/threads/{thread_id}/translations")
@@ -958,3 +1270,50 @@ def toggle_chapter_bookmark(thread_id: int, chapter_id: int, db: Session = Depen
     chapter.is_bookmarked = not chapter.is_bookmarked
     db.commit()
     return {"status": "success", "is_bookmarked": chapter.is_bookmarked}
+
+
+@router.post("/threads/{thread_id}/chapters/{chapter_id}/reapply-glossary")
+def reapply_glossary_chapter(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
+    """Terapkan ulang aturan glosarium terbaru ke satu chapter (zero token / instant sync)."""
+    from services.context_engine import ContextEngine
+    stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
+    chapter = db.execute(stmt).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+    
+    if chapter.content_translated:
+        chapter.content_translated = ContextEngine.enforce_glossary_locking(db, thread_id, chapter.content_translated)
+        db.commit()
+    
+    return {
+        "status": "applied",
+        "chapter_id": chapter_id,
+        "content_translated": chapter.content_translated
+    }
+
+
+@router.post("/threads/{thread_id}/reapply-glossary")
+def reapply_glossary_thread(thread_id: int, db: Session = Depends(get_db)):
+    """Terapkan ulang aturan glosarium terbaru ke seluruh chapter dalam thread (zero token / mass sync)."""
+    from services.context_engine import ContextEngine
+    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.content_translated.isnot(None))
+    chapters = db.execute(stmt).scalars().all()
+    
+    updated_count = 0
+    for ch in chapters:
+        if ch.content_translated:
+            locked = ContextEngine.enforce_glossary_locking(db, thread_id, ch.content_translated)
+            if locked != ch.content_translated:
+                ch.content_translated = locked
+                updated_count += 1
+    
+    if updated_count > 0:
+        db.commit()
+        
+    return {
+        "status": "applied",
+        "thread_id": thread_id,
+        "chapters_updated": updated_count,
+        "total_chapters": len(chapters)
+    }
+

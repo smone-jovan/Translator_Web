@@ -66,6 +66,12 @@
 | **Phase 18** | **Mobile Screen Sleep Recovery, Model Catalog Refresh & Glossary Filtering** | ✅ Selesai |
 | **Phase 19** | **Translation Notes Prompt Alignment & Glossary Sanitization** | ✅ Selesai |
 | **Phase 20** | **Punctuation False-Positive Elimination & Chained Bulk Crawler** | ✅ Selesai |
+| **Phase 21** | **Fidelity Management Hub & Selective Repair System** | ✅ Selesai |
+| **Phase 22** | **Universal Bi-Directional Load Mode Synchronization** | ✅ Selesai |
+| **Phase 23** | **Novel Thread Image Caching, Reader Proxy & Visual Gallery** | ✅ Selesai |
+| **Phase 24** | **Resilient Image Proxy, Cache Invalidation & Interactive Refresh** | ✅ Selesai |
+| **Phase 25** | **Glossary Hard-Locking, Gender-Aware Consistency & Visual Controls** | ✅ Selesai |
+| **Phase 26** | **Adaptive Source Language Prompt Engine & Direct Korean Translation** | ✅ Selesai |
 
 ## Phase 1: Foundation (COMPLETE)
 - **Goal**: Membangun fondasi arsitektur backend, skema basis data, dan design system frontend yang seragam.
@@ -163,6 +169,47 @@
 ## Phase 20: Punctuation False-Positive Elimination & Chained Bulk Crawler (COMPLETE)
 - **Goal**: Mengeliminasi peringatan false-positive pada verifikasi fidelity tanda baca akhir dan menyediakan mekanisme crawling bab web secara berantai (chained) dengan progress real-time.
 - **Implementation**: Pengecekan karakter penutup fleksibel termasuk tanda kutip/kurung/ellipsis pada `fidelity_checker.py` (ADR-092), dan implementasi crawler berantai berbasis SSE/streaming di backend dan modal `BulkFetchModal.tsx` di frontend (ADR-093).
+- **Status**: Finished.
+
+## Phase 21: Fidelity Management Hub & Selective Repair System (COMPLETE)
+- **Goal**: Memberikan visibilitas terpusat dan kontrol granular terhadap bab-bab yang memiliki peringatan kualitas/pemotongan (fidelity issues), memungkinkan dismiss massal untuk variasi ringan (0.8–0.9), serta aksi perbaikan terjemahan ulang satu-klik.
+- **Implementation**: Pembuatan endpoint analitik dan batch action di `backend/routers/threads.py` (`fidelity-issues`, `dismiss`, `retranslate`), pembuatan komponen modal interaktif `FidelityManagementModal.tsx` dengan checklist grid dan tab filter keparahan, integrasi tombol kontrol di `ChapterListControls.tsx`, penyematan quick-action di banner pembaca `ChapterReader.tsx`, dan penulisan test suite `test_fidelity_management.py` (ADR-094).
+- **Status**: Finished.
+
+## Phase 22: Universal Bi-Directional Load Mode Synchronization (COMPLETE)
+- **Goal**: Menjamin konsistensi pemilihan mode muat terjemahan (Hard Load / Soft Load) secara real-time dan bi-direksional di seluruh komponen aplikasi tanpa kembali ke setting global secara sepihak.
+- **Implementation**: Pembuatan modul state sinkronisasi `src/lib/settingsSync.ts` dengan custom event emitter, sinkronisasi state di `BulkTranslateModal`, `SettingsOverlay`, `ReaderPage`, `LibraryPage`, `SettingsPage`, dan `backend/routers/batch.py` (ADR-102).
+- **Status**: Finished.
+
+## Phase 23: Novel Thread Image Caching, Reader Proxy & Visual Gallery (COMPLETE)
+- **Goal**: Menyediakan kemampuan caching gambar novel secara lokal untuk pembacaan offline instan, konfigurasi kapasitas cache di halaman pengaturan, serta tab filter `Images` dengan galeri visual novel terpadu dan interactive lightbox.
+- **Implementation**: Pembuatan service `backend/services/image_cacher.py` dan router `backend/routers/images.py` (`/api/images/proxy`, `/api/threads/{id}/cache-images`, `/api/cache/images/stats`, `/api/threads/{id}/images`), pembaruan `renderMarkdown` untuk me-route gambar via proxy, penambahan tombol unduh gambar di `ChapterListControls.tsx`, kartu pengaturan cache di `SettingsPage.tsx`, serta komponen galeri visual interaktif `ThreadImageGallery.tsx` dengan tab `Images` di `ChapterListControls.tsx` dan `ReaderPage.tsx` (ADR-103, ADR-104).
+- **Status**: Finished.
+
+## Phase 24: Resilient Image Proxy, Cache Invalidation & Interactive Refresh (COMPLETE)
+- **Goal**: Menghilangkan kendala gambar yang gagal dimuat atau macet/stuck dengan menyediakan sistem retry interaktif, tombol refresh 1-klik, dan mekanisme bypass cache (`force=true`) baik di tampilan pembaca bab maupun di galeri visual novel.
+- **Implementation**: Penambahan parameter `force: bool` dan resolusi referer dinamis di `backend/routers/images.py`, pembuatan komponen `<SafeReaderImage>` di `src/components/reader/SafeReaderImage.tsx` yang diintegrasikan ke dalam `renderMarkdown` (`src/lib/utils.ts`), penambahan kartu kegagalan dengan tombol refresh pada thumbnail kartu dan toolbar modal Lightbox di `src/components/reader/ThreadImageGallery.tsx`, serta tombol batch "Retry Failed" pada header galeri (ADR-105).
+- **Status**: Finished.
+
+## Phase 25: Glossary Hard-Locking, Gender-Aware Consistency & Visual Controls (COMPLETE)
+- **Goal**: Mengeliminasi ketidakkonsistenan istilah terjemahan, kebocoran Pinyin/Hanzi mentah, kesalahan pronoun (`he/she`), serta menyediakan kontrol visual dan sanitasi entitas non-manusia.
+- **Implementation**:
+  - Arsitektur hybrid glossary hard-locking dengan ekstraksi Pinyin otomatis dan post-processing deterministik (ADR-106).
+  - Safety net penguncian glosarium saat ekspor EPUB/TXT dan sinkronisasi instan 0-token di pembaca (ADR-107).
+  - Algoritma *single-pass non-overlapping span replacement* yang 100% idempoten tanpa duplikasi beruntun (*runaway cascading*) (ADR-108).
+  - Skema database `LorebookEntry.gender`, parsing token `MALE/FEMALE`, backfill otomatis, dan injeksi aturan pronoun wajib ke prompt terjemahan (ADR-109).
+  - Heuristik klasifikasi entitas non-manusia (`is_non_human_term`), emblem badge gender (`♂`/`♀`), filter segmentasi glosarium, siklus toggle 1-klik, dan aturan anti-jiplak prompt (ADR-110).
+- **Status**: Finished.
+
+## Phase 26: Adaptive Source Language Prompt Engine & Direct Korean Translation (COMPLETE)
+- **Goal**: Menghilangkan bias Mandarin dan risiko double-translation ketika memproses teks sumber asli Korea (Hangul) atau Jepang (Kana), memastikan terjemahan langsung (*direct translation*) dengan honorifik dan tata bahasa asli yang presisi.
+- **Implementation**:
+  - Klasifikasi script otomatis `detect_source_language` untuk mendeteksi teks Hangul, Hanzi, atau Kana.
+  - Penyesuaian pedoman terjemahan inti (`build_core_translation_guidelines`): instruksi khusus web novel Korea, honorifik (`형/Hyung`, `누나/Noona`, `오빠/Oppa`, `선배/Sunbae`), mitigasi *zero anaphora* / pelacakan pronoun, konvensi hunter/system/dungeon, dan larangan mutlak menerjemahkan lewat bahasa Mandarin.
+  - Format judul bab Korea (`clean_and_format_chapter_title`): pembersihan otomatis awalan `제X화`, `X화`, `EP.X`, `Episode X`.
+  - Ekstraksi glosarium Korea: contoh istilah K-novel dan pembuktian gender berbasis pronomina Korea (`그/그녀`) atau istilah kekerabatan (`형/누나/오빠/언니`).
+  - Penguncian istilah glosarium (`glossary_lock.py`): perlindungan istilah Hangul mentah yang bocor di teks hasil terjemahan.
+  - Dokumentasi resmi keputusan di ADR-111.
 - **Status**: Finished.
 
 ---

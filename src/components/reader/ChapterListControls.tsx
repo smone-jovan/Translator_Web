@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowUpDown, SlidersHorizontal, Sparkles, RefreshCw, Search } from 'lucide-react';
+import { ArrowUpDown, SlidersHorizontal, Sparkles, RefreshCw, Search, AlertTriangle, Image as ImageIcon, Images as ImagesIcon, CloudDownload, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getApiUrl } from '@/lib/api';
+import { toast } from 'sonner';
 import type { ThreadDetail } from './types';
 
 interface ChapterListControlsProps {
   thread: ThreadDetail;
-  chapterFilter: 'all' | 'translated';
-  setChapterFilter: (filter: 'all' | 'translated') => void;
+  chapterFilter: 'all' | 'translated' | 'illustrated' | 'images';
+  setChapterFilter: (filter: 'all' | 'translated' | 'illustrated' | 'images') => void;
   sortOrder: 'asc' | 'desc';
   setSortOrder: (order: 'asc' | 'desc') => void;
   chapterSearch: string;
@@ -37,6 +39,7 @@ interface ChapterListControlsProps {
   isTranslatingTitles: boolean;
   handleTranslateTitles: (isRepolish: boolean) => Promise<void>;
   getAutoStartNum: () => number;
+  onOpenFidelityModal?: () => void;
 }
 
 export default function ChapterListControls({
@@ -72,6 +75,7 @@ export default function ChapterListControls({
   isTranslatingTitles,
   handleTranslateTitles,
   getAutoStartNum,
+  onOpenFidelityModal,
 }: ChapterListControlsProps) {
   const [showPolishPopover, setShowPolishPopover] = useState(false);
   const polishPopoverRef = useRef<HTMLDivElement>(null);
@@ -97,6 +101,85 @@ export default function ChapterListControls({
 
   const somePolished = thread.chapters.some(ch => isPolished(ch.title_translated));
   const allPolished = thread.chapters.every(ch => isPolished(ch.title_translated));
+  const fidelityCount = thread.chapters.filter(ch => !!ch.fidelity_warning).length;
+  const illustratedCount = thread.chapters.filter(ch => (ch.image_count ?? 0) > 0).length;
+  const totalImageCount = thread.chapters.reduce((sum, ch) => sum + (ch.image_count ?? 0), 0);
+
+  const [isCachingImages, setIsCachingImages] = useState(false);
+  const [isAllImagesCached, setIsAllImagesCached] = useState(false);
+  const [cacheProgress, setCacheProgress] = useState<{ total: number; cached: number } | null>(null);
+
+  useEffect(() => {
+    if (!thread?.id || illustratedCount === 0) return;
+
+    let isMounted = true;
+    fetch(getApiUrl(`/api/threads/${thread.id}/cache-images/status`))
+      .then(res => res.json())
+      .then(data => {
+        if (!isMounted) return;
+        if (data.status === 'running') {
+          setIsCachingImages(true);
+          setCacheProgress({ total: data.total, cached: data.cached });
+        } else if (data.is_all_cached) {
+          setIsAllImagesCached(true);
+          setCacheProgress({ total: data.total, cached: data.cached });
+        }
+      })
+      .catch(() => {});
+
+    return () => { isMounted = false; };
+  }, [thread?.id, illustratedCount]);
+
+  useEffect(() => {
+    if (!isCachingImages || !thread?.id) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(getApiUrl(`/api/threads/${thread.id}/cache-images/status`));
+        if (!res.ok) return;
+        const data = await res.json();
+        setCacheProgress({ total: data.total, cached: data.cached });
+        if (data.status === 'completed' || data.is_all_cached) {
+          setIsCachingImages(false);
+          setIsAllImagesCached(true);
+          toast.success(`Berhasil meng-cache ${data.cached} gambar ilustrasi secara lokal!`);
+          clearInterval(interval);
+        } else if (data.status === 'error') {
+          setIsCachingImages(false);
+          toast.error(data.error || 'Gagal mengunduh gambar');
+          clearInterval(interval);
+        }
+      } catch {
+        // ignore polling error
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [isCachingImages, thread?.id]);
+
+  const handleCacheAllImages = async () => {
+    if (!thread?.id) return;
+    setIsCachingImages(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/threads/${thread.id}/cache-images`), {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to start image caching');
+      const data = await res.json();
+      if (data.status === 'completed') {
+        setIsCachingImages(false);
+        setIsAllImagesCached(true);
+        toast.success(data.message || 'Semua gambar sudah ada di cache lokal!');
+      } else {
+        toast.info(`Memulai download ${data.total - data.cached} gambar di background...`);
+        setCacheProgress({ total: data.total, cached: data.cached });
+      }
+    } catch (err) {
+      console.error(err);
+      setIsCachingImages(false);
+      toast.error('Gagal memulai caching gambar');
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-6 mt-8">
@@ -112,12 +195,12 @@ export default function ChapterListControls({
         </div>
 
         {/* Filter and Polish controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex bg-[var(--secondary)] p-1 rounded-xl border border-[var(--border)]">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-1 bg-[var(--secondary)] p-1 rounded-2xl border border-[var(--border)] overflow-x-auto no-scrollbar w-full sm:w-auto shrink-0">
             <button
               onClick={() => setChapterFilter('all')}
               className={cn(
-                "text-xs font-bold px-3 py-1.5 rounded-lg transition-all border-none bg-transparent cursor-pointer",
+                "text-xs font-bold px-3 py-1.5 rounded-xl transition-all border-none bg-transparent cursor-pointer shrink-0 whitespace-nowrap active:scale-95",
                 chapterFilter === 'all' 
                   ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" 
                   : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -128,7 +211,7 @@ export default function ChapterListControls({
             <button
               onClick={() => setChapterFilter('translated')}
               className={cn(
-                "text-xs font-bold px-3 py-1.5 rounded-lg transition-all border-none bg-transparent cursor-pointer",
+                "text-xs font-bold px-3 py-1.5 rounded-xl transition-all border-none bg-transparent cursor-pointer shrink-0 whitespace-nowrap active:scale-95",
                 chapterFilter === 'translated' 
                   ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" 
                   : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -136,7 +219,102 @@ export default function ChapterListControls({
             >
               Translated
             </button>
+            <button
+              onClick={() => setChapterFilter('illustrated')}
+              className={cn(
+                "text-xs font-bold px-3 py-1.5 rounded-xl transition-all border-none bg-transparent cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap active:scale-95",
+                chapterFilter === 'illustrated' 
+                  ? "bg-[var(--card)] text-sky-400 shadow-sm" 
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
+              <span>Illustrated</span>
+              {illustratedCount > 0 && (
+                <span className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold leading-none",
+                  chapterFilter === 'illustrated'
+                    ? "bg-sky-500/20 text-sky-300"
+                    : "bg-[var(--card)] text-[var(--muted-foreground)]"
+                )}>
+                  {illustratedCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setChapterFilter('images')}
+              className={cn(
+                "text-xs font-bold px-3 py-1.5 rounded-xl transition-all border-none bg-transparent cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap active:scale-95",
+                chapterFilter === 'images' 
+                  ? "bg-[var(--card)] text-rose-400 shadow-sm" 
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              <ImagesIcon className="w-3.5 h-3.5 text-rose-400" />
+              <span>Images</span>
+              {totalImageCount > 0 && (
+                <span className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold leading-none",
+                  chapterFilter === 'images'
+                    ? "bg-rose-500/20 text-rose-300"
+                    : "bg-[var(--card)] text-[var(--muted-foreground)]"
+                )}>
+                  {totalImageCount}
+                </span>
+              )}
+            </button>
           </div>
+
+          {/* Action buttons */}
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+
+          {illustratedCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCacheAllImages}
+              disabled={isCachingImages}
+              className={cn(
+                "rounded-xl h-9 gap-1.5 font-bold text-xs transition-all",
+                isAllImagesCached
+                  ? "border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 bg-[var(--card)]/30"
+                  : isCachingImages
+                    ? "border-sky-500/50 text-sky-400 bg-sky-500/10 cursor-wait"
+                    : "border-sky-500/30 text-sky-400 hover:bg-sky-500/10 bg-[var(--card)]/30"
+              )}
+              title={isAllImagesCached ? "Semua gambar telah tersimpan di cache lokal" : "Unduh dan simpan seluruh gambar di novel ini ke cache lokal"}
+            >
+              {isCachingImages ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                  <span>{cacheProgress ? `Caching ${cacheProgress.cached}/${cacheProgress.total}` : 'Caching...'}</span>
+                </>
+              ) : isAllImagesCached ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>All Cached</span>
+                </>
+              ) : (
+                <>
+                  <CloudDownload className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Cache Images</span>
+                </>
+              )}
+            </Button>
+          )}
+
+          {fidelityCount > 0 && onOpenFidelityModal && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenFidelityModal}
+              className="rounded-xl h-9 gap-1.5 border-amber-500/30 text-amber-500 hover:bg-amber-500/10 hover:border-amber-500/50 bg-[var(--card)]/30 font-bold text-xs"
+              title="Buka Fidelity Management Hub"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              <span>{fidelityCount} Issues</span>
+            </Button>
+          )}
 
           <Button
             variant="outline"
@@ -422,6 +600,7 @@ export default function ChapterListControls({
                 )}
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>

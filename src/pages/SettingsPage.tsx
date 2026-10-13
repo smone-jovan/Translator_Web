@@ -1,43 +1,80 @@
-import { useState, useEffect, useCallback, useRef, type ElementType } from 'react';
-import { 
-  Wifi, WifiOff, Server, RefreshCw, Moon, Sun, 
-  CheckCircle2, Languages, Eye, EyeOff, Layout, ShieldCheck, Database, Info, Globe, Sparkles, User, X
-} from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { getApiUrl } from '@/lib/api';
-import ApiKeyManager from '@/components/ApiKeyManager';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type ElementType,
+} from "react";
+import {
+  Wifi,
+  WifiOff,
+  Server,
+  RefreshCw,
+  Moon,
+  Sun,
+  CheckCircle2,
+  Languages,
+  Eye,
+  EyeOff,
+  Layout,
+  ShieldCheck,
+  Database,
+  Info,
+  Globe,
+  Sparkles,
+  User,
+  X,
+  Zap,
+  Folder,
+  Trash2,
+} from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { getApiUrl } from "@/lib/api";
+import { toast } from "sonner";
+import { useConfirm } from "@/hooks/use-confirm";
+import ApiKeyManager from "@/components/ApiKeyManager";
+import {
+  getStoredEngineLoadMode,
+  syncEngineLoadMode,
+  ENGINE_LOAD_MODE_EVENT,
+} from "@/lib/settingsSync";
 
-const POPULAR_OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-mini'];
+const POPULAR_OPENAI_MODELS = [
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4-turbo",
+  "o1-mini",
+];
 
 const POPULAR_OPENROUTER_MODELS = [
-  'deepseek/deepseek-chat',
-  'deepseek/deepseek-r1',
-  'anthropic/claude-3.5-sonnet',
-  'google/gemini-2.5-flash',
-  'meta-llama/llama-3.3-70b-instruct',
-  'qwen/qwen-2.5-72b-instruct'
+  "deepseek/deepseek-chat",
+  "deepseek/deepseek-r1",
+  "anthropic/claude-3.5-sonnet",
+  "google/gemini-2.5-flash",
+  "meta-llama/llama-3.3-70b-instruct",
+  "qwen/qwen-2.5-72b-instruct",
 ];
 
 // Text-out models only (filtered for novel translation LLMs)
 const GEMINI_MODELS = [
-  { id: 'gemini-3.1-flash-lite', free: true, rpm: 15, rpd: 500 },
-  { id: 'gemini-3.5-flash-lite', free: true, rpm: 15, rpd: 500 },
-  { id: 'gemma-4-31b', free: true, rpm: 30, rpd: 14400 },
-  { id: 'gemma-4-26b', free: true, rpm: 30, rpd: 14400 },
-  { id: 'gemini-3.6-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemini-3.5-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemini-3-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemini-2.5-flash', free: true, rpm: 5, rpd: 20 },
-  { id: 'gemini-2.5-flash-lite', free: true, rpm: 10, rpd: 20 },
-  { id: 'gemini-3.1-pro', free: false, rpm: 0, rpd: 0 },
-  { id: 'gemini-2.5-pro', free: false, rpm: 0, rpd: 0 },
-  { id: 'gemini-2-flash', free: false, rpm: 0, rpd: 0 },
-  { id: 'gemini-2-flash-lite', free: false, rpm: 0, rpd: 0 },
+  { id: "gemini-3.1-flash-lite", free: true, rpm: 15, rpd: 500 },
+  { id: "gemini-3.5-flash-lite", free: true, rpm: 15, rpd: 500 },
+  { id: "gemma-4-31b", free: true, rpm: 30, rpd: 14400 },
+  { id: "gemma-4-26b", free: true, rpm: 30, rpd: 14400 },
+  { id: "gemini-3.6-flash", free: true, rpm: 5, rpd: 20 },
+  { id: "gemini-3.5-flash", free: true, rpm: 5, rpd: 20 },
+  { id: "gemini-3-flash", free: true, rpm: 5, rpd: 20 },
+  { id: "gemini-2.5-flash", free: true, rpm: 5, rpd: 20 },
+  { id: "gemini-2.5-flash-lite", free: true, rpm: 10, rpd: 20 },
+  { id: "gemini-3.1-pro", free: false, rpm: 0, rpd: 0 },
+  { id: "gemini-2.5-pro", free: false, rpm: 0, rpd: 0 },
+  { id: "gemini-2-flash", free: false, rpm: 0, rpd: 0 },
+  { id: "gemini-2-flash-lite", free: false, rpm: 0, rpd: 0 },
 ];
 
-const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map(m => m.id);
+const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map((m) => m.id);
 const CHAPTER_TOKEN_CAP_OPTIONS = [7000, 15000, 22000, 30000] as const;
 
 interface ModelInfo {
@@ -45,44 +82,52 @@ interface ModelInfo {
   object: string;
 }
 
-type LlmProvider = 'lm_studio' | 'openai' | 'gemini' | 'openrouter';
+type LlmProvider = "lm_studio" | "openai" | "gemini" | "openrouter";
 
 function isLlmProvider(value: string | null): value is LlmProvider {
-  return value === 'lm_studio' || value === 'openai' || value === 'gemini' || value === 'openrouter';
+  return (
+    value === "lm_studio" ||
+    value === "openai" ||
+    value === "gemini" ||
+    value === "openrouter"
+  );
 }
 
-const ThemeCard = ({ 
+const ThemeCard = ({
   id,
-  label, 
-  active, 
-  onClick, 
-  gradient, 
-  textColor, 
-  icon: Icon 
-}: { 
-  id?: string,
-  label: string, 
-  active: boolean, 
-  onClick: () => void, 
-  gradient: string, 
-  textColor: string, 
-  icon: ElementType 
+  label,
+  active,
+  onClick,
+  gradient,
+  textColor,
+  icon: Icon,
+}: {
+  id?: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  gradient: string;
+  textColor: string;
+  icon: ElementType;
 }) => (
   <button
     id={id}
     onClick={onClick}
     className={cn(
       "relative flex flex-col items-center justify-center p-6 rounded-2xl border-2 transition-all duration-300 group",
-      active 
-        ? "border-[var(--primary)] scale-105 shadow-lg" 
+      active
+        ? "border-[var(--primary)] scale-105 shadow-lg"
         : "border-transparent hover:border-[var(--border)]"
     )}
   >
-    <div 
+    <div
       className="w-full aspect-video rounded-xl mb-3 flex items-center justify-center shadow-inner overflow-hidden"
       style={{ background: gradient }}
     >
-      <Icon className={cn("w-8 h-8 transition-transform group-hover:scale-110")} style={{ color: textColor }} />
+      <Icon
+        className={cn("w-8 h-8 transition-transform group-hover:scale-110")}
+        style={{ color: textColor }}
+      />
     </div>
     <span className="text-sm font-bold text-[var(--foreground)]">{label}</span>
     {active && (
@@ -99,37 +144,48 @@ const ProviderCard = ({
   description,
   active,
   onClick,
-  icon: Icon
+  icon: Icon,
 }: {
-  id: string,
-  label: string,
-  description: string,
-  active: boolean,
-  onClick: () => void,
-  icon: ElementType
+  id: string;
+  label: string;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+  icon: ElementType;
 }) => (
   <button
     id={`provider-${id}`}
     onClick={onClick}
     className={cn(
       "relative flex flex-col items-start p-5 rounded-2xl border-2 text-left transition-all duration-300 group w-full",
-      active 
-        ? "border-[var(--primary)] bg-[var(--primary)]/5 shadow-md scale-[1.01]" 
+      active
+        ? "border-[var(--primary)] bg-[var(--primary)]/5 shadow-md scale-[1.01]"
         : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
     )}
   >
     <div className="flex items-center gap-3 mb-2">
-      <div className={cn(
-        "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
-        active ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
-      )}>
-        <Icon size={20} className="group-hover:scale-110 transition-transform" />
+      <div
+        className={cn(
+          "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
+          active
+            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+            : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+        )}
+      >
+        <Icon
+          size={20}
+          className="group-hover:scale-110 transition-transform"
+        />
       </div>
       <div>
-        <span className="font-extrabold text-[var(--foreground)] text-sm">{label}</span>
+        <span className="font-extrabold text-[var(--foreground)] text-sm">
+          {label}
+        </span>
       </div>
     </div>
-    <p className="text-[11px] text-[var(--muted-foreground)] leading-relaxed">{description}</p>
+    <p className="text-[11px] text-[var(--muted-foreground)] leading-relaxed">
+      {description}
+    </p>
     {active && (
       <div className="absolute top-3 right-3 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full p-0.5 shadow-sm">
         <CheckCircle2 size={12} />
@@ -139,27 +195,148 @@ const ProviderCard = ({
 );
 
 export default function SettingsPage() {
-  const [lmUrl, setLmUrl] = useState(() => localStorage.getItem('lm_url') || 'http://localhost:1234');
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('lm_model') || '');
+  const [lmUrl, setLmUrl] = useState(
+    () => localStorage.getItem("lm_url") || "http://localhost:1234"
+  );
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem("lm_model") || ""
+  );
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [status, setStatus] = useState<'idle' | 'checking' | 'connected' | 'error'>('idle');
-  const [targetLang, setTargetLang] = useState(() => localStorage.getItem('target_language') || 'Indonesian');
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'sepia');
-  const [displayMode, setDisplayMode] = useState(() => localStorage.getItem('display_mode') || 'both');
-  const [prefetchEnabled, setPrefetchEnabled] = useState(() => localStorage.getItem('prefetch_enabled') === '1');
-  const [prefetchCount, setPrefetchCount] = useState(() => parseInt(localStorage.getItem('prefetch_count') || '2'));
-  const [prefetchMode, setPrefetchMode] = useState(() => localStorage.getItem('prefetch_mode') || 'soft');
-  const [polishMode, setPolishMode] = useState(() => localStorage.getItem('polish_mode') || 'soft');
-  const [polishSoftLimit, setPolishSoftLimit] = useState(() => parseInt(localStorage.getItem('polish_soft_limit') || '100'));
-  const [maxContextTerms, setMaxContextTerms] = useState<number>(() => parseInt(localStorage.getItem('max_context_terms') || '150'));
-  const [chapterTokenCapEnabled, setChapterTokenCapEnabled] = useState(() => localStorage.getItem('chapter_token_cap_enabled') !== '0');
-  const [chapterTokenCap, setChapterTokenCap] = useState<number>(() => parseInt(localStorage.getItem('chapter_token_cap') || '22000'));
-  const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(() => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality');
+  const [status, setStatus] = useState<
+    "idle" | "checking" | "connected" | "error"
+  >("idle");
+  const [targetLang, setTargetLang] = useState(
+    () => localStorage.getItem("target_language") || "Indonesian"
+  );
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem("theme") || "sepia"
+  );
+  const [displayMode, setDisplayMode] = useState(
+    () => localStorage.getItem("display_mode") || "both"
+  );
+  const [prefetchEnabled, setPrefetchEnabled] = useState(
+    () => localStorage.getItem("prefetch_enabled") === "1"
+  );
+  const [prefetchCount, setPrefetchCount] = useState(() =>
+    parseInt(localStorage.getItem("prefetch_count") || "2")
+  );
+  const [prefetchMode, setPrefetchMode] = useState<string>(
+    getStoredEngineLoadMode
+  );
+  const [polishMode, setPolishMode] = useState(
+    () => localStorage.getItem("polish_mode") || "soft"
+  );
+  const [polishSoftLimit, setPolishSoftLimit] = useState(() =>
+    parseInt(localStorage.getItem("polish_soft_limit") || "100")
+  );
+  const [maxContextTerms, setMaxContextTerms] = useState<number>(() =>
+    parseInt(localStorage.getItem("max_context_terms") || "150")
+  );
+  const [chapterTokenCapEnabled, setChapterTokenCapEnabled] = useState(
+    () => localStorage.getItem("chapter_token_cap_enabled") !== "0"
+  );
+  const [chapterTokenCap, setChapterTokenCap] = useState<number>(() =>
+    parseInt(localStorage.getItem("chapter_token_cap") || "22000")
+  );
+  const [translationMode, setTranslationMode] = useState<"quality" | "fast">(
+    () =>
+      (localStorage.getItem("translation_mode") as "quality" | "fast") ||
+      "quality"
+  );
+  const [scraperConcurrency, setScraperConcurrency] = useState(() =>
+    parseInt(localStorage.getItem("scraper_concurrency") || "2")
+  );
+  const [novalpieAuthEnabled, setNovalpieAuthEnabled] = useState<boolean>(
+    () => localStorage.getItem("novalpie_auth_enabled") === "1"
+  );
+  const [novalpieCookie, setNovalpieCookie] = useState<string>(
+    () => localStorage.getItem("novalpie_cookie") || ""
+  );
   const [isSaving, setIsSaving] = useState(false);
+
+  const { confirm } = useConfirm();
+
+  // Cache Settings
+  const [persistentCacheEnabled, setPersistentCacheEnabled] = useState<boolean>(
+    () => {
+      const saved = localStorage.getItem("persistent_image_cache");
+      return saved !== null ? saved === "true" : true;
+    }
+  );
+  const [cacheStats, setCacheStats] = useState<{
+    count: number;
+    total_bytes: number;
+    formatted_size: string;
+  }>({
+    count: 0,
+    total_bytes: 0,
+    formatted_size: "0 B",
+  });
+  const [isLoadingCacheStats, setIsLoadingCacheStats] = useState(false);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+
+  const fetchCacheStats = useCallback(async () => {
+    setIsLoadingCacheStats(true);
+    try {
+      const res = await fetch(getApiUrl("/api/cache/images/stats"));
+      if (res.ok) {
+        const data = await res.json();
+        setCacheStats(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch image cache stats", err);
+    } finally {
+      setIsLoadingCacheStats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchCacheStats();
+  }, [fetchCacheStats]);
+
+  const handleTogglePersistentCache = () => {
+    const nextVal = !persistentCacheEnabled;
+    setPersistentCacheEnabled(nextVal);
+    localStorage.setItem("persistent_image_cache", String(nextVal));
+    toast.success(
+      nextVal
+        ? "Persistent image cache enabled"
+        : "Persistent image cache disabled"
+    );
+  };
+
+  const handleClearCache = async () => {
+    const ok = await confirm({
+      title: "Clear Image Cache",
+      description: `Are you sure you want to clear ${cacheStats.count} cached images (${cacheStats.formatted_size})? They will be re-downloaded from the source when needed.`,
+      confirmText: "Clear Cache",
+      variant: "destructive",
+    });
+    if (!ok) return;
+
+    setIsClearingCache(true);
+    try {
+      const res = await fetch(getApiUrl("/api/cache/images/clear"), {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to clear cache");
+      const data = await res.json();
+      toast.success(
+        `Cleared ${data.deleted_count} cached images (${data.formatted_freed})`
+      );
+      setCacheStats({ count: 0, total_bytes: 0, formatted_size: "0 B" });
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to clear image cache");
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
 
   // Profile / Secret Modal (Mobile)
   const [showPinModal, setShowPinModal] = useState(false);
-  const [pinInput, setPinInput] = useState('');
+  const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -178,15 +355,19 @@ export default function SettingsPage() {
 
   const handlePinSubmit = async () => {
     try {
-      const res = await fetch(getApiUrl('/api/system/workspace'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace: 'toggle', pin: pinInput })
+      const res = await fetch(getApiUrl("/api/system/workspace"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: "toggle", pin: pinInput }),
       });
       if (!res.ok) {
         setPinError(true);
-        setPinInput('');
+        setPinInput("");
         return;
+      }
+      const data = await res.json().catch(() => null);
+      if (data?.workspace) {
+        localStorage.setItem("readomni_workspace", data.workspace);
       }
       window.location.reload();
     } catch (e) {
@@ -197,17 +378,31 @@ export default function SettingsPage() {
 
   // Cloud & swappable LLM states (ADR-029)
   const [llmProvider, setLlmProvider] = useState<LlmProvider>(() => {
-    const saved = localStorage.getItem('llm_provider');
-    return isLlmProvider(saved) ? saved : 'lm_studio';
+    const saved = localStorage.getItem("llm_provider");
+    return isLlmProvider(saved) ? saved : "lm_studio";
   });
-  const [openaiUrl, setOpenaiUrl] = useState(() => localStorage.getItem('openai_url') || 'https://api.openai.com/v1');
-  const [openaiModel, setOpenaiModel] = useState(() => localStorage.getItem('openai_model') || 'gpt-4o');
-  const [geminiModel, setGeminiModel] = useState(() => localStorage.getItem('gemini_model') || 'gemini-2.5-flash');
-  const [openrouterModel, setOpenrouterModel] = useState(() => localStorage.getItem('openrouter_model') || 'deepseek/deepseek-chat');
-  const [openaiApiKey, setOpenaiApiKey] = useState(() => localStorage.getItem('openai_api_key') || '');
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
-  const [openrouterApiKey, setOpenrouterApiKey] = useState(() => localStorage.getItem('openrouter_api_key') || '');
-  
+  const [openaiUrl, setOpenaiUrl] = useState(
+    () => localStorage.getItem("openai_url") || "https://api.openai.com/v1"
+  );
+  const [openaiModel, setOpenaiModel] = useState(
+    () => localStorage.getItem("openai_model") || "gpt-4o"
+  );
+  const [geminiModel, setGeminiModel] = useState(
+    () => localStorage.getItem("gemini_model") || "gemini-2.5-flash"
+  );
+  const [openrouterModel, setOpenrouterModel] = useState(
+    () => localStorage.getItem("openrouter_model") || "deepseek/deepseek-chat"
+  );
+  const [openaiApiKey, setOpenaiApiKey] = useState(
+    () => localStorage.getItem("openai_api_key") || ""
+  );
+  const [geminiApiKey, setGeminiApiKey] = useState(
+    () => localStorage.getItem("gemini_api_key") || ""
+  );
+  const [openrouterApiKey, setOpenrouterApiKey] = useState(
+    () => localStorage.getItem("openrouter_api_key") || ""
+  );
+
   // Multiple API keys
   const [geminiApiKeys, setGeminiApiKeys] = useState<string[]>([]);
   const [geminiActiveKeyIndex, setGeminiActiveKeyIndex] = useState(0);
@@ -221,58 +416,60 @@ export default function SettingsPage() {
   const [showOpenrouterKey, setShowOpenrouterKey] = useState(false);
 
   // Ghost Mode PIN State
-  const [ghostPin, setGhostPin] = useState(() => localStorage.getItem('ghost_pin') || '03697');
-  const [newGhostPinInput, setNewGhostPinInput] = useState('');
+  const [ghostPin, setGhostPin] = useState(
+    () => localStorage.getItem("ghost_pin") || "03697"
+  );
+  const [newGhostPinInput, setNewGhostPinInput] = useState("");
   const [showGhostPinText, setShowGhostPinText] = useState(false);
   const [ghostPinStatus, setGhostPinStatus] = useState<string | null>(null);
 
   const fetchGlobalSettings = useCallback(async () => {
     try {
-      const res = await fetch(getApiUrl('/api/global-context'));
+      const res = await fetch(getApiUrl("/api/global-context"));
       const data = await res.json();
       if (data.lm_url) {
         setLmUrl(data.lm_url);
-        localStorage.setItem('lm_url', data.lm_url);
+        localStorage.setItem("lm_url", data.lm_url);
       }
       if (data.lm_model) {
         setSelectedModel(data.lm_model);
-        localStorage.setItem('lm_model', data.lm_model);
+        localStorage.setItem("lm_model", data.lm_model);
       }
       if (data.llm_provider) {
         setLlmProvider(data.llm_provider);
-        localStorage.setItem('llm_provider', data.llm_provider);
+        localStorage.setItem("llm_provider", data.llm_provider);
       }
       if (data.openai_url) {
         setOpenaiUrl(data.openai_url);
-        localStorage.setItem('openai_url', data.openai_url);
+        localStorage.setItem("openai_url", data.openai_url);
       }
       if (data.openai_model) {
         setOpenaiModel(data.openai_model);
-        localStorage.setItem('openai_model', data.openai_model);
+        localStorage.setItem("openai_model", data.openai_model);
       }
       if (data.gemini_model) {
         setGeminiModel(data.gemini_model);
-        localStorage.setItem('gemini_model', data.gemini_model);
+        localStorage.setItem("gemini_model", data.gemini_model);
       }
       if (data.openrouter_model) {
         setOpenrouterModel(data.openrouter_model);
-        localStorage.setItem('openrouter_model', data.openrouter_model);
+        localStorage.setItem("openrouter_model", data.openrouter_model);
       }
       if (data.openai_api_key !== undefined) {
         setOpenaiApiKey(data.openai_api_key);
-        localStorage.setItem('openai_api_key', data.openai_api_key);
+        localStorage.setItem("openai_api_key", data.openai_api_key);
       }
       if (data.gemini_api_key !== undefined) {
         setGeminiApiKey(data.gemini_api_key);
-        localStorage.setItem('gemini_api_key', data.gemini_api_key);
+        localStorage.setItem("gemini_api_key", data.gemini_api_key);
       }
       if (data.openrouter_api_key !== undefined) {
         setOpenrouterApiKey(data.openrouter_api_key);
-        localStorage.setItem('openrouter_api_key', data.openrouter_api_key);
+        localStorage.setItem("openrouter_api_key", data.openrouter_api_key);
       }
       if (data.ghost_pin) {
         setGhostPin(data.ghost_pin);
-        localStorage.setItem('ghost_pin', data.ghost_pin);
+        localStorage.setItem("ghost_pin", data.ghost_pin);
       }
       // Multiple API keys
       if (data.gemini_api_keys) {
@@ -298,50 +495,83 @@ export default function SettingsPage() {
       }
       if (data.target_language) {
         setTargetLang(data.target_language);
-        localStorage.setItem('target_language', data.target_language);
+        localStorage.setItem("target_language", data.target_language);
       }
       if (data.prefetch_enabled !== undefined) {
         setPrefetchEnabled(data.prefetch_enabled === 1);
-        localStorage.setItem('prefetch_enabled', data.prefetch_enabled.toString());
+        localStorage.setItem(
+          "prefetch_enabled",
+          data.prefetch_enabled.toString()
+        );
       }
       if (data.prefetch_count !== undefined) {
         setPrefetchCount(data.prefetch_count);
-        localStorage.setItem('prefetch_count', data.prefetch_count.toString());
+        localStorage.setItem("prefetch_count", data.prefetch_count.toString());
       }
       if (data.prefetch_mode !== undefined) {
         setPrefetchMode(data.prefetch_mode);
-        localStorage.setItem('prefetch_mode', data.prefetch_mode);
+        localStorage.setItem("prefetch_mode", data.prefetch_mode);
       }
       if (data.polish_mode !== undefined) {
         setPolishMode(data.polish_mode);
-        localStorage.setItem('polish_mode', data.polish_mode);
+        localStorage.setItem("polish_mode", data.polish_mode);
       }
       if (data.polish_soft_limit !== undefined) {
         setPolishSoftLimit(data.polish_soft_limit);
-        localStorage.setItem('polish_soft_limit', data.polish_soft_limit.toString());
+        localStorage.setItem(
+          "polish_soft_limit",
+          data.polish_soft_limit.toString()
+        );
       }
       if (data.max_context_terms !== undefined) {
         setMaxContextTerms(data.max_context_terms);
-        localStorage.setItem('max_context_terms', data.max_context_terms.toString());
+        localStorage.setItem(
+          "max_context_terms",
+          data.max_context_terms.toString()
+        );
       }
       if (data.chapter_token_cap_enabled !== undefined) {
         setChapterTokenCapEnabled(data.chapter_token_cap_enabled === 1);
-        localStorage.setItem('chapter_token_cap_enabled', data.chapter_token_cap_enabled.toString());
+        localStorage.setItem(
+          "chapter_token_cap_enabled",
+          data.chapter_token_cap_enabled.toString()
+        );
       }
       if (data.chapter_token_cap !== undefined) {
         setChapterTokenCap(data.chapter_token_cap);
-        localStorage.setItem('chapter_token_cap', data.chapter_token_cap.toString());
+        localStorage.setItem(
+          "chapter_token_cap",
+          data.chapter_token_cap.toString()
+        );
       }
       if (data.translation_mode) {
         setTranslationMode(data.translation_mode);
-        localStorage.setItem('translation_mode', data.translation_mode);
+        localStorage.setItem("translation_mode", data.translation_mode);
       }
       if (data.display_mode) {
         setDisplayMode(data.display_mode);
-        localStorage.setItem('display_mode', data.display_mode);
+        localStorage.setItem("display_mode", data.display_mode);
+      }
+      if (data.scraper_concurrency !== undefined) {
+        setScraperConcurrency(data.scraper_concurrency);
+        localStorage.setItem(
+          "scraper_concurrency",
+          data.scraper_concurrency.toString()
+        );
+      }
+      if (data.novalpie_auth_enabled !== undefined) {
+        setNovalpieAuthEnabled(Boolean(data.novalpie_auth_enabled));
+        localStorage.setItem(
+          "novalpie_auth_enabled",
+          data.novalpie_auth_enabled ? "1" : "0"
+        );
+      }
+      if (data.novalpie_cookie !== undefined) {
+        setNovalpieCookie(data.novalpie_cookie);
+        localStorage.setItem("novalpie_cookie", data.novalpie_cookie);
       }
     } catch {
-      console.error('Failed to fetch server settings');
+      console.error("Failed to fetch server settings");
     }
   }, []);
 
@@ -350,52 +580,101 @@ export default function SettingsPage() {
     fetchGlobalSettings();
   }, [fetchGlobalSettings]);
 
-  const saveSettingsToServer = async (updates: Record<string, string | number | string[]>) => {
+  useEffect(() => {
+    const onModeChange = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail === "soft" || detail === "hard") {
+        setPrefetchMode(detail);
+      } else {
+        setPrefetchMode(getStoredEngineLoadMode());
+      }
+    };
+    window.addEventListener(ENGINE_LOAD_MODE_EVENT, onModeChange);
+    return () =>
+      window.removeEventListener(ENGINE_LOAD_MODE_EVENT, onModeChange);
+  }, []);
+
+  const saveSettingsToServer = async (
+    updates: Record<string, string | number | string[]>
+  ) => {
     setIsSaving(true);
     try {
-      await fetch(getApiUrl('/api/settings'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+      await fetch(getApiUrl("/api/settings"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
       });
     } catch (e) {
-      console.error('Failed to sync settings', e);
+      console.error("Failed to sync settings", e);
     } finally {
       setTimeout(() => setIsSaving(false), 800);
     }
   };
 
   // Generic key management helpers
-  const addKey = (provider: 'gemini' | 'openai' | 'openrouter', key: string) => {
-    const [keys, setKeys] = provider === 'gemini' 
-      ? [geminiApiKeys, setGeminiApiKeys] 
-      : provider === 'openai' 
-        ? [openaiApiKeys, setOpenaiApiKeys]
-        : [openrouterApiKeys, setOpenrouterApiKeys];
+  const addKey = (
+    provider: "gemini" | "openai" | "openrouter",
+    key: string
+  ) => {
+    const [keys, setKeys] =
+      provider === "gemini"
+        ? [geminiApiKeys, setGeminiApiKeys]
+        : provider === "openai"
+          ? [openaiApiKeys, setOpenaiApiKeys]
+          : [openrouterApiKeys, setOpenrouterApiKeys];
     const updated = [...keys, key];
     setKeys(updated);
     saveSettingsToServer({ [`${provider}_api_keys`]: updated });
   };
 
-  const removeKey = (provider: 'gemini' | 'openai' | 'openrouter', index: number) => {
-    const [keys, setKeys, activeIndex, setActiveIndex] = provider === 'gemini'
-      ? [geminiApiKeys, setGeminiApiKeys, geminiActiveKeyIndex, setGeminiActiveKeyIndex]
-      : provider === 'openai'
-        ? [openaiApiKeys, setOpenaiApiKeys, openaiActiveKeyIndex, setOpenaiActiveKeyIndex]
-        : [openrouterApiKeys, setOpenrouterApiKeys, openrouterActiveKeyIndex, setOpenrouterActiveKeyIndex];
+  const removeKey = (
+    provider: "gemini" | "openai" | "openrouter",
+    index: number
+  ) => {
+    const [keys, setKeys, activeIndex, setActiveIndex] =
+      provider === "gemini"
+        ? [
+            geminiApiKeys,
+            setGeminiApiKeys,
+            geminiActiveKeyIndex,
+            setGeminiActiveKeyIndex,
+          ]
+        : provider === "openai"
+          ? [
+              openaiApiKeys,
+              setOpenaiApiKeys,
+              openaiActiveKeyIndex,
+              setOpenaiActiveKeyIndex,
+            ]
+          : [
+              openrouterApiKeys,
+              setOpenrouterApiKeys,
+              openrouterActiveKeyIndex,
+              setOpenrouterActiveKeyIndex,
+            ];
     const updated = keys.filter((_, i) => i !== index);
     setKeys(updated);
-    const newIndex = activeIndex >= updated.length ? Math.max(0, updated.length - 1) : activeIndex;
+    const newIndex =
+      activeIndex >= updated.length
+        ? Math.max(0, updated.length - 1)
+        : activeIndex;
     setActiveIndex(newIndex);
-    saveSettingsToServer({ [`${provider}_api_keys`]: updated, [`${provider}_active_key_index`]: newIndex });
+    saveSettingsToServer({
+      [`${provider}_api_keys`]: updated,
+      [`${provider}_active_key_index`]: newIndex,
+    });
   };
 
-  const setActiveKey = (provider: 'gemini' | 'openai' | 'openrouter', index: number) => {
-    const setActiveIndex = provider === 'gemini' 
-      ? setGeminiActiveKeyIndex 
-      : provider === 'openai' 
-        ? setOpenaiActiveKeyIndex 
-        : setOpenrouterActiveKeyIndex;
+  const setActiveKey = (
+    provider: "gemini" | "openai" | "openrouter",
+    index: number
+  ) => {
+    const setActiveIndex =
+      provider === "gemini"
+        ? setGeminiActiveKeyIndex
+        : provider === "openai"
+          ? setOpenaiActiveKeyIndex
+          : setOpenrouterActiveKeyIndex;
     setActiveIndex(index);
     saveSettingsToServer({ [`${provider}_active_key_index`]: index });
   };
@@ -404,56 +683,82 @@ export default function SettingsPage() {
     if (!newGhostPinInput.trim()) return;
     const pin = newGhostPinInput.trim();
     setGhostPin(pin);
-    localStorage.setItem('ghost_pin', pin);
+    localStorage.setItem("ghost_pin", pin);
     saveSettingsToServer({ ghost_pin: pin });
-    setNewGhostPinInput('');
-    setGhostPinStatus('Ghost Mode PIN berhasil diperbarui!');
+    setNewGhostPinInput("");
+    setGhostPinStatus("Ghost Mode PIN berhasil diperbarui!");
     setTimeout(() => setGhostPinStatus(null), 3000);
   };
 
   // Persist local states
-  useEffect(() => { localStorage.setItem('lm_url', lmUrl); }, [lmUrl]);
-  useEffect(() => { localStorage.setItem('lm_model', selectedModel); }, [selectedModel]);
-  useEffect(() => { localStorage.setItem('llm_provider', llmProvider); }, [llmProvider]);
-  useEffect(() => { localStorage.setItem('openai_url', openaiUrl); }, [openaiUrl]);
-  useEffect(() => { localStorage.setItem('openai_model', openaiModel); }, [openaiModel]);
-  useEffect(() => { localStorage.setItem('gemini_model', geminiModel); }, [geminiModel]);
-  useEffect(() => { localStorage.setItem('openrouter_model', openrouterModel); }, [openrouterModel]);
-  useEffect(() => { localStorage.setItem('openai_api_key', openaiApiKey); }, [openaiApiKey]);
-  useEffect(() => { localStorage.setItem('gemini_api_key', geminiApiKey); }, [geminiApiKey]);
-  useEffect(() => { localStorage.setItem('openrouter_api_key', openrouterApiKey); }, [openrouterApiKey]);
-  useEffect(() => { localStorage.setItem('ghost_pin', ghostPin); }, [ghostPin]);
+  useEffect(() => {
+    localStorage.setItem("lm_url", lmUrl);
+  }, [lmUrl]);
+  useEffect(() => {
+    localStorage.setItem("lm_model", selectedModel);
+  }, [selectedModel]);
+  useEffect(() => {
+    localStorage.setItem("llm_provider", llmProvider);
+  }, [llmProvider]);
+  useEffect(() => {
+    localStorage.setItem("openai_url", openaiUrl);
+  }, [openaiUrl]);
+  useEffect(() => {
+    localStorage.setItem("openai_model", openaiModel);
+  }, [openaiModel]);
+  useEffect(() => {
+    localStorage.setItem("gemini_model", geminiModel);
+  }, [geminiModel]);
+  useEffect(() => {
+    localStorage.setItem("openrouter_model", openrouterModel);
+  }, [openrouterModel]);
+  useEffect(() => {
+    localStorage.setItem("openai_api_key", openaiApiKey);
+  }, [openaiApiKey]);
+  useEffect(() => {
+    localStorage.setItem("gemini_api_key", geminiApiKey);
+  }, [geminiApiKey]);
+  useEffect(() => {
+    localStorage.setItem("openrouter_api_key", openrouterApiKey);
+  }, [openrouterApiKey]);
+  useEffect(() => {
+    localStorage.setItem("ghost_pin", ghostPin);
+  }, [ghostPin]);
 
-  useEffect(() => { 
-    localStorage.setItem('target_language', targetLang);
+  useEffect(() => {
+    localStorage.setItem("target_language", targetLang);
     // Sync to server without showing the saving indicator to avoid render cycle warning
     const sync = async () => {
       try {
-        await fetch(getApiUrl('/api/settings'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target_language: targetLang })
+        await fetch(getApiUrl("/api/settings"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_language: targetLang }),
         });
-      } catch { /* silent fail */ }
+      } catch {
+        /* silent fail */
+      }
     };
     sync();
   }, [targetLang]);
 
-  useEffect(() => { localStorage.setItem('display_mode', displayMode); }, [displayMode]);
-  useEffect(() => { 
-    localStorage.setItem('theme', theme); 
-    document.documentElement.setAttribute('data-theme', theme);
+  useEffect(() => {
+    localStorage.setItem("display_mode", displayMode);
+  }, [displayMode]);
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+    document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
   const testConnection = async () => {
-    setStatus('checking');
+    setStatus("checking");
     try {
       const res = await fetch(`${lmUrl}/v1/models`);
       const data = await res.json();
       const list: ModelInfo[] = data.data || [];
       setModels(list);
-      setStatus('connected');
-      
+      setStatus("connected");
+
       // Save URL to server on successful connection
       saveSettingsToServer({ lm_url: lmUrl });
 
@@ -462,74 +767,104 @@ export default function SettingsPage() {
         saveSettingsToServer({ lm_model: list[0].id });
       }
     } catch {
-      setStatus('error');
+      setStatus("error");
     }
   };
 
   const handleLlmProviderChange = (provider: LlmProvider) => {
     setLlmProvider(provider);
-    localStorage.setItem('llm_provider', provider);
+    localStorage.setItem("llm_provider", provider);
     saveSettingsToServer({ llm_provider: provider });
   };
 
   const handleModelChange = (val: string) => {
     setSelectedModel(val);
-    localStorage.setItem('lm_model', val);
+    localStorage.setItem("lm_model", val);
     saveSettingsToServer({ lm_model: val });
   };
 
   const handlePrefetchToggle = (enabled: boolean) => {
     setPrefetchEnabled(enabled);
-    localStorage.setItem('prefetch_enabled', enabled ? '1' : '0');
-    saveSettingsToServer({ prefetch_enabled: enabled ? '1' : '0' });
+    localStorage.setItem("prefetch_enabled", enabled ? "1" : "0");
+    saveSettingsToServer({ prefetch_enabled: enabled ? "1" : "0" });
   };
 
   const handlePrefetchCountChange = (count: number) => {
     setPrefetchCount(count);
-    localStorage.setItem('prefetch_count', count.toString());
+    localStorage.setItem("prefetch_count", count.toString());
     saveSettingsToServer({ prefetch_count: count.toString() });
   };
 
   const handlePrefetchModeChange = (mode: string) => {
-    setPrefetchMode(mode);
-    localStorage.setItem('prefetch_mode', mode);
-    saveSettingsToServer({ prefetch_mode: mode });
+    const validMode = mode === "hard" ? "hard" : "soft";
+    setPrefetchMode(validMode);
+    syncEngineLoadMode(validMode);
   };
+
+  const handleLoadModeChange = handlePrefetchModeChange;
 
   const handlePolishModeChange = (mode: string) => {
     setPolishMode(mode);
-    localStorage.setItem('polish_mode', mode);
+    localStorage.setItem("polish_mode", mode);
     saveSettingsToServer({ polish_mode: mode });
   };
 
   const handlePolishSoftLimitChange = (limit: number) => {
     setPolishSoftLimit(limit);
-    localStorage.setItem('polish_soft_limit', limit.toString());
+    localStorage.setItem("polish_soft_limit", limit.toString());
     saveSettingsToServer({ polish_soft_limit: limit.toString() });
   };
 
   const handleMaxContextTermsChange = (count: number) => {
     setMaxContextTerms(count);
-    localStorage.setItem('max_context_terms', count.toString());
+    localStorage.setItem("max_context_terms", count.toString());
     saveSettingsToServer({ max_context_terms: count.toString() });
   };
 
   const handleChapterTokenCapToggle = (enabled: boolean) => {
     setChapterTokenCapEnabled(enabled);
-    localStorage.setItem('chapter_token_cap_enabled', enabled ? '1' : '0');
+    localStorage.setItem("chapter_token_cap_enabled", enabled ? "1" : "0");
     saveSettingsToServer({ chapter_token_cap_enabled: enabled ? 1 : 0 });
   };
 
   const handleChapterTokenCapChange = (cap: number) => {
     setChapterTokenCap(cap);
-    localStorage.setItem('chapter_token_cap', cap.toString());
+    localStorage.setItem("chapter_token_cap", cap.toString());
     saveSettingsToServer({ chapter_token_cap: cap });
   };
 
-  const handleTranslationModeChange = (mode: 'quality' | 'fast') => {
+  const handleTranslationModeChange = (mode: "quality" | "fast") => {
     setTranslationMode(mode);
-    localStorage.setItem('translation_mode', mode);
+    localStorage.setItem("translation_mode", mode);
     saveSettingsToServer({ translation_mode: mode });
+  };
+
+  const handleScraperConcurrencyChange = (concurrency: number) => {
+    const val = Math.max(1, Math.min(5, concurrency));
+    setScraperConcurrency(val);
+    localStorage.setItem("scraper_concurrency", val.toString());
+    saveSettingsToServer({ scraper_concurrency: val });
+  };
+
+  const handleNovalpieAuthToggle = (enabled: boolean) => {
+    setNovalpieAuthEnabled(enabled);
+    localStorage.setItem("novalpie_auth_enabled", enabled ? "1" : "0");
+    saveSettingsToServer({ novalpie_auth_enabled: enabled ? 1 : 0 });
+    toast.success(
+      enabled
+        ? "Mode Akun Novalpie diaktifkan"
+        : "Mode Tamu Novalpie diaktifkan"
+    );
+  };
+
+  const handleNovalpieCookieChange = (val: string) => {
+    setNovalpieCookie(val);
+    localStorage.setItem("novalpie_cookie", val);
+  };
+
+  const handleNovalpieCookieBlur = () => {
+    saveSettingsToServer({ novalpie_cookie: novalpieCookie.trim() });
+    toast.success("Cookie/Token Novalpie berhasil disimpan");
   };
 
   return (
@@ -538,8 +873,12 @@ export default function SettingsPage() {
       <header>
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-bold text-[var(--foreground)] tracking-tight">Settings</h1>
-            <p className="text-[var(--muted-foreground)] text-lg">Personalize your translation environment.</p>
+            <h1 className="text-4xl font-bold text-[var(--foreground)] tracking-tight">
+              Settings
+            </h1>
+            <p className="text-[var(--muted-foreground)] text-lg">
+              Personalize your translation environment.
+            </p>
           </div>
           {isSaving && (
             <div className="flex items-center gap-2 text-[var(--primary)] text-sm font-bold bg-[var(--primary)]/10 px-4 py-2 rounded-full animate-pulse">
@@ -564,83 +903,111 @@ export default function SettingsPage() {
             id="lm_studio"
             label="LM Studio (Local)"
             description="Terjemahan offline gratis menggunakan model LLM lokal Anda di komputer."
-            active={llmProvider === 'lm_studio'}
-            onClick={() => handleLlmProviderChange('lm_studio')}
+            active={llmProvider === "lm_studio"}
+            onClick={() => handleLlmProviderChange("lm_studio")}
             icon={Server}
           />
           <ProviderCard
             id="openai"
             label="OpenAI (Cloud)"
             description="Akses cloud berbayar ke OpenAI API (GPT-4o, GPT-4o-mini)."
-            active={llmProvider === 'openai'}
-            onClick={() => handleLlmProviderChange('openai')}
+            active={llmProvider === "openai"}
+            onClick={() => handleLlmProviderChange("openai")}
             icon={Sparkles}
           />
           <ProviderCard
             id="gemini"
             label="Google Gemini"
             description="Akses Gemini API berkecepatan sangat tinggi & gratis/premium dengan konteks raksasa."
-            active={llmProvider === 'gemini'}
-            onClick={() => handleLlmProviderChange('gemini')}
+            active={llmProvider === "gemini"}
+            onClick={() => handleLlmProviderChange("gemini")}
             icon={Globe}
           />
           <ProviderCard
             id="openrouter"
             label="OpenRouter"
             description="Akses ratusan model AI cloud (DeepSeek, Claude, Llama, Qwen) dalam satu API key."
-            active={llmProvider === 'openrouter'}
-            onClick={() => handleLlmProviderChange('openrouter')}
+            active={llmProvider === "openrouter"}
+            onClick={() => handleLlmProviderChange("openrouter")}
             icon={Globe}
           />
         </div>
-        
+
         <Card className="overflow-hidden border border-[var(--border)] transition-all duration-300">
           <CardContent className="p-8 space-y-6">
             <div className="rounded-2xl border border-[var(--primary)]/20 bg-[var(--primary)]/5 px-4 py-3">
               <div className="flex items-start gap-3">
-                <ShieldCheck size={18} className="text-[var(--primary)] mt-0.5 shrink-0" />
+                <ShieldCheck
+                  size={18}
+                  className="text-[var(--primary)] mt-0.5 shrink-0"
+                />
                 <div className="space-y-1">
-                  <div className="text-sm font-bold text-[var(--foreground)]">Chapter Safety Cap</div>
+                  <div className="text-sm font-bold text-[var(--foreground)]">
+                    Chapter Safety Cap
+                  </div>
                   <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">
-                    Single-chapter translation now uses configurable safety cap presets. Default is <span className="font-bold text-[var(--foreground)]">22K max tokens</span> to reduce long-output hallucination and context drift.
+                    Single-chapter translation now uses configurable safety cap
+                    presets. Default is{" "}
+                    <span className="font-bold text-[var(--foreground)]">
+                      22K max tokens
+                    </span>{" "}
+                    to reduce long-output hallucination and context drift.
                   </p>
                 </div>
               </div>
             </div>
 
-            {llmProvider === 'lm_studio' && (
+            {llmProvider === "lm_studio" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">LM Studio Base URL</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      LM Studio Base URL
+                    </label>
                     <div className="flex gap-2">
-                      <input 
+                      <input
                         value={lmUrl}
-                        onChange={e => setLmUrl(e.target.value)}
+                        onChange={(e) => setLmUrl(e.target.value)}
                         className="flex-1 bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                       />
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         onClick={testConnection}
                         className="rounded-xl"
-                        disabled={status === 'checking'}
+                        disabled={status === "checking"}
                       >
-                        <RefreshCw size={16} className={status === 'checking' ? 'animate-spin' : ''} />
+                        <RefreshCw
+                          size={16}
+                          className={
+                            status === "checking" ? "animate-spin" : ""
+                          }
+                        />
                       </Button>
                     </div>
                   </div>
 
-                  {status !== 'idle' && (
-                    <div className={cn(
-                      "flex items-center gap-3 px-4 py-3 rounded-xl border text-sm transition-all animate-in fade-in slide-in-from-top-1",
-                      status === 'connected' ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400" :
-                      status === 'error' ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400" :
-                      "bg-[var(--secondary)] border-[var(--border)] text-[var(--muted-foreground)]"
-                    )}>
-                      {status === 'connected' ? <Wifi size={18} /> : <WifiOff size={18} />}
+                  {status !== "idle" && (
+                    <div
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-xl border text-sm transition-all animate-in fade-in slide-in-from-top-1",
+                        status === "connected"
+                          ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400"
+                          : status === "error"
+                            ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400"
+                            : "bg-[var(--secondary)] border-[var(--border)] text-[var(--muted-foreground)]"
+                      )}
+                    >
+                      {status === "connected" ? (
+                        <Wifi size={18} />
+                      ) : (
+                        <WifiOff size={18} />
+                      )}
                       <span>
-                        {status === 'connected' ? `Connected: ${models.length} models available` : 
-                         status === 'error' ? 'Connection failed. Ensure LM Studio is running.' : 'Checking connection...'}
+                        {status === "connected"
+                          ? `Connected: ${models.length} models available`
+                          : status === "error"
+                            ? "Connection failed. Ensure LM Studio is running."
+                            : "Checking connection..."}
                       </span>
                     </div>
                   )}
@@ -648,33 +1015,41 @@ export default function SettingsPage() {
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Active Model</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      Active Model
+                    </label>
                     <select
                       value={selectedModel}
-                      onChange={e => handleModelChange(e.target.value)}
+                      onChange={(e) => handleModelChange(e.target.value)}
                       className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all appearance-none"
                     >
                       <option value="">No model selected</option>
-                      {models.map(m => (
-                        <option key={m.id} value={m.id}>{m.id}</option>
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}
+                        </option>
                       ))}
                     </select>
                   </div>
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                    Tip: Gunakan model yang dioptimasi untuk penulisan kreatif (seperti Llama-3 atau Mistral) untuk terjemahan sastra yang lebih indah.
+                    Tip: Gunakan model yang dioptimasi untuk penulisan kreatif
+                    (seperti Llama-3 atau Mistral) untuk terjemahan sastra yang
+                    lebih indah.
                   </p>
                 </div>
               </div>
             )}
 
-            {llmProvider === 'openai' && (
+            {llmProvider === "openai" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenAI Custom API Base URL</label>
-                    <input 
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      OpenAI Custom API Base URL
+                    </label>
+                    <input
                       value={openaiUrl}
-                      onChange={e => {
+                      onChange={(e) => {
                         setOpenaiUrl(e.target.value);
                         saveSettingsToServer({ openai_url: e.target.value });
                       }}
@@ -684,24 +1059,32 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenAI API Key</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      OpenAI API Key
+                    </label>
                     <div className="relative">
-                      <input 
+                      <input
                         type={showOpenaiKey ? "text" : "password"}
                         value={openaiApiKey}
-                        onChange={e => {
+                        onChange={(e) => {
                           setOpenaiApiKey(e.target.value);
-                          saveSettingsToServer({ openai_api_key: e.target.value });
+                          saveSettingsToServer({
+                            openai_api_key: e.target.value,
+                          });
                         }}
                         placeholder="sk-..."
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                       />
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setShowOpenaiKey(!showOpenaiKey)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                       >
-                        {showOpenaiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {showOpenaiKey ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -710,18 +1093,24 @@ export default function SettingsPage() {
                     label="Multiple Keys"
                     keys={openaiApiKeys}
                     activeIndex={openaiActiveKeyIndex}
-                    onAdd={(key) => addKey('openai', key)}
-                    onRemove={(i) => removeKey('openai', i)}
-                    onSetActive={(i) => setActiveKey('openai', i)}
+                    onAdd={(key) => addKey("openai", key)}
+                    onRemove={(i) => removeKey("openai", i)}
+                    onSetActive={(i) => setActiveKey("openai", i)}
                   />
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenAI Model</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      OpenAI Model
+                    </label>
                     <select
-                      value={POPULAR_OPENAI_MODELS.includes(openaiModel) ? openaiModel : "custom"}
-                      onChange={e => {
+                      value={
+                        POPULAR_OPENAI_MODELS.includes(openaiModel)
+                          ? openaiModel
+                          : "custom"
+                      }
+                      onChange={(e) => {
                         const val = e.target.value;
                         if (val !== "custom") {
                           setOpenaiModel(val);
@@ -730,21 +1119,28 @@ export default function SettingsPage() {
                       }}
                       className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                     >
-                      {POPULAR_OPENAI_MODELS.map(m => (
-                        <option key={m} value={m}>{m}</option>
+                      {POPULAR_OPENAI_MODELS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
                       ))}
                       <option value="custom">Custom (Type below)...</option>
                     </select>
                   </div>
 
-                  {(!POPULAR_OPENAI_MODELS.includes(openaiModel) || !openaiModel) && (
+                  {(!POPULAR_OPENAI_MODELS.includes(openaiModel) ||
+                    !openaiModel) && (
                     <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Custom Model Name</label>
-                      <input 
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                        Custom Model Name
+                      </label>
+                      <input
                         value={openaiModel}
-                        onChange={e => {
+                        onChange={(e) => {
                           setOpenaiModel(e.target.value);
-                          saveSettingsToServer({ openai_model: e.target.value });
+                          saveSettingsToServer({
+                            openai_model: e.target.value,
+                          });
                         }}
                         placeholder="gpt-4o"
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
@@ -753,45 +1149,60 @@ export default function SettingsPage() {
                   )}
 
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                    OpenAI API memerlukan saldo aktif. Model `gpt-4o-mini` sangat disukai karena berbiaya rendah dan sangat handal.
+                    OpenAI API memerlukan saldo aktif. Model `gpt-4o-mini`
+                    sangat disukai karena berbiaya rendah dan sangat handal.
                   </p>
                 </div>
               </div>
             )}
 
-            {llmProvider === 'gemini' && (
+            {llmProvider === "gemini" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Gemini API Key</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      Gemini API Key
+                    </label>
                     <div className="relative">
-                      <input 
+                      <input
                         type={showGeminiKey ? "text" : "password"}
                         value={geminiApiKey}
-                        onChange={e => {
+                        onChange={(e) => {
                           setGeminiApiKey(e.target.value);
-                          saveSettingsToServer({ gemini_api_key: e.target.value });
+                          saveSettingsToServer({
+                            gemini_api_key: e.target.value,
+                          });
                         }}
                         placeholder="AIzaSy..."
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                       />
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setShowGeminiKey(!showGeminiKey)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                       >
-                        {showGeminiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {showGeminiKey ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
                       </button>
                     </div>
                   </div>
-                  
+
                   <div className="bg-[var(--secondary)] border border-[var(--border)] rounded-xl p-4 text-xs space-y-1.5 text-[var(--muted-foreground)] leading-relaxed">
-                    <p className="font-semibold text-[var(--foreground)]">💡 Ingin Menggunakan Secara Gratis?</p>
-                    <p>Google Gemini API menyediakan Tier Gratis di Google AI Studio dengan limit yang sangat melimpah untuk penggunaan personal!</p>
-                    <a 
-                      href="https://aistudio.google.com/" 
-                      target="_blank" 
-                      rel="noreferrer" 
+                    <p className="font-semibold text-[var(--foreground)]">
+                      💡 Ingin Menggunakan Secara Gratis?
+                    </p>
+                    <p>
+                      Google Gemini API menyediakan Tier Gratis di Google AI
+                      Studio dengan limit yang sangat melimpah untuk penggunaan
+                      personal!
+                    </p>
+                    <a
+                      href="https://aistudio.google.com/"
+                      target="_blank"
+                      rel="noreferrer"
                       className="inline-block text-[var(--primary)] hover:underline font-bold mt-1"
                     >
                       Dapatkan API Key Gratis di Google AI Studio &rarr;
@@ -799,24 +1210,31 @@ export default function SettingsPage() {
                   </div>
 
                   <p className="text-[10px] text-[var(--muted-foreground)]">
-                    Tambah beberapa key. Saat key utama kena rate limit, switch ke key berikutnya.
+                    Tambah beberapa key. Saat key utama kena rate limit, switch
+                    ke key berikutnya.
                   </p>
                   <ApiKeyManager
                     label="Multiple Keys"
                     keys={geminiApiKeys}
                     activeIndex={geminiActiveKeyIndex}
-                    onAdd={(key) => addKey('gemini', key)}
-                    onRemove={(i) => removeKey('gemini', i)}
-                    onSetActive={(i) => setActiveKey('gemini', i)}
+                    onAdd={(key) => addKey("gemini", key)}
+                    onRemove={(i) => removeKey("gemini", i)}
+                    onSetActive={(i) => setActiveKey("gemini", i)}
                   />
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Gemini Model (Text-out only)</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      Gemini Model (Text-out only)
+                    </label>
                     <select
-                      value={POPULAR_GEMINI_MODELS.includes(geminiModel) ? geminiModel : "custom"}
-                      onChange={e => {
+                      value={
+                        POPULAR_GEMINI_MODELS.includes(geminiModel)
+                          ? geminiModel
+                          : "custom"
+                      }
+                      onChange={(e) => {
                         const val = e.target.value;
                         if (val !== "custom") {
                           setGeminiModel(val);
@@ -825,23 +1243,28 @@ export default function SettingsPage() {
                       }}
                       className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                     >
-                      {GEMINI_MODELS.map(m => (
+                      {GEMINI_MODELS.map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.id} {m.free ? '(free)' : ''} [{m.rpm} RPM]
+                          {m.id} {m.free ? "(free)" : ""} [{m.rpm} RPM]
                         </option>
                       ))}
                       <option value="custom">Custom (Type below)...</option>
                     </select>
                   </div>
 
-                  {(!POPULAR_GEMINI_MODELS.includes(geminiModel) || !geminiModel) && (
+                  {(!POPULAR_GEMINI_MODELS.includes(geminiModel) ||
+                    !geminiModel) && (
                     <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Custom Model Name</label>
-                      <input 
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                        Custom Model Name
+                      </label>
+                      <input
                         value={geminiModel}
-                        onChange={e => {
+                        onChange={(e) => {
                           setGeminiModel(e.target.value);
-                          saveSettingsToServer({ gemini_model: e.target.value });
+                          saveSettingsToServer({
+                            gemini_model: e.target.value,
+                          });
                         }}
                         placeholder="gemini-2.5-flash"
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
@@ -850,34 +1273,43 @@ export default function SettingsPage() {
                   )}
 
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                    Rekomendasi: `gemini-3.1-flash-lite` (free, 15 RPM, 500 RPD) untuk batch. `gemini-2.5-flash` untuk kualitas lebih tinggi.
+                    Rekomendasi: `gemini-3.1-flash-lite` (free, 15 RPM, 500 RPD)
+                    untuk batch. `gemini-2.5-flash` untuk kualitas lebih tinggi.
                   </p>
                 </div>
               </div>
             )}
 
-            {llmProvider === 'openrouter' && (
+            {llmProvider === "openrouter" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenRouter API Key</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      OpenRouter API Key
+                    </label>
                     <div className="relative">
-                      <input 
+                      <input
                         type={showOpenrouterKey ? "text" : "password"}
                         value={openrouterApiKey}
-                        onChange={e => {
+                        onChange={(e) => {
                           setOpenrouterApiKey(e.target.value);
-                          saveSettingsToServer({ openrouter_api_key: e.target.value });
+                          saveSettingsToServer({
+                            openrouter_api_key: e.target.value,
+                          });
                         }}
                         placeholder="sk-or-v1-..."
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                       />
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setShowOpenrouterKey(!showOpenrouterKey)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                       >
-                        {showOpenrouterKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {showOpenrouterKey ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -886,18 +1318,24 @@ export default function SettingsPage() {
                     label="Multiple Keys"
                     keys={openrouterApiKeys}
                     activeIndex={openrouterActiveKeyIndex}
-                    onAdd={(key) => addKey('openrouter', key)}
-                    onRemove={(i) => removeKey('openrouter', i)}
-                    onSetActive={(i) => setActiveKey('openrouter', i)}
+                    onAdd={(key) => addKey("openrouter", key)}
+                    onRemove={(i) => removeKey("openrouter", i)}
+                    onSetActive={(i) => setActiveKey("openrouter", i)}
                   />
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">OpenRouter Model</label>
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      OpenRouter Model
+                    </label>
                     <select
-                      value={POPULAR_OPENROUTER_MODELS.includes(openrouterModel) ? openrouterModel : "custom"}
-                      onChange={e => {
+                      value={
+                        POPULAR_OPENROUTER_MODELS.includes(openrouterModel)
+                          ? openrouterModel
+                          : "custom"
+                      }
+                      onChange={(e) => {
                         const val = e.target.value;
                         if (val !== "custom") {
                           setOpenrouterModel(val);
@@ -906,21 +1344,28 @@ export default function SettingsPage() {
                       }}
                       className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
                     >
-                      {POPULAR_OPENROUTER_MODELS.map(m => (
-                        <option key={m} value={m}>{m}</option>
+                      {POPULAR_OPENROUTER_MODELS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
                       ))}
                       <option value="custom">Custom (Type below)...</option>
                     </select>
                   </div>
 
-                  {(!POPULAR_OPENROUTER_MODELS.includes(openrouterModel) || !openrouterModel) && (
+                  {(!POPULAR_OPENROUTER_MODELS.includes(openrouterModel) ||
+                    !openrouterModel) && (
                     <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Custom Model Name</label>
-                      <input 
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                        Custom Model Name
+                      </label>
+                      <input
                         value={openrouterModel}
-                        onChange={e => {
+                        onChange={(e) => {
                           setOpenrouterModel(e.target.value);
-                          saveSettingsToServer({ openrouter_model: e.target.value });
+                          saveSettingsToServer({
+                            openrouter_model: e.target.value,
+                          });
                         }}
                         placeholder="deepseek/deepseek-chat"
                         className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
@@ -929,7 +1374,8 @@ export default function SettingsPage() {
                   )}
 
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                    OpenRouter memberikan akses universal ke DeepSeek-V3, Claude 3.5 Sonnet, Llama 3.3, Qwen, dll.
+                    OpenRouter memberikan akses universal ke DeepSeek-V3, Claude
+                    3.5 Sonnet, Llama 3.3, Qwen, dll.
                   </p>
                 </div>
               </div>
@@ -957,16 +1403,18 @@ export default function SettingsPage() {
                 <div className="space-y-3 flex-1">
                   <div>
                     <h3 className="font-bold">Target Language</h3>
-                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Translate all content into this language.</p>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      Translate all content into this language.
+                    </p>
                   </div>
                   <div className="flex gap-2">
-                    {['Indonesian', 'English'].map(lang => (
+                    {["Indonesian", "English"].map((lang) => (
                       <button
                         key={lang}
                         onClick={() => setTargetLang(lang)}
                         className={cn(
                           "flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all border",
-                          targetLang === lang 
+                          targetLang === lang
                             ? "bg-[var(--primary)] text-[var(--primary-foreground)] border-[var(--primary)] shadow-md"
                             : "bg-[var(--card)] text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]"
                         )}
@@ -985,14 +1433,18 @@ export default function SettingsPage() {
                 <div className="space-y-3 flex-1">
                   <div>
                     <h3 className="font-bold">Reader Display</h3>
-                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Default view for new translations.</p>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      Default view for new translations.
+                    </p>
                   </div>
                   <select
                     value={displayMode}
-                    onChange={e => setDisplayMode(e.target.value)}
+                    onChange={(e) => setDisplayMode(e.target.value)}
                     className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2 text-sm focus:outline-none"
                   >
-                    <option value="both">Side-by-side (Original & Translated)</option>
+                    <option value="both">
+                      Side-by-side (Original & Translated)
+                    </option>
                     <option value="translated">Translated Only</option>
                     <option value="original">Original Only</option>
                   </select>
@@ -1009,31 +1461,44 @@ export default function SettingsPage() {
                     Default Translation Quality
                   </h3>
                   <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                    Quality mode uses full glossary (30 terms), style guide injection, and higher token caps. Fast mode uses minimal glossary (10 terms) and 10K token cap for local LLMs.
+                    Quality mode uses full glossary (30 terms), style guide
+                    injection, and higher token caps. Fast mode uses minimal
+                    glossary (10 terms) and 10K token cap for local LLMs.
                   </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => handleTranslationModeChange('quality')}
+                    onClick={() => handleTranslationModeChange("quality")}
                     className={cn(
                       "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
-                      translationMode === 'quality'
+                      translationMode === "quality"
                         ? "border-purple-500 bg-purple-500/10 shadow-md"
                         : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
                     )}
                   >
-                    <Sparkles size={20} className={translationMode === 'quality' ? "text-purple-500" : "text-[var(--muted-foreground)]"} />
-                    <span className={cn(
-                      "text-sm font-black mt-2 transition-colors",
-                      translationMode === 'quality' ? "text-purple-500" : "text-[var(--foreground)]"
-                    )}>
+                    <Sparkles
+                      size={20}
+                      className={
+                        translationMode === "quality"
+                          ? "text-purple-500"
+                          : "text-[var(--muted-foreground)]"
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm font-black mt-2 transition-colors",
+                        translationMode === "quality"
+                          ? "text-purple-500"
+                          : "text-[var(--foreground)]"
+                      )}
+                    >
                       Quality
                     </span>
                     <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
                       Full context, style guide, 30 glossary terms
                     </span>
-                    {translationMode === 'quality' && (
+                    {translationMode === "quality" && (
                       <div className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white rounded-full p-0.5 shadow-sm">
                         <CheckCircle2 size={12} />
                       </div>
@@ -1041,25 +1506,36 @@ export default function SettingsPage() {
                   </button>
 
                   <button
-                    onClick={() => handleTranslationModeChange('fast')}
+                    onClick={() => handleTranslationModeChange("fast")}
                     className={cn(
                       "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
-                      translationMode === 'fast'
+                      translationMode === "fast"
                         ? "border-orange-500 bg-orange-500/10 shadow-md"
                         : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
                     )}
                   >
-                    <Wifi size={20} className={translationMode === 'fast' ? "text-orange-500" : "text-[var(--muted-foreground)]"} />
-                    <span className={cn(
-                      "text-sm font-black mt-2 transition-colors",
-                      translationMode === 'fast' ? "text-orange-500" : "text-[var(--foreground)]"
-                    )}>
+                    <Wifi
+                      size={20}
+                      className={
+                        translationMode === "fast"
+                          ? "text-orange-500"
+                          : "text-[var(--muted-foreground)]"
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm font-black mt-2 transition-colors",
+                        translationMode === "fast"
+                          ? "text-orange-500"
+                          : "text-[var(--foreground)]"
+                      )}
+                    >
                       Fast
                     </span>
                     <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
                       Minimal context, 10K cap, best for LM Studio
                     </span>
-                    {translationMode === 'fast' && (
+                    {translationMode === "fast" && (
                       <div className="absolute -top-1.5 -right-1.5 bg-orange-500 text-white rounded-full p-0.5 shadow-sm">
                         <CheckCircle2 size={12} />
                       </div>
@@ -1069,39 +1545,154 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* Engine Concurrency Speed (Load Mode) */}
+            <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-4">
+              <div className="flex flex-col gap-4 pb-8 border-b border-[var(--border)]">
+                <div>
+                  <h3 className="font-bold flex items-center gap-2 text-[var(--foreground)]">
+                    <Zap size={16} className="text-[var(--primary)]" />
+                    Engine Concurrency Speed (Load Mode)
+                  </h3>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Controls global concurrency for Batch Translation and Reader
+                    Prefetch.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => handleLoadModeChange("soft")}
+                    className={cn(
+                      "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
+                      prefetchMode === "soft"
+                        ? "border-emerald-500 bg-emerald-500/10 shadow-md"
+                        : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
+                    )}
+                  >
+                    <ShieldCheck
+                      size={20}
+                      className={
+                        prefetchMode === "soft"
+                          ? "text-emerald-500"
+                          : "text-[var(--muted-foreground)]"
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm font-black mt-2 transition-colors",
+                        prefetchMode === "soft"
+                          ? "text-emerald-500"
+                          : "text-[var(--foreground)]"
+                      )}
+                    >
+                      Sequential (Soft Load)
+                    </span>
+                    <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
+                      1-by-1 safe queue. Protects GPU VRAM & prevents API rate
+                      limits.
+                    </span>
+                    {prefetchMode === "soft" && (
+                      <div className="absolute -top-1.5 -right-1.5 bg-emerald-500 text-white rounded-full p-0.5 shadow-sm">
+                        <CheckCircle2 size={12} />
+                      </div>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => handleLoadModeChange("hard")}
+                    className={cn(
+                      "relative flex flex-col items-center justify-center p-5 rounded-xl border-2 transition-all duration-300 group hover:scale-[1.02]",
+                      prefetchMode === "hard"
+                        ? "border-orange-500 bg-orange-500/10 shadow-md"
+                        : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
+                    )}
+                  >
+                    <Zap
+                      size={20}
+                      className={
+                        prefetchMode === "hard"
+                          ? "text-orange-500"
+                          : "text-[var(--muted-foreground)]"
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm font-black mt-2 transition-colors",
+                        prefetchMode === "hard"
+                          ? "text-orange-500"
+                          : "text-[var(--foreground)]"
+                      )}
+                    >
+                      Parallel (Hard Load)
+                    </span>
+                    <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
+                      High throughput concurrency. Best for Cloud APIs & large
+                      GPUs.
+                    </span>
+                    {prefetchMode === "hard" && (
+                      <div className="absolute -top-1.5 -right-1.5 bg-orange-500 text-white rounded-full p-0.5 shadow-sm">
+                        <CheckCircle2 size={12} />
+                      </div>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[10px] text-[var(--muted-foreground)] italic px-1">
+                  💡 This global setting controls the engine speed for both
+                  Batch Translation and Reader Prefetch, even if Prefetch
+                  automation is turned off.
+                </p>
+              </div>
+            </div>
+
             {/* Glossary Limit Slider / Selector */}
             <div className="pt-8 mt-8 border-t border-[var(--border)] space-y-4">
               <div className="flex flex-col gap-4 pb-8 border-b border-[var(--border)]">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h3 className="font-bold flex items-center gap-2 text-[var(--foreground)]">
-                      <ShieldCheck size={16} className="text-[var(--primary)]" />
+                      <ShieldCheck
+                        size={16}
+                        className="text-[var(--primary)]"
+                      />
                       Chapter Token Safety Cap
                     </h3>
                     <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                      Prevents hallucination drift and wasted tokens on long chapter translations.
+                      Prevents hallucination drift and wasted tokens on long
+                      chapter translations.
                     </p>
                     <p className="text-[10px] text-[var(--muted-foreground)] mt-1">
-                      Turning this off may increase hallucination and burn more tokens away.
+                      Turning this off may increase hallucination and burn more
+                      tokens away.
                     </p>
                   </div>
                   <button
-                    onClick={() => handleChapterTokenCapToggle(!chapterTokenCapEnabled)}
+                    onClick={() =>
+                      handleChapterTokenCapToggle(!chapterTokenCapEnabled)
+                    }
                     className={cn(
                       "relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 mt-1",
-                      chapterTokenCapEnabled ? "bg-[var(--primary)]" : "bg-[var(--secondary)]"
+                      chapterTokenCapEnabled
+                        ? "bg-[var(--primary)]"
+                        : "bg-[var(--secondary)]"
                     )}
                   >
                     <span
                       className={cn(
                         "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                        chapterTokenCapEnabled ? "translate-x-6" : "translate-x-1"
+                        chapterTokenCapEnabled
+                          ? "translate-x-6"
+                          : "translate-x-1"
                       )}
                     />
                   </button>
                 </div>
 
-                <div className={cn("grid grid-cols-2 sm:grid-cols-4 gap-3", !chapterTokenCapEnabled && "opacity-50 pointer-events-none")}>
+                <div
+                  className={cn(
+                    "grid grid-cols-2 sm:grid-cols-4 gap-3",
+                    !chapterTokenCapEnabled && "opacity-50 pointer-events-none"
+                  )}
+                >
                   {CHAPTER_TOKEN_CAP_OPTIONS.map((cap) => {
                     const active = chapterTokenCap === cap;
                     return (
@@ -1115,10 +1706,14 @@ export default function SettingsPage() {
                             : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
                         )}
                       >
-                        <span className={cn(
-                          "text-lg font-black transition-colors",
-                          active ? "text-[var(--primary)]" : "text-[var(--foreground)]"
-                        )}>
+                        <span
+                          className={cn(
+                            "text-lg font-black transition-colors",
+                            active
+                              ? "text-[var(--primary)]"
+                              : "text-[var(--foreground)]"
+                          )}
+                        >
                           {cap / 1000}K
                         </span>
                         <span className="text-[10px] text-[var(--muted-foreground)] mt-1 font-semibold group-hover:text-[var(--foreground)]">
@@ -1142,7 +1737,8 @@ export default function SettingsPage() {
                     Max Context Terms Limit
                   </h3>
                   <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                    Maximum number of active glossary terms kept per thread. Excess items are archived and compressed to save tokens.
+                    Maximum number of active glossary terms kept per thread.
+                    Excess items are archived and compressed to save tokens.
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-[var(--primary)]/10 text-[var(--primary)] rounded-xl text-xs font-bold border border-[var(--primary)]/20 shadow-sm shrink-0 self-start md:self-auto">
@@ -1174,10 +1770,14 @@ export default function SettingsPage() {
                           : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--muted-foreground)]"
                       )}
                     >
-                      <span className={cn(
-                        "text-lg font-black transition-colors",
-                        active ? "text-[var(--primary)]" : "text-[var(--foreground)]"
-                      )}>
+                      <span
+                        className={cn(
+                          "text-lg font-black transition-colors",
+                          active
+                            ? "text-[var(--primary)]"
+                            : "text-[var(--foreground)]"
+                        )}
+                      >
                         {limit}
                       </span>
                       <span className="text-[10px] text-[var(--muted-foreground)] mt-1 font-semibold group-hover:text-[var(--foreground)]">
@@ -1213,13 +1813,17 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-bold">Enable Prefetching</h3>
-                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Automatically translate next chapters in background.</p>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      Automatically translate next chapters in background.
+                    </p>
                   </div>
                   <button
                     onClick={() => handlePrefetchToggle(!prefetchEnabled)}
                     className={cn(
                       "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                      prefetchEnabled ? "bg-[var(--primary)]" : "bg-[var(--secondary)]"
+                      prefetchEnabled
+                        ? "bg-[var(--primary)]"
+                        : "bg-[var(--secondary)]"
                     )}
                   >
                     <span
@@ -1231,31 +1835,35 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
-                  Note: Prefetching helps reduce waiting time between chapters but consumes more tokens/server resources.
+                  Note: Prefetching helps reduce waiting time between chapters
+                  but consumes more tokens/server resources.
                 </p>
-                
+
                 <div className="pt-4 border-t border-[var(--border)]">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-bold">Prefetch Mode</h3>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-bold">Engine Load Mode</h3>
+                    <span className="text-[10px] text-[var(--primary)] font-bold uppercase tracking-wider">
+                      Shared with Batch
+                    </span>
                   </div>
                   <div className="flex bg-[var(--secondary)] rounded-xl p-1">
                     <button
-                      onClick={() => handlePrefetchModeChange('soft')}
+                      onClick={() => handleLoadModeChange("soft")}
                       className={cn(
                         "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
-                        prefetchMode === 'soft' 
-                          ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" 
+                        prefetchMode === "soft"
+                          ? "bg-[var(--card)] text-[var(--primary)] shadow-sm"
                           : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                       )}
                     >
                       SOFT LOAD
                     </button>
                     <button
-                      onClick={() => handlePrefetchModeChange('hard')}
+                      onClick={() => handleLoadModeChange("hard")}
                       className={cn(
                         "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
-                        prefetchMode === 'hard' 
-                          ? "bg-[var(--card)] text-orange-500 shadow-sm" 
+                        prefetchMode === "hard"
+                          ? "bg-[var(--card)] text-orange-500 shadow-sm"
                           : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                       )}
                     >
@@ -1263,17 +1871,24 @@ export default function SettingsPage() {
                     </button>
                   </div>
                   <p className="text-[9px] text-[var(--muted-foreground)] mt-2 px-1">
-                    {prefetchMode === 'soft' 
-                      ? "Sequential: Translates next chapter one-by-one (Safe & Efficient)." 
-                      : "Aggressive: Translates entire range in parallel (Fast & Resource Intensive)."}
+                    {prefetchMode === "soft"
+                      ? "Sequential: Translates chapters one-by-one (Safe for GPU & API rate limits)."
+                      : "Parallel: Translates chapters concurrently (Fast & High Throughput)."}
                   </p>
                 </div>
               </div>
 
-              <div className={cn("space-y-4 transition-opacity", !prefetchEnabled && "opacity-50 pointer-events-none")}>
+              <div
+                className={cn(
+                  "space-y-4 transition-opacity",
+                  !prefetchEnabled && "opacity-50 pointer-events-none"
+                )}
+              >
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold">Prefetch Range</h3>
-                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">{prefetchCount} Chapters</span>
+                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">
+                    {prefetchCount} Chapters
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -1281,7 +1896,9 @@ export default function SettingsPage() {
                   max="5"
                   step="1"
                   value={prefetchCount}
-                  onChange={(e) => handlePrefetchCountChange(parseInt(e.target.value))}
+                  onChange={(e) =>
+                    handlePrefetchCountChange(parseInt(e.target.value))
+                  }
                   className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
                 />
                 <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] font-medium px-1">
@@ -1312,27 +1929,29 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div>
                   <h3 className="font-bold">Title Polish Mode</h3>
-                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">Configure how chapters are loaded and polished with AI.</p>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Configure how chapters are loaded and polished with AI.
+                  </p>
                 </div>
-                
+
                 <div className="flex bg-[var(--secondary)] rounded-xl p-1 mt-2">
                   <button
-                    onClick={() => handlePolishModeChange('soft')}
+                    onClick={() => handlePolishModeChange("soft")}
                     className={cn(
                       "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
-                      polishMode === 'soft' 
-                        ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" 
+                      polishMode === "soft"
+                        ? "bg-[var(--card)] text-[var(--primary)] shadow-sm"
                         : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                     )}
                   >
                     SOFT LOAD
                   </button>
                   <button
-                    onClick={() => handlePolishModeChange('hard')}
+                    onClick={() => handlePolishModeChange("hard")}
                     className={cn(
                       "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
-                      polishMode === 'hard' 
-                        ? "bg-[var(--card)] text-orange-500 shadow-sm" 
+                      polishMode === "hard"
+                        ? "bg-[var(--card)] text-orange-500 shadow-sm"
                         : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                     )}
                   >
@@ -1340,19 +1959,29 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <p className="text-[9px] text-[var(--muted-foreground)] leading-relaxed mt-2 px-1">
-                  {polishMode === 'soft' 
-                    ? "Safe Mode: Only processes the specified limit of chapters from the current reading progress." 
+                  {polishMode === "soft"
+                    ? "Safe Mode: Only processes the specified limit of chapters from the current reading progress."
                     : "Aggressive Mode: Processes and polishes all chapter titles in the thread regardless of count."}
                 </p>
                 <p className="text-[9px] text-[var(--muted-foreground)] leading-relaxed italic border-t border-[var(--border)] pt-3 mt-3">
-                  💡 Dynamic Actions: When triggered, the system also automatically translates the novel synopsis/description (if it is still in Mandarin) and extracts/beautifies the clean core Chinese title as per ADR-020.
+                  💡 Dynamic Actions: When triggered, the system also
+                  automatically translates the novel synopsis/description (if it
+                  is still in Mandarin) and extracts/beautifies the clean core
+                  Chinese title as per ADR-020.
                 </p>
               </div>
 
-              <div className={cn("space-y-4 transition-opacity", polishMode === 'hard' && "opacity-50 pointer-events-none")}>
+              <div
+                className={cn(
+                  "space-y-4 transition-opacity",
+                  polishMode === "hard" && "opacity-50 pointer-events-none"
+                )}
+              >
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold">Polish Limit (Soft Load)</h3>
-                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">{polishSoftLimit} Titles</span>
+                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">
+                    {polishSoftLimit} Titles
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -1360,7 +1989,9 @@ export default function SettingsPage() {
                   max="150"
                   step="10"
                   value={polishSoftLimit}
-                  onChange={(e) => handlePolishSoftLimitChange(parseInt(e.target.value))}
+                  onChange={(e) =>
+                    handlePolishSoftLimitChange(parseInt(e.target.value))
+                  }
                   className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
                 />
                 <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] font-medium px-1">
@@ -1368,6 +1999,228 @@ export default function SettingsPage() {
                   <span>100 Titles</span>
                   <span>150 Titles</span>
                 </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Section: Web Scraper & Crawler Concurrency */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--primary)]">
+            <Globe size={18} />
+          </div>
+          <h2 className="text-xl font-bold">
+            Web Scraper & Crawler Concurrency
+          </h2>
+        </div>
+
+        <Card>
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-bold">Playwright Browser Workers</h3>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                    Jumlah peramban Chromium bersamaan untuk bulk fetch bab
+                    novel web (Novalpie & Cloudflare Turnstile).
+                  </p>
+                </div>
+                <div className="flex bg-[var(--secondary)] rounded-xl p-1 gap-1">
+                  {[
+                    { count: 1, label: "1 (Hemat)" },
+                    { count: 2, label: "2 (Aman)" },
+                    { count: 3, label: "3 (Seimbang)" },
+                    { count: 4, label: "4 (Cepat)" },
+                    { count: 5, label: "5 (Maks)" },
+                  ].map((tier) => (
+                    <button
+                      key={tier.count}
+                      onClick={() => handleScraperConcurrencyChange(tier.count)}
+                      className={cn(
+                        "flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all",
+                        scraperConcurrency === tier.count
+                          ? "bg-[var(--card)] text-[var(--primary)] shadow-sm"
+                          : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      )}
+                    >
+                      {tier.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[9px] text-[var(--muted-foreground)] leading-relaxed mt-2 px-1">
+                  💡 Dilengkapi <strong>Browser Context Reuse</strong>: Chromium
+                  di-boot sekali per worker dan me-reuse instance secara dinamis
+                  untuk menghemat memori hingga 70%.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold">Concurrency Level</h3>
+                  <span className="text-[var(--primary)] font-bold px-3 py-1 bg-[var(--primary)]/10 rounded-lg">
+                    {scraperConcurrency} Workers (
+                    {scraperConcurrency <= 2
+                      ? "Aman"
+                      : scraperConcurrency <= 3
+                        ? "Rekomendasi"
+                        : "Kecepatan Tinggi"}
+                    )
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={scraperConcurrency}
+                  onChange={(e) =>
+                    handleScraperConcurrencyChange(parseInt(e.target.value))
+                  }
+                  className="w-full h-2 bg-[var(--secondary)] rounded-lg appearance-none cursor-pointer accent-[var(--primary)]"
+                />
+                <div className="flex justify-between text-[10px] text-[var(--muted-foreground)] font-medium px-1">
+                  <span>1 Worker</span>
+                  <span>2 Workers</span>
+                  <span>3 Workers</span>
+                  <span>4 Workers</span>
+                  <span>5 Workers</span>
+                </div>
+                <p className="text-[9px] text-amber-500/90 leading-relaxed px-1">
+                  ⚠️ Nilai 4–5 membutuhkan koneksi internet stabil agar
+                  Cloudflare tidak mencurigai lonjakan permintaan serentak.
+                </p>
+              </div>
+
+              {/* Novalpie Authenticated Scraper (720h & 60d Access) */}
+              <div className="pt-4 border-t border-[var(--border)] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold flex items-center gap-2">
+                      <span>Novalpie Account Authentication</span>
+                      <span
+                        className={cn(
+                          "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
+                          novalpieAuthEnabled
+                            ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                            : "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
+                        )}
+                      >
+                        {novalpieAuthEnabled
+                          ? "Mode Akun (720h/60d Aktif)"
+                          : "Mode Tamu (Guest)"}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      Buka akses novel berstatus restricted (butuh umur akun
+                      ≥720 jam / 30 hari) dan media gambar ilustrasi bab (butuh
+                      umur akun ≥60 hari).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleNovalpieAuthToggle(!novalpieAuthEnabled)
+                    }
+                    className={cn(
+                      "w-12 h-6 rounded-full transition-colors relative flex items-center p-1 cursor-pointer shrink-0",
+                      novalpieAuthEnabled
+                        ? "bg-[var(--primary)]"
+                        : "bg-[var(--muted)]"
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "w-4 h-4 rounded-full bg-white transition-transform",
+                        novalpieAuthEnabled ? "translate-x-6" : "translate-x-0"
+                      )}
+                    />
+                  </button>
+                </div>
+
+                {novalpieAuthEnabled && (
+                  <div className="space-y-3 p-3.5 bg-[var(--secondary)]/40 rounded-xl border border-[var(--border)]">
+                    {/* Panduan Pemasangan Token */}
+                    <div className="p-3 bg-[var(--card)] rounded-lg border border-[var(--border)]/70 space-y-1.5 text-xs text-[var(--foreground)]">
+                      <div className="font-bold text-[var(--primary)] flex items-center gap-1.5">
+                        <Info size={14} />
+                        <span>Cara Mendapatkan Token Akun Novalpie:</span>
+                      </div>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-[var(--muted-foreground)] leading-relaxed pl-1">
+                        <li>
+                          Buka{" "}
+                          <a
+                            href="https://novalpie.cc"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[var(--primary)] underline font-medium"
+                          >
+                            novalpie.cc
+                          </a>{" "}
+                          di peramban dan pastikan akun Anda sudah dalam status
+                          login.
+                        </li>
+                        <li>
+                          Tekan{" "}
+                          <kbd className="px-1 py-0.5 bg-[var(--secondary)] rounded border border-[var(--border)] font-mono text-[10px]">
+                            F12
+                          </kbd>{" "}
+                          (DevTools) &gt; buka tab <strong>Application</strong>{" "}
+                          (atau <strong>Storage</strong>).
+                        </li>
+                        <li>
+                          Di panel menu kiri, klik{" "}
+                          <strong>Local Storage</strong> &gt; pilih{" "}
+                          <strong>https://novalpie.cc</strong>.
+                        </li>
+                        <li>
+                          Cari baris dengan Key <strong>auth_token</strong>,
+                          lalu salin seluruh Value teksnya (dimulai dari{" "}
+                          <code>eyJ...</code>).
+                        </li>
+                      </ol>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-[var(--foreground)]">
+                          Novalpie Auth Token (auth_token)
+                        </label>
+                        <span className="text-[10px] text-[var(--muted-foreground)]">
+                          Mendukung juga format Cookie tabel DevTools / Novelpia
+                        </span>
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={novalpieCookie}
+                        onChange={(e) =>
+                          handleNovalpieCookieChange(e.target.value)
+                        }
+                        onBlur={handleNovalpieCookieBlur}
+                        placeholder="Tempel auth_token Anda di sini (contoh: eyJ0eXAiOiJKV1Qi...)"
+                        className="w-full text-xs font-mono p-2.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                      />
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-[var(--border)]/50">
+                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-500 font-medium">
+                        <ShieldCheck size={14} />
+                        <span>
+                          Disimpan aman di <code>backend/.env</code> (file
+                          lokal, otomatis di-ignore dari Git/GitHub).
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleNovalpieCookieBlur}
+                        className="px-3 py-1.5 bg-[var(--primary)] text-white text-xs font-bold rounded-lg hover:opacity-90 transition-opacity self-end sm:self-auto cursor-pointer"
+                      >
+                        Simpan ke .env
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
@@ -1384,30 +2237,50 @@ export default function SettingsPage() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-          <ThemeCard 
-            id="white" label="White" active={theme === 'white'} 
-            onClick={() => setTheme('white')} gradient="linear-gradient(135deg, #ffffff, #e2e8f0)" 
-            textColor="#0f172a" icon={Sun} 
+          <ThemeCard
+            id="white"
+            label="White"
+            active={theme === "white"}
+            onClick={() => setTheme("white")}
+            gradient="linear-gradient(135deg, #ffffff, #e2e8f0)"
+            textColor="#0f172a"
+            icon={Sun}
           />
-          <ThemeCard 
-            id="sepia" label="Sepia" active={theme === 'sepia'} 
-            onClick={() => setTheme('sepia')} gradient="linear-gradient(135deg, #fdf6e3, #d4c2aa)" 
-            textColor="#5c4a3d" icon={Sun} 
+          <ThemeCard
+            id="sepia"
+            label="Sepia"
+            active={theme === "sepia"}
+            onClick={() => setTheme("sepia")}
+            gradient="linear-gradient(135deg, #fdf6e3, #d4c2aa)"
+            textColor="#5c4a3d"
+            icon={Sun}
           />
-          <ThemeCard 
-            id="omni" label="Omni" active={theme === 'omni'} 
-            onClick={() => setTheme('omni')} gradient="linear-gradient(135deg, #1e4591, #0f2b60)" 
-            textColor="#e0e7ff" icon={Moon} 
+          <ThemeCard
+            id="omni"
+            label="Omni"
+            active={theme === "omni"}
+            onClick={() => setTheme("omni")}
+            gradient="linear-gradient(135deg, #1e4591, #0f2b60)"
+            textColor="#e0e7ff"
+            icon={Moon}
           />
-          <ThemeCard 
-            id="black" label="Black" active={theme === 'black'} 
-            onClick={() => setTheme('black')} gradient="linear-gradient(135deg, #1e293b, #0f172a)" 
-            textColor="#fff" icon={Moon} 
+          <ThemeCard
+            id="black"
+            label="Black"
+            active={theme === "black"}
+            onClick={() => setTheme("black")}
+            gradient="linear-gradient(135deg, #1e293b, #0f172a)"
+            textColor="#fff"
+            icon={Moon}
           />
-          <ThemeCard 
-            id="oled" label="OLED" active={theme === 'oled'} 
-            onClick={() => setTheme('oled')} gradient="linear-gradient(135deg, #0a0a0a, #000000)" 
-            textColor="#fff" icon={Moon} 
+          <ThemeCard
+            id="oled"
+            label="OLED"
+            active={theme === "oled"}
+            onClick={() => setTheme("oled")}
+            gradient="linear-gradient(135deg, #0a0a0a, #000000)"
+            textColor="#fff"
+            icon={Moon}
           />
         </div>
       </section>
@@ -1429,7 +2302,12 @@ export default function SettingsPage() {
                   Ghost Mode Authentication PIN
                 </h3>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Atur PIN rahasia untuk berpindah ke Ghost Mode workspace. PIN standar bawaan: <span className="font-mono font-bold text-[var(--foreground)]">03697</span>.
+                  Atur PIN rahasia untuk berpindah ke Ghost Mode workspace. PIN
+                  standar bawaan:{" "}
+                  <span className="font-mono font-bold text-[var(--foreground)]">
+                    03697
+                  </span>
+                  .
                 </p>
               </div>
 
@@ -1438,7 +2316,7 @@ export default function SettingsPage() {
                   <input
                     type={showGhostPinText ? "text" : "password"}
                     value={newGhostPinInput}
-                    onChange={e => setNewGhostPinInput(e.target.value)}
+                    onChange={(e) => setNewGhostPinInput(e.target.value)}
                     placeholder={`Current PIN: ${ghostPin}`}
                     className="bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all w-48"
                   />
@@ -1447,7 +2325,11 @@ export default function SettingsPage() {
                     onClick={() => setShowGhostPinText(!showGhostPinText)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                   >
-                    {showGhostPinText ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showGhostPinText ? (
+                      <EyeOff size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
                   </button>
                 </div>
                 <Button
@@ -1469,6 +2351,108 @@ export default function SettingsPage() {
         </Card>
       </section>
 
+      {/* Section: Cache Settings */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+            <Folder size={18} />
+          </div>
+          <h2 className="text-xl font-bold">Cache Settings</h2>
+        </div>
+
+        <Card className="overflow-hidden border border-[var(--border)]">
+          <CardContent className="p-6 md:p-8 space-y-6">
+            {/* Toggle persistent cache */}
+            <div className="flex items-center justify-between gap-4 p-4 rounded-xl bg-[var(--secondary)]/40 border border-[var(--border)]">
+              <div>
+                <h3 className="font-bold text-sm text-[var(--foreground)]">
+                  Persistently Cache Cover & Illustrations
+                </h3>
+                <p className="text-xs text-[var(--muted-foreground)] mt-1 max-w-xl leading-relaxed">
+                  When enabled, book covers and chapter illustrations will be
+                  saved to local disk to reduce repeated network requests and
+                  ensure instant offline reading. Disabling may increase loading
+                  times and external network requests.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={persistentCacheEnabled}
+                onClick={handleTogglePersistentCache}
+                className={cn(
+                  "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none",
+                  persistentCacheEnabled
+                    ? "bg-[var(--primary)]"
+                    : "bg-[var(--muted)]"
+                )}
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out",
+                    persistentCacheEnabled ? "translate-x-5" : "translate-x-0"
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* Current Cache Stats & Clear Button */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-1">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[var(--foreground)]">
+                  Current Cache:{" "}
+                  <span className="font-mono text-[var(--primary)] font-bold">
+                    {cacheStats.count} images
+                  </span>
+                  , total{" "}
+                  <span className="font-mono text-[var(--primary)] font-bold">
+                    {cacheStats.formatted_size}
+                  </span>
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Stored in local folder{" "}
+                  <code className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--secondary)] font-mono">
+                    uploads/cache/images/
+                  </code>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchCacheStats}
+                  disabled={isLoadingCacheStats}
+                  className="rounded-xl h-9 gap-1.5 border-[var(--border)] text-xs font-bold"
+                  title="Refresh cache statistics"
+                >
+                  <RefreshCw
+                    className={cn(
+                      "w-3.5 h-3.5",
+                      isLoadingCacheStats && "animate-spin"
+                    )}
+                  />
+                  <span>Refresh</span>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearCache}
+                  disabled={isClearingCache || cacheStats.count === 0}
+                  className="rounded-xl h-9 gap-1.5 border-rose-500/30 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/50 bg-[var(--card)] font-bold text-xs w-full sm:w-auto"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <span>
+                    {isClearingCache ? "Clearing..." : "Clear Image Cache"}
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
       {/* Section: System Info */}
       <section className="space-y-6">
         <div className="flex items-center gap-3 mb-2">
@@ -1484,26 +2468,32 @@ export default function SettingsPage() {
               <div className="flex items-center gap-4">
                 <ShieldCheck className="text-[var(--primary)]" size={32} />
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Version</h4>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                    Version
+                  </h4>
                   <p className="font-bold">v1.2.0 (Premium)</p>
                 </div>
               </div>
               <div className="flex items-center gap-4">
                 <Database className="text-[var(--primary)]" size={32} />
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Database</h4>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                    Database
+                  </h4>
                   <p className="font-bold">Local SQLite (app.db)</p>
                 </div>
               </div>
               <div className="flex items-center gap-4 text-[var(--muted-foreground)]">
                 <Server size={32} className="opacity-50" />
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest">Backend</h4>
+                  <h4 className="text-xs font-bold uppercase tracking-widest">
+                    Backend
+                  </h4>
                   <p className="font-bold">Python FastAPI</p>
                 </div>
               </div>
               {/* Profile Logo for Mobile (Ghost Mode Trigger) */}
-              <div 
+              <div
                 className="flex md:hidden items-center gap-4 cursor-pointer"
                 onMouseDown={startPress}
                 onMouseUp={endPress}
@@ -1515,8 +2505,12 @@ export default function SettingsPage() {
                   <User size={20} className="text-[var(--muted-foreground)]" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Profile</h4>
-                  <p className="font-bold text-xs text-[var(--muted-foreground)]">Local User</p>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                    Profile
+                  </h4>
+                  <p className="font-bold text-xs text-[var(--muted-foreground)]">
+                    Local User
+                  </p>
                 </div>
               </div>
             </div>
@@ -1528,27 +2522,44 @@ export default function SettingsPage() {
       {showPinModal && (
         <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[var(--card)] w-full max-w-sm p-6 rounded-2xl shadow-xl border border-[var(--border)] relative">
-            <button 
-              onClick={() => { setShowPinModal(false); setPinInput(''); setPinError(false); }}
+            <button
+              onClick={() => {
+                setShowPinModal(false);
+                setPinInput("");
+                setPinError(false);
+              }}
               className="absolute top-4 right-4 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
               <X size={20} />
             </button>
             <h2 className="text-xl font-bold mb-4">Enter PIN</h2>
             <div className="space-y-4">
-              <input 
+              <input
                 type="password"
                 maxLength={5}
                 value={pinInput}
-                onChange={e => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(false); }}
+                onChange={(e) => {
+                  setPinInput(e.target.value.replace(/\D/g, ""));
+                  setPinError(false);
+                }}
                 className={cn(
                   "w-full bg-[var(--background)] border rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none transition-all",
-                  pinError ? "border-red-500 text-red-500" : "border-[var(--border)] focus:border-[var(--primary)]"
+                  pinError
+                    ? "border-red-500 text-red-500"
+                    : "border-[var(--border)] focus:border-[var(--primary)]"
                 )}
                 autoFocus
               />
-              {pinError && <p className="text-red-500 text-xs text-center">Invalid PIN. Try again.</p>}
-              <Button onClick={handlePinSubmit} className="w-full rounded-xl py-6 font-bold text-lg" disabled={pinInput.length < 5}>
+              {pinError && (
+                <p className="text-red-500 text-xs text-center">
+                  Invalid PIN. Try again.
+                </p>
+              )}
+              <Button
+                onClick={handlePinSubmit}
+                className="w-full rounded-xl py-6 font-bold text-lg"
+                disabled={pinInput.length < 5}
+              >
                 Unlock
               </Button>
             </div>

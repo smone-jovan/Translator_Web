@@ -13,13 +13,22 @@ import webbrowser
 import re
 import argparse
 import shutil
+import collections
 
 # ─── Platform Init ───────────────────────────────────────────────────────────
 if sys.platform == "win32":
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
+        # Enable VT output processing on STDOUT (-11)
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
+        # Disable QuickEdit Mode on STDIN (-10) so clicking the console doesn't pause execution
+        h_in = kernel32.GetStdHandle(-10)
+        mode = ctypes.c_ulong()
+        if kernel32.GetConsoleMode(h_in, ctypes.byref(mode)):
+            new_mode = (mode.value & ~0x0040) | 0x0080
+            kernel32.SetConsoleMode(h_in, new_mode)
     except Exception:
         os.system("color")
     if hasattr(sys.stdout, 'reconfigure'):
@@ -57,11 +66,16 @@ BACKEND_PORT  = 8000
 FRONTEND_PORT = 5173
 
 # ─── State ───────────────────────────────────────────────────────────────────
-backend_proc  = None
-frontend_proc = None
-running       = True
-print_lock    = threading.Lock()
-_startup_time = time.time()
+backend_proc      = None
+frontend_proc     = None
+running           = True
+print_lock        = threading.Lock()
+_startup_time     = time.time()
+LOG_FILE          = os.path.join(ROOT_DIR, "launcher.log")
+log_buffer        = collections.deque(maxlen=150)
+_dirty            = False
+_dashboard_mode   = True
+_service_cache    = {"backend": False, "frontend": False, "checked_at": 0.0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -148,6 +162,17 @@ def check_port(port: int) -> bool:
             return False
 
 
+def get_service_status(force: bool = False):
+    """Return (backend_online, frontend_online) cached to avoid frequent socket churn."""
+    global _service_cache
+    now = time.time()
+    if force or (now - _service_cache["checked_at"] > 2.0):
+        b_ok = check_port(BACKEND_PORT)
+        f_ok = check_port(FRONTEND_PORT)
+        _service_cache = {"backend": b_ok, "frontend": f_ok, "checked_at": now}
+    return _service_cache["backend"], _service_cache["frontend"]
+
+
 def open_url(url: str):
     """Reliable URL opener for Windows and other OS."""
     try:
@@ -178,14 +203,28 @@ def uptime_str() -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def log(prefix: str, msg: str, color: str = GRAY):
-    """Clean, timestamped log output."""
+    """Timestamped log output with disk persistence and UI buffering."""
+    global _dirty
     clean = msg.strip()
     if not clean:
         return
     ts = time.strftime("%H:%M:%S")
+    formatted = f"  {FAINT}{ts}{RESET}  {color}{prefix:<10}{RESET} {DIM}{clean}{RESET}"
+    plain_entry = f"[{ts}] [{prefix:<10}] {clean}\n"
+
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8", errors="replace") as f:
+            f.write(plain_entry)
+    except Exception:
+        pass
+
     with print_lock:
-        sys.stdout.write(f"  {FAINT}{ts}{RESET}  {color}{prefix:<10}{RESET} {DIM}{clean}{RESET}\n")
-        sys.stdout.flush()
+        log_buffer.append(formatted)
+        _dirty = True
+        # If not an interactive TTY, print immediately line-by-line for pipes and tests
+        if not (sys.stdout.isatty() and _dashboard_mode):
+            sys.stdout.write(f"{formatted}\n")
+            sys.stdout.flush()
 
 
 def log_reader(proc, prefix, color):
@@ -200,55 +239,86 @@ def log_reader(proc, prefix, color):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Banner — The Hero Display
+#  Banner & Fixed Dashboard Display
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def status_dot(online: bool, label: str, port: int) -> str:
     if online:
-        return f"  {TEAL}●{RESET}  {WHITE}{label}{RESET} {FAINT}:{port}{RESET}"
-    return f"  {AMBER}○{RESET}  {GRAY}{label}{RESET} {FAINT}:{port} starting...{RESET}"
+        return f"{TEAL}●{RESET} {WHITE}{label}{RESET}{FAINT}:{port}{RESET}"
+    return f"{AMBER}○{RESET} {GRAY}{label}{RESET}{FAINT}:{port} starting...{RESET}"
+
+
+def render_dashboard():
+    """In-place terminal redraw preserving fixed header and visible shortcuts."""
+    with print_lock:
+        b_ok, f_ok = get_service_status()
+        local_ip = get_local_ip()
+        cols, rows = shutil.get_terminal_size(fallback=(80, 25))
+        rule_w = max(40, min(cols - 4, 76))
+        rule = f"  {SLATE}{'─' * rule_w}{RESET}\n"
+
+        buf = ["\033[H"]
+
+        # ── Line 1: Header + Uptime + LAN IP
+        buf.append(f"\033[K  {TEAL}{BOLD}{APP_NAME}{RESET} {FAINT}v{VERSION}{RESET}  {SLATE}│{RESET}  {FAINT}Uptime:{RESET} {WHITE}{uptime_str()}{RESET}  {SLATE}│{RESET}  {FAINT}LAN:{RESET} {ULINE}{BLUE}http://{local_ip}:{FRONTEND_PORT}{RESET}\n")
+
+        # ── Line 2: Status
+        buf.append(f"\033[K  {DIM}Status:{RESET} {status_dot(b_ok, 'Backend', BACKEND_PORT)}   {status_dot(f_ok, 'Frontend', FRONTEND_PORT)}\n")
+        buf.append(f"\033[K{rule}")
+
+        # ── Lines 3-4: Shortcuts Keymap
+        buf.append(f"\033[K  {WHITE}[1]{RESET} Browser   {WHITE}[2]{RESET} API Docs   {WHITE}[3]{RESET} Restart BE  {WHITE}[4]{RESET} Restart FE  {WHITE}[5]{RESET} Buka Folder\n")
+        buf.append(f"\033[K  {WHITE}[r]{RESET} Restart All {WHITE}[c]{RESET} Bersihkan  {WHITE}[l]{RESET} Buka Log    {WHITE}[s]{RESET} Cek Status  {RED}[q]{RESET} Keluar\n")
+        buf.append(f"\033[K{rule}")
+
+        # ── Line 5: Log section header
+        buf.append(f"\033[K  {DIM}{WHITE}Live Logs:{RESET}\n")
+
+        # ── Line 6+: Recent logs fitting inside window
+        max_log_lines = max(4, rows - 9)
+        lines_to_show = list(log_buffer)[-max_log_lines:]
+
+        for log_line in lines_to_show:
+            buf.append(f"\033[K{log_line}\n")
+
+        buf.append("\033[J")
+
+        sys.stdout.write("".join(buf))
+        sys.stdout.flush()
+
+
+def dashboard_renderer():
+    """Background thread refreshing the UI up to ~5 FPS when dirty."""
+    global _dirty
+    last_periodic = time.time()
+    while running:
+        time.sleep(0.2)
+        if not (sys.stdout.isatty() and _dashboard_mode):
+            continue
+        now = time.time()
+        if now - last_periodic >= 2.0:
+            last_periodic = now
+            _dirty = True
+        if _dirty:
+            _dirty = False
+            try:
+                render_dashboard()
+            except Exception:
+                pass
 
 
 def print_banner():
-    with print_lock:
-        os.system("cls" if sys.platform == "win32" else "clear")
-
-        hostname = socket.gethostname()
+    if sys.stdout.isatty() and _dashboard_mode:
+        with print_lock:
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+        render_dashboard()
+    else:
         local_ip = get_local_ip()
-        b_ok = check_port(BACKEND_PORT)
-        f_ok = check_port(FRONTEND_PORT)
-
-        # ── Header
-        sys.stdout.write(f"""
-  {TEAL}{BOLD}{APP_NAME}{RESET}  {FAINT}v{VERSION}{RESET}
-  {FAINT}Self-hosted AI novel translator & reader{RESET}
-
-""")
-
-        # ── Services
-        sys.stdout.write(f"  {SLATE}{'─' * 56}{RESET}\n")
-        sys.stdout.write(f"  {DIM}{WHITE}Services{RESET}\n\n")
-        sys.stdout.write(status_dot(b_ok, "Backend", BACKEND_PORT) + f"    {FAINT}FastAPI + Uvicorn{RESET}\n")
-        sys.stdout.write(status_dot(f_ok, "Frontend", FRONTEND_PORT) + f"   {FAINT}Vite + React 19{RESET}\n")
-        sys.stdout.write(f"\n  {SLATE}{'─' * 56}{RESET}\n")
-
-        # ── Access URLs
-        sys.stdout.write(f"  {DIM}{WHITE}Access{RESET}\n\n")
-        sys.stdout.write(f"  {TEAL}➜{RESET}  {WHITE}Local Laptop{RESET}     {ULINE}http://localhost:{FRONTEND_PORT}{RESET}\n")
-        sys.stdout.write(f"  {BLUE}➜{RESET}  {WHITE}Mobile (WiFi){RESET}    {ULINE}{BLUE}http://{hostname}.local:{FRONTEND_PORT}{RESET}\n")
-        sys.stdout.write(f"  {INDIGO}➜{RESET}  {GRAY}Network IP{RESET}       {FAINT}{ULINE}http://{local_ip}:{FRONTEND_PORT}{RESET}\n")
-        sys.stdout.write(f"  {FAINT}➜  Swagger API      http://localhost:{BACKEND_PORT}/docs{RESET}\n")
-        sys.stdout.write(f"\n  {SLATE}{'─' * 56}{RESET}\n")
-
-        # ── Shortcuts
-        sys.stdout.write(f"  {DIM}{WHITE}Shortcuts (Tekan tombol keyboard):{RESET}\n\n")
-        sys.stdout.write(f"  {WHITE}[1]{RESET} Buka Browser     {WHITE}[3]{RESET} Restart Backend    {WHITE}[5]{RESET} Buka Folder\n")
-        sys.stdout.write(f"  {WHITE}[2]{RESET} Swagger Docs     {WHITE}[4]{RESET} Restart Frontend   {WHITE}[s]{RESET} Cek Status\n")
-        sys.stdout.write(f"  {WHITE}[c]{RESET} Bersihkan Layar  {RED}[q]{RESET} Matikan & Keluar\n")
-        sys.stdout.write(f"\n  {SLATE}{'─' * 56}{RESET}\n")
-
-        # ── Log header
-        sys.stdout.write(f"  {DIM}{WHITE}Live Logs{RESET}\n\n")
+        b_ok, f_ok = get_service_status(force=True)
+        sys.stdout.write(f"\n  === {APP_NAME} v{VERSION} ===\n")
+        sys.stdout.write(f"  Backend: http://localhost:{BACKEND_PORT}  Frontend: http://localhost:{FRONTEND_PORT}\n")
+        sys.stdout.write(f"  LAN Access: http://{local_ip}:{FRONTEND_PORT}\n\n")
         sys.stdout.flush()
 
 
@@ -256,10 +326,26 @@ def print_banner():
 #  Process Management
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def free_port(port: int):
+    """If a port is held by an orphan process, terminate it and its child tree."""
+    if sys.platform == "win32":
+        try:
+            res = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, errors="replace")
+            for line in res.stdout.splitlines():
+                if f":{port} " in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = parts[-1]
+                    if pid and pid.isdigit() and pid != "0" and int(pid) != os.getpid():
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+
 def start_backend():
     global backend_proc
     if backend_proc and backend_proc.poll() is None:
         return
+    free_port(BACKEND_PORT)
     log("backend", "Memulai FastAPI server...", TEAL)
 
     cmd = [sys.executable, "-u", "-m", "uvicorn", "main:app",
@@ -270,6 +356,7 @@ def start_backend():
 
     backend_proc = subprocess.Popen(
         cmd, cwd=BACKEND_DIR,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         env=env, text=True, bufsize=1, encoding='utf-8', errors='replace'
     )
@@ -281,6 +368,7 @@ def start_frontend():
     global frontend_proc
     if frontend_proc and frontend_proc.poll() is None:
         return
+    free_port(FRONTEND_PORT)
     log("frontend", "Memulai Vite dev server...", BLUE)
 
     cmd = ["npm.cmd" if sys.platform == "win32" else "npm", "run", "dev"]
@@ -289,6 +377,7 @@ def start_frontend():
 
     frontend_proc = subprocess.Popen(
         cmd, cwd=ROOT_DIR,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         env=env, text=True, bufsize=1, encoding='utf-8', errors='replace'
     )
@@ -327,13 +416,28 @@ def stop_frontend():
 
 
 def print_status():
-    b_ok = check_port(BACKEND_PORT)
-    f_ok = check_port(FRONTEND_PORT)
+    b_ok, f_ok = get_service_status(force=True)
     b_dot = f"{TEAL}●{RESET}" if b_ok else f"{RED}●{RESET}"
     f_dot = f"{TEAL}●{RESET}" if f_ok else f"{RED}●{RESET}"
     b_lbl = f"{WHITE}online{RESET}" if b_ok else f"{RED}offline{RESET}"
     f_lbl = f"{WHITE}online{RESET}" if f_ok else f"{RED}offline{RESET}"
     log("status", f"{b_dot} Backend {b_lbl}  {f_dot} Frontend {f_lbl}  {FAINT}uptime {uptime_str()}{RESET}", INDIGO)
+
+
+def check_firewall_rule(rule_names: list) -> bool:
+    if sys.platform != "win32":
+        return True
+    for name in rule_names:
+        try:
+            check = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+            )
+            if check.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def ensure_firewall_rules():
@@ -342,22 +446,17 @@ def ensure_firewall_rules():
         return
 
     rules = [
-        (f"{APP_NAME} - Frontend (Vite)", FRONTEND_PORT),
-        (f"{APP_NAME} - Backend (FastAPI)", BACKEND_PORT),
+        (["ReadOmni AI - Frontend (Vite)", "Translator Web - Frontend (Vite)"], FRONTEND_PORT, "ReadOmni AI - Frontend (Vite)"),
+        (["ReadOmni AI - Backend (FastAPI)", "Translator Web - Backend (FastAPI)"], BACKEND_PORT, "ReadOmni AI - Backend (FastAPI)"),
     ]
 
-    for rule_name, port in rules:
+    for aliases, port, default_name in rules:
+        if check_firewall_rule(aliases):
+            continue
         try:
-            check = subprocess.run(
-                ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            if check.returncode == 0:
-                continue
-
             subprocess.run(
                 ["netsh", "advfirewall", "firewall", "add", "rule",
-                 f"name={rule_name}", "dir=in", "action=allow", "protocol=TCP",
+                 f"name={default_name}", "dir=in", "action=allow", "protocol=TCP",
                  f"localport={port}", "profile=private,domain"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
@@ -372,8 +471,12 @@ def wait_for_services(timeout: float = 15.0, open_browser: bool = False):
         if check_port(BACKEND_PORT) and check_port(FRONTEND_PORT):
             break
         time.sleep(0.5)
-    print_banner()
+    get_service_status(force=True)
     log("ready", f"Semua layanan online dalam {time.time() - start:.1f}s", TEAL)
+    if sys.stdout.isatty() and _dashboard_mode:
+        render_dashboard()
+    else:
+        print_banner()
     if open_browser:
         open_url(f"http://localhost:{FRONTEND_PORT}")
 
@@ -483,20 +586,10 @@ def run_doctor() -> int:
     # 7. Windows Firewall Rules (Platform-Aware)
     if sys.platform == "win32":
         rules = [
-            (f"{APP_NAME} - Frontend (Vite)", FRONTEND_PORT),
-            (f"{APP_NAME} - Backend (FastAPI)", BACKEND_PORT),
+            (["ReadOmni AI - Frontend (Vite)", "Translator Web - Frontend (Vite)"], FRONTEND_PORT),
+            (["ReadOmni AI - Backend (FastAPI)", "Translator Web - Backend (FastAPI)"], BACKEND_PORT),
         ]
-        fw_ok = True
-        for rule_name, port in rules:
-            try:
-                check = subprocess.run(
-                    ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
-                )
-                if check.returncode != 0:
-                    fw_ok = False
-            except Exception:
-                fw_ok = False
+        fw_ok = all(check_firewall_rule(aliases) for aliases, _ in rules)
         if fw_ok:
             record("PASS", "Windows Firewall: Inbound rules configured", "Ports 5173 and 8000 allowed for private LAN.")
         else:
@@ -529,14 +622,15 @@ def run_doctor() -> int:
 
 def handle_key(ch: str) -> bool:
     """Process a single hotkey character. Returns False if quit requested."""
+    raw_ch = ch
     ch = ch.lower().strip()
     if not ch:
         return True
 
-    if ch == '1':
+    if ch in ('1', 'b'):
         log("action", f"🌐 Membuka browser: http://localhost:{FRONTEND_PORT}", TEAL)
         open_url(f"http://localhost:{FRONTEND_PORT}")
-    elif ch == '2':
+    elif ch in ('2', 'd'):
         log("action", f"📑 Membuka API docs: http://localhost:{BACKEND_PORT}/docs", BLUE)
         open_url(f"http://localhost:{BACKEND_PORT}/docs")
     elif ch == '3':
@@ -549,18 +643,41 @@ def handle_key(ch: str) -> bool:
         stop_frontend()
         time.sleep(0.5)
         start_frontend()
-    elif ch == '5':
+    elif ch in ('5', 'f', 'o'):
         log("action", "📁 Membuka folder project...", BLUE)
         if sys.platform == "win32":
             os.startfile(ROOT_DIR)
         else:
             subprocess.Popen(["xdg-open", ROOT_DIR])
+    elif ch == 'r':
+        log("action", "🔄 Merestart SEMUA layanan (Backend + Frontend)...", AMBER)
+        stop_backend()
+        stop_frontend()
+        time.sleep(0.5)
+        start_backend()
+        start_frontend()
     elif ch == 'c':
-        print_banner()
+        with print_lock:
+            log_buffer.clear()
+            if sys.stdout.isatty() and _dashboard_mode:
+                sys.stdout.write("\033[2J\033[H")
+                sys.stdout.flush()
+        log("action", "Layar dan buffer log dibersihkan.", TEAL)
+        if sys.stdout.isatty() and _dashboard_mode:
+            render_dashboard()
+        else:
+            print_banner()
+    elif ch == 'l':
+        log("action", f"📑 Membuka file log: {LOG_FILE}", BLUE)
+        open_url(LOG_FILE)
     elif ch == 's':
         print_status()
-    elif ch in ['q', '\x03']:  # q or Ctrl+C
+    elif ch in ('h', '?'):
+        log("help", "Shortcuts: [1/b] Browser | [2/d] Docs | [3] Backend | [4] Frontend | [5/f] Folder | [r] Restart All | [c] Clear | [l] Logs | [s] Status | [q] Exit", INDIGO)
+    elif ch in ['q', 'x', '\x03']:  # q, x, or Ctrl+C
         return False
+    else:
+        log("input", f"Tombol '{raw_ch}' ditekan. Ketik [1]-[5], [r], [c], [l], [s], atau [q] untuk aksi.", FAINT)
     return True
 
 
@@ -574,6 +691,9 @@ def main(open_browser: bool = False):
     start_backend()
     start_frontend()
 
+    # Start throttled dashboard rendering loop
+    threading.Thread(target=dashboard_renderer, daemon=True).start()
+
     # Auto-refresh banner when services come online
     threading.Thread(target=wait_for_services, args=(15.0, open_browser), daemon=True).start()
 
@@ -585,10 +705,14 @@ def main(open_browser: bool = False):
                     # Handle extended keys (arrow keys, function keys, numpad)
                     if ch in ('\x00', '\xe0'):
                         ch2 = msvcrt.getwch()
-                        numpad_map = {'O': '1', 'P': '2', 'Q': '3', 'K': '4', 'M': '6', 'G': '7', 'H': '8', 'I': '9'}
+                        numpad_map = {
+                            'O': '1', 'P': '2', 'Q': '3', 'K': '4',
+                            'L': '5', 'u': '5', 'e': '5', 'M': '6',
+                            'G': '7', 'H': '8', 'I': '9'
+                        }
                         ch = numpad_map.get(ch2, '')
 
-                    if not handle_key(ch):
+                    if ch and not handle_key(ch):
                         break
                 time.sleep(0.05)
             else:
@@ -598,6 +722,8 @@ def main(open_browser: bool = False):
                         break
                 except (KeyboardInterrupt, EOFError):
                     break
+    except (KeyboardInterrupt, EOFError):
+        pass
     finally:
         running = False
         sys.stdout.write(f"\n  {AMBER}Menutup semua layanan background...{RESET}\n")
@@ -606,7 +732,7 @@ def main(open_browser: bool = False):
         stop_frontend()
         sys.stdout.write(f"  {TEAL}✓{RESET} {WHITE}Semua layanan berhasil dimatikan dengan bersih. Sampai jumpa!{RESET}\n\n")
         sys.stdout.flush()
-        time.sleep(0.5)
+        time.sleep(0.3)
 
 
 def parse_args():
@@ -620,13 +746,28 @@ commands:
 
 options:
   -h, --help       Show this help message and exit
-  --no-browser     Start services without launching a browser window
+  --browser        Launch browser window automatically on startup
+  --no-browser     Do not launch browser window on startup (default)
 """
     )
     parser.add_argument(
-        "--no-browser",
+        "--browser",
+        "--open-browser",
         action="store_true",
-        help="Start services without launching a browser window."
+        default=False,
+        dest="open_browser",
+        help="Launch browser window automatically on startup."
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_false",
+        dest="open_browser",
+        help="Do not launch browser window on startup (default)."
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable hot-reload development mode."
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -640,8 +781,15 @@ options:
 
 
 if __name__ == "__main__":
-    cli_args = parse_args()
-    if cli_args.command == "doctor":
-        sys.exit(run_doctor())
-    else:
-        main(open_browser=not cli_args.no_browser)
+    try:
+        cli_args = parse_args()
+        if cli_args.command == "doctor":
+            sys.exit(run_doctor())
+        else:
+            main(open_browser=bool(getattr(cli_args, 'open_browser', False)))
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as e:
+        sys.stdout.write(f"\n  {RED}[FATAL] Launcher error: {e}{RESET}\n")
+        sys.exit(1)
+    sys.exit(0)

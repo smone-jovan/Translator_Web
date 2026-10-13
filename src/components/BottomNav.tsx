@@ -22,7 +22,7 @@ export default function BottomNav({ activeTab, onTabChange, visible = true }: Bo
             key={item.id}
             onClick={() => onTabChange(item.id)}
             className={cn(
-              "flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all duration-300 relative min-w-[70px]",
+              "flex-1 min-w-0 flex flex-col items-center gap-1 sm:gap-1.5 p-2 sm:p-2.5 rounded-xl transition-all duration-300 relative cursor-pointer",
               activeTab === item.id
                 ? "text-[var(--primary)]"
                 : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"

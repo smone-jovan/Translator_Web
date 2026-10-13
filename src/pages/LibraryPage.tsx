@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Filter, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser, RotateCcw, Pencil } from 'lucide-react';
+import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Sparkles, Globe, ScanSearch, AlertTriangle, Loader2, CheckCircle2, X, Wand2, Eraser, RotateCcw, Pencil, Flame, ArrowUpDown } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,6 +12,10 @@ import EditCoverModal, { getTitleGradient } from '@/components/EditCoverModal';
 import ScrapeNUModal from '@/components/ScrapeNUModal';
 import { useConfirm } from '@/hooks/use-confirm';
 import { toast } from 'sonner';
+import { syncEngineLoadMode } from '@/lib/settingsSync';
+
+type FilterTab = 'all' | 'reading' | 'unread' | 'completed';
+type SortOption = 'last_read' | 'recent_added' | 'progress' | 'title';
 
 interface ThreadItem {
   id: number;
@@ -24,6 +26,7 @@ interface ThreadItem {
   created_at: string;
   last_read?: string;
   last_read_id?: number | null;
+  last_read_at?: string | null;
   progress?: number;
   cover_image?: string | null;
   original_title?: string | null;
@@ -177,20 +180,21 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
               anchorEl={anchorEl}
               open={open}
               onClose={handleClose}
-              // @ts-ignore
-              PaperProps={{
-                sx: {
-                  background: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  color: 'var(--foreground)',
-                  borderRadius: '12px',
-                  mt: 0.5,
-                  '& .MuiMenuItem-root': {
-                    fontSize: '0.75rem',
-                    gap: 1.5,
-                    px: 2,
-                    py: 1,
-                    '&:hover': { background: 'rgba(255,255,255,0.05)' }
+              slotProps={{
+                paper: {
+                  sx: {
+                    background: 'var(--card)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--foreground)',
+                    borderRadius: '12px',
+                    mt: 0.5,
+                    '& .MuiMenuItem-root': {
+                      fontSize: '0.75rem',
+                      gap: 1.5,
+                      px: 2,
+                      py: 1,
+                      '&:hover': { background: 'rgba(255,255,255,0.05)' }
+                    }
                   }
                 }
               }}
@@ -318,11 +322,100 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
   );
 };
 
+const LIBRARY_CACHE_KEY = 'readomni_library_cache_v1';
+const LIBRARY_SCROLL_KEY = 'readomni_library_scroll_v1';
+
+interface LibraryCacheData {
+  threads: ThreadItem[];
+  searchQuery: string;
+  activeTab: FilterTab;
+  sortBy: SortOption;
+  lastOpenedThreadId: number | null;
+  savedAt: number;
+}
+
+let memoryLibraryCache: LibraryCacheData | null = null;
+let memoryScrollY = 0;
+
+function readLibrarySessionCache(): LibraryCacheData | null {
+  if (memoryLibraryCache) return memoryLibraryCache;
+  try {
+    const raw = sessionStorage.getItem(LIBRARY_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LibraryCacheData>;
+    if (parsed && Array.isArray(parsed.threads)) {
+      memoryLibraryCache = {
+        threads: parsed.threads,
+        searchQuery: typeof parsed.searchQuery === 'string' ? parsed.searchQuery : '',
+        activeTab: parsed.activeTab || 'all',
+        sortBy: parsed.sortBy || 'last_read',
+        lastOpenedThreadId: typeof parsed.lastOpenedThreadId === 'number' ? parsed.lastOpenedThreadId : null,
+        savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
+      };
+      return memoryLibraryCache;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function readSavedScrollY(): number {
+  if (memoryScrollY > 0) return memoryScrollY;
+  try {
+    const raw = sessionStorage.getItem(LIBRARY_SCROLL_KEY);
+    if (raw) {
+      const num = parseInt(raw, 10);
+      if (!isNaN(num) && num > 0) {
+        memoryScrollY = num;
+        return num;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return 0;
+}
+
+function saveLibrarySessionCache(data: Partial<LibraryCacheData>) {
+  const prev = readLibrarySessionCache() || {
+    threads: [],
+    searchQuery: '',
+    activeTab: 'all' as FilterTab,
+    sortBy: 'last_read' as SortOption,
+    lastOpenedThreadId: null,
+    savedAt: Date.now()
+  };
+  const updated: LibraryCacheData = {
+    ...prev,
+    ...data,
+    savedAt: Date.now()
+  };
+  memoryLibraryCache = updated;
+  try {
+    sessionStorage.setItem(LIBRARY_CACHE_KEY, JSON.stringify(updated));
+  } catch {
+    // ignore
+  }
+}
+
+function saveScrollY(scrollY: number) {
+  memoryScrollY = scrollY;
+  try {
+    sessionStorage.setItem(LIBRARY_SCROLL_KEY, String(scrollY));
+  } catch {
+    // ignore
+  }
+}
+
 export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
-  const [threads, setThreads] = useState<ThreadItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedBatchThread, setSelectedBatchThread] = useState<any>(null);
+  const initialCache = readLibrarySessionCache();
+  const [threads, setThreads] = useState<ThreadItem[]>(() => initialCache?.threads ?? []);
+  const [loading, setLoading] = useState(() => (initialCache?.threads?.length ?? 0) === 0);
+  const [searchQuery, setSearchQuery] = useState(() => initialCache?.searchQuery ?? '');
+  const [activeTab, setActiveTab] = useState<FilterTab>(() => initialCache?.activeTab ?? 'all');
+  const [sortBy, setSortBy] = useState<SortOption>(() => initialCache?.sortBy ?? 'last_read');
+  const [selectedBatchThread, setSelectedBatchThread] = useState<(ThreadItem & { chapters?: Array<{ id: number; order: number; title_original: string | null; title_translated?: string | null; has_translation: boolean; translation_status?: string }> }) | null>(null);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [selectedCoverThread, setSelectedCoverThread] = useState<ThreadItem | null>(null);
   const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
@@ -337,6 +430,50 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
   const [editSaving, setEditSaving] = useState(false);
   const { confirm } = useConfirm();
 
+  const handleOpenThread = useCallback((threadId: number, chapterId?: number) => {
+    saveScrollY(window.scrollY);
+    saveLibrarySessionCache({ lastOpenedThreadId: threadId });
+    onOpenThread?.(threadId, chapterId);
+  }, [onOpenThread]);
+
+  // Persist filter and search states
+  useEffect(() => {
+    saveLibrarySessionCache({ searchQuery, activeTab, sortBy });
+  }, [searchQuery, activeTab, sortBy]);
+
+  // Track window scroll
+  useEffect(() => {
+    let animId: number | null = null;
+    const handleScroll = () => {
+      if (animId) cancelAnimationFrame(animId);
+      animId = requestAnimationFrame(() => {
+        if (window.scrollY > 0) {
+          saveScrollY(window.scrollY);
+        }
+      });
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      if (window.scrollY > 0) {
+        saveScrollY(window.scrollY);
+      }
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  // Restore scroll position upon mounting
+  useEffect(() => {
+    const targetScroll = readSavedScrollY();
+    if (targetScroll > 0) {
+      window.scrollTo({ top: targetScroll, behavior: 'instant' });
+      const raf = requestAnimationFrame(() => {
+        window.scrollTo({ top: targetScroll, behavior: 'instant' });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, []);
+
   const handleSaveCover = async (coverValue: string | null) => {
     if (!selectedCoverThread) return;
     try {
@@ -347,18 +484,20 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       });
       if (!res.ok) throw new Error('Failed to update cover');
       
-      fetchThreads();
+      fetchThreads(true);
     } catch (e) {
       console.error('Error saving cover:', e);
       throw e;
     }
   };
 
-  const fetchThreads = useCallback(async () => {
+  const fetchThreads = useCallback(async (silent = false) => {
     try {
+      if (!silent) setLoading(true);
       const res = await fetch(getApiUrl('/api/threads'));
       const data = await res.json();
       setThreads(data);
+      saveLibrarySessionCache({ threads: data });
     } catch {
       console.error('Failed to fetch threads');
     } finally {
@@ -366,8 +505,11 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   }, []);
 
+  const initialCacheRef = React.useRef(initialCache);
+
   useEffect(() => {
-    fetchThreads();
+    const hasCache = (initialCacheRef.current?.threads?.length ?? 0) > 0;
+    fetchThreads(hasCache);
   }, [fetchThreads]);
 
   // Silently refresh when batch translation is in progress or completes
@@ -381,7 +523,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
         lastCompletedCount = detail.completed;
         fetch(getApiUrl(`/api/threads?t=${Date.now()}`), { cache: 'no-store' })
           .then(res => res.json())
-          .then(data => setThreads(data))
+          .then(data => {
+            setThreads(data);
+            saveLibrarySessionCache({ threads: data });
+          })
           .catch(() => {});
       }
     };
@@ -389,7 +534,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     const handleBatchCompleted = () => {
       fetch(getApiUrl(`/api/threads?t=${Date.now()}`), { cache: 'no-store' })
         .then(res => res.json())
-        .then(data => setThreads(data))
+        .then(data => {
+          setThreads(data);
+          saveLibrarySessionCache({ threads: data });
+        })
         .catch(() => {});
     };
 
@@ -471,9 +619,11 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     }
   };
 
-  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, _loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast' = 'quality') => {
+  const handleStartBatch = async (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast' = 'quality') => {
     if (!selectedBatchThread) return;
     
+    syncEngineLoadMode(loadMode);
+
     try {
       const res = await fetch(getApiUrl(`/api/threads/${selectedBatchThread.id}/batch-translate`), {
         method: 'POST',
@@ -483,7 +633,8 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             ai_extract: aiExtract,
             overwrite: overwrite,
             target_lang: targetLang,
-            translation_mode: translationMode
+            translation_mode: translationMode,
+            load_mode: loadMode
         })
       });
       
@@ -506,8 +657,8 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Failed to audit thread');
       setAuditResult(data);
-    } catch (e: any) {
-      setAuditError(e.message || 'Failed to audit thread');
+    } catch (e: unknown) {
+      setAuditError(e instanceof Error ? e.message : 'Failed to audit thread');
     } finally {
       setAuditLoading(false);
     }
@@ -528,22 +679,65 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       } else {
         toast.info(message);
       }
-    } catch (e: any) {
-      toast.error(`${label} failed: ${e.message || 'Unknown error'}`);
+    } catch (e: unknown) {
+      toast.error(`${label} failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
     }
   };
 
-  const filteredThreads = threads.filter(t => 
-    t.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Counts for tabs
+  const allCount = threads.length;
+  const readingCount = threads.filter(t => (t.progress ?? 0) > 0 && (t.progress ?? 0) < 100).length;
+  const unreadCount = threads.filter(t => (t.progress ?? 0) === 0).length;
+  const completedCount = threads.filter(t => (t.progress ?? 0) >= 100).length;
 
-  // Find all books with reading progress
+  // Find all books with reading progress, sorted by most recently read (last_read_at)
   const activeReads = threads
     .filter(t => t.progress !== undefined && t.progress > 0 && t.progress < 100)
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => {
+      const timeA = a.last_read_at ? new Date(a.last_read_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+      const timeB = b.last_read_at ? new Date(b.last_read_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+      return timeB - timeA;
+    });
+
+  // Filter and sort for the main grid
+  const filteredThreads = threads
+    .filter(t => {
+      const query = searchQuery.trim().toLowerCase();
+      if (query) {
+        const matchTitle = t.title.toLowerCase().includes(query);
+        const matchAuthor = t.author ? t.author.toLowerCase().includes(query) : false;
+        const matchOrig = t.original_title ? t.original_title.toLowerCase().includes(query) : false;
+        if (!matchTitle && !matchAuthor && !matchOrig) return false;
+      }
+
+      const prog = t.progress ?? 0;
+      if (activeTab === 'reading') return prog > 0 && prog < 100;
+      if (activeTab === 'unread') return prog === 0;
+      if (activeTab === 'completed') return prog >= 100;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'last_read') {
+        const timeA = a.last_read_at ? new Date(a.last_read_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+        const timeB = b.last_read_at ? new Date(b.last_read_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+        return timeB - timeA;
+      }
+      if (sortBy === 'recent_added') {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      }
+      if (sortBy === 'progress') {
+        return (b.progress ?? 0) - (a.progress ?? 0);
+      }
+      if (sortBy === 'title') {
+        return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      return 0;
+    });
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-12 py-8 px-4 sm:px-6 animate-in fade-in duration-700">
+    <div className="w-full max-w-6xl mx-auto space-y-10 py-8 px-4 sm:px-6 animate-in fade-in duration-700">
       {/* Continue Reading Carousel */}
       {activeReads.length > 0 && (
         <div className="space-y-4">
@@ -622,10 +816,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                     </div>
 
                     <div className="flex items-center gap-3 pt-1">
-                      <Button size="sm" className="rounded-xl px-5 font-bold shadow-lg shadow-[var(--primary)]/20 text-[10px] h-9" onClick={() => onOpenThread?.(book.id, book.last_read_id ?? undefined)}>
+                      <Button size="sm" className="rounded-xl px-5 font-bold shadow-lg shadow-[var(--primary)]/20 text-[10px] h-9 cursor-pointer" onClick={() => handleOpenThread(book.id, book.last_read_id ?? undefined)}>
                         <Play size={14} className="fill-current mr-2" /> RESUME
                       </Button>
-                      <Button variant="ghost" size="sm" className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground)] text-[10px] h-9" onClick={() => onOpenThread?.(book.id)}>
+                      <Button variant="ghost" size="sm" className="rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground)] text-[10px] h-9 cursor-pointer" onClick={() => handleOpenThread(book.id)}>
                         DETAILS
                       </Button>
                     </div>
@@ -638,10 +832,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       )}
 
       {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-8 pt-4">
-        <div className="space-y-2">
-          <h1 className="text-4xl md:text-5xl font-black text-[var(--foreground)] tracking-tighter">Your Library</h1>
-          <p className="text-[var(--muted-foreground)] font-medium text-lg">Manage your translated works and reading progress.</p>
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-2">
+        <div className="space-y-1.5">
+          <h1 className="text-3xl md:text-4xl font-black text-[var(--foreground)] tracking-tighter">Your Library</h1>
+          <p className="text-[var(--muted-foreground)] font-medium text-sm md:text-base">Kelola proyek terjemahan dan pantau progres membaca novel Anda.</p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -651,13 +845,104 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
               type="text" 
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search library..."
-              className="pl-12 pr-6 py-3.5 rounded-2xl bg-[var(--card)] border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20 focus:border-[var(--primary)] transition-all min-w-[320px] shadow-sm"
+              placeholder="Cari judul, pengarang..."
+              aria-label="Cari judul atau pengarang"
+              className="pl-12 pr-6 py-3 rounded-2xl bg-[var(--card)] border border-[var(--border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20 focus:border-[var(--primary)] transition-all min-w-[280px] sm:min-w-[320px] shadow-sm"
             />
           </div>
-          <Button variant="outline" size="icon" className="rounded-2xl h-[50px] w-[50px] border-[var(--border)] shadow-sm"><Filter size={20} /></Button>
         </div>
       </header>
+
+      {/* Status Filter Tabs & Sort Controls Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[var(--border)]/60 pb-5">
+        {/* Status Filter Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 no-scrollbar">
+          <button
+            onClick={() => setActiveTab('all')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all duration-200 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'all'
+                ? 'bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/25 ring-2 ring-[var(--primary)]/30'
+                : 'bg-[var(--secondary)]/70 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]'
+            }`}
+          >
+            <BookOpen size={14} />
+            <span>Semua</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeTab === 'all' ? 'bg-white/20 text-white' : 'bg-[var(--card)] text-[var(--muted-foreground)]'}`}>
+              {allCount}
+            </span>
+          </button>
+          
+          <button
+            onClick={() => setActiveTab('reading')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all duration-200 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'reading'
+                ? 'bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/25 ring-2 ring-[var(--primary)]/30'
+                : 'bg-[var(--secondary)]/70 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]'
+            }`}
+          >
+            <Flame size={14} className={activeTab === 'reading' ? 'text-amber-300 fill-amber-300' : 'text-amber-500'} />
+            <span>Sedang Dibaca</span>
+            {readingCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeTab === 'reading' ? 'bg-white/20 text-white' : 'bg-amber-500/15 text-amber-500'}`}>
+                {readingCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('unread')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all duration-200 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'unread'
+                ? 'bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/25 ring-2 ring-[var(--primary)]/30'
+                : 'bg-[var(--secondary)]/70 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]'
+            }`}
+          >
+            <Sparkles size={14} className={activeTab === 'unread' ? 'text-cyan-300' : 'text-cyan-500'} />
+            <span>Belum Dibaca</span>
+            {unreadCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeTab === 'unread' ? 'bg-white/20 text-white' : 'bg-[var(--card)] text-[var(--muted-foreground)]'}`}>
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('completed')}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all duration-200 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'completed'
+                ? 'bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/25 ring-2 ring-[var(--primary)]/30'
+                : 'bg-[var(--secondary)]/70 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]'
+            }`}
+          >
+            <CheckCircle2 size={14} className={activeTab === 'completed' ? 'text-emerald-300' : 'text-emerald-500'} />
+            <span>Selesai</span>
+            {completedCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${activeTab === 'completed' ? 'bg-white/20 text-white' : 'bg-emerald-500/15 text-emerald-500'}`}>
+                {completedCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Sort Selector */}
+        <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm text-xs font-medium text-[var(--muted-foreground)]">
+            <ArrowUpDown size={14} className="text-[var(--primary)]" />
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted-foreground)] hidden md:inline">Urutkan:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              aria-label="Urutkan novel"
+              className="bg-transparent text-[var(--foreground)] font-bold text-xs focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="last_read" className="bg-[var(--card)] text-[var(--foreground)]">Terakhir Dibaca (Default)</option>
+              <option value="recent_added" className="bg-[var(--card)] text-[var(--foreground)]">Baru Ditambahkan</option>
+              <option value="progress" className="bg-[var(--card)] text-[var(--foreground)]">Progres Baca (%)</option>
+              <option value="title" className="bg-[var(--card)] text-[var(--foreground)]">Judul (A-Z)</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
       {/* Grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-8 gap-y-12">
@@ -670,7 +955,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
             key={thread.id} 
             thread={thread} 
             actions={{
-              onOpen: (chapterId?: number) => onOpenThread?.(thread.id, chapterId),
+              onOpen: (chapterId?: number) => handleOpenThread(thread.id, chapterId),
               onDelete: () => handleDelete(thread.id),
               onBatchTranslate: () => handleOpenBatchModal(thread),
               onEditCover: () => {
@@ -695,17 +980,57 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
         ))}
 
         {!loading && filteredThreads.length === 0 && (
-          <div className="col-span-full py-40 text-center bg-[var(--card)]/50 border-2 border-dashed border-[var(--border)] rounded-[3rem] animate-in zoom-in-95 duration-500">
+          <div className="col-span-full py-28 text-center bg-[var(--card)]/50 border-2 border-dashed border-[var(--border)] rounded-[3rem] animate-in zoom-in-95 duration-500">
             <div className="inline-flex p-6 rounded-full bg-[var(--secondary)]/50 mb-6">
-              <BookOpen className="w-12 h-12 text-[var(--muted-foreground)] opacity-30" />
+              {activeTab === 'reading' ? (
+                <Flame className="w-12 h-12 text-amber-500 opacity-60" />
+              ) : activeTab === 'completed' ? (
+                <CheckCircle2 className="w-12 h-12 text-emerald-500 opacity-60" />
+              ) : activeTab === 'unread' ? (
+                <Sparkles className="w-12 h-12 text-cyan-500 opacity-60" />
+              ) : (
+                <BookOpen className="w-12 h-12 text-[var(--muted-foreground)] opacity-30" />
+              )}
             </div>
-            <h2 className="text-3xl font-black text-[var(--foreground)] mb-3">Library is Empty</h2>
-            <p className="text-[var(--muted-foreground)] font-medium max-w-sm mx-auto mb-10 leading-relaxed">
-              Start by translating a URL or uploading an EPUB to build your personal collection.
+            <h2 className="text-2xl md:text-3xl font-black text-[var(--foreground)] mb-3">
+              {searchQuery
+                ? `Tidak ada novel yang cocok dengan "${searchQuery}"`
+                : activeTab === 'reading'
+                ? 'Belum Ada Novel yang Sedang Dibaca'
+                : activeTab === 'unread'
+                ? 'Semua Novel Sudah Pernah Dibuka'
+                : activeTab === 'completed'
+                ? 'Belum Ada Novel yang Selesai'
+                : 'Library is Empty'}
+            </h2>
+            <p className="text-[var(--muted-foreground)] font-medium max-w-md mx-auto mb-8 leading-relaxed text-sm">
+              {searchQuery
+                ? 'Coba gunakan kata kunci pencarian yang lain atau periksa kembali ejaan judul.'
+                : activeTab === 'reading'
+                ? 'Pilih dan buka novel dari tab "Belum Dibaca" atau "Semua" untuk mulai membaca.'
+                : activeTab === 'unread'
+                ? 'Semua novel di perpustakaan memiliki progres baca aktif atau telah selesai.'
+                : activeTab === 'completed'
+                ? 'Novel dengan progres 100% akan otomatis terkumpul di sini.'
+                : 'Start by translating a URL or uploading an EPUB to build your personal collection.'}
             </p>
-            <Button size="lg" className="rounded-2xl px-12 font-bold shadow-lg" onClick={() => window.location.hash = '#translate'}>
-              Go to Translate
-            </Button>
+            {activeTab !== 'all' || searchQuery ? (
+              <Button
+                variant="outline"
+                size="lg"
+                className="rounded-2xl px-8 font-bold shadow-sm"
+                onClick={() => {
+                  setActiveTab('all');
+                  setSearchQuery('');
+                }}
+              >
+                Reset Filter
+              </Button>
+            ) : (
+              <Button size="lg" className="rounded-2xl px-12 font-bold shadow-lg" onClick={() => window.location.hash = '#translate'}>
+                Go to Translate
+              </Button>
+            )}
           </div>
         )}
       </div>

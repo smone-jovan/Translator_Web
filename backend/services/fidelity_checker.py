@@ -70,24 +70,43 @@ def _count_dialogue_lines(text: str) -> int:
     return count
 
 
-def is_truncated_mid_sentence(text: str) -> bool:
+CHAPTER_END_PATTERN = re.compile(
+    r"(?:[-—~*#_\s]*\b(?:the\s+end|to\s+be\s+continued|fin|end|tamat|selesai|bersambung)\b[-—~*#_\s]*|[(\[{<]?(?:完|全剧终|未完待续|全書完|全书完|本章完)[)\]}>]?\s*)$",
+    re.IGNORECASE
+)
+
+
+def is_truncated_mid_sentence(text: str, original_text: str | None = None) -> bool:
     """
     Check if a translation was cut off mid-sentence.
     Returns True if the last character is NOT a proper sentence-ending character.
-    This replaces the old inline logic in threads.py fix-truncated endpoint.
+    Gracefully handles chapter-ending markers (e.g., "- The End") and cliffhanger endings
+    that mirror the original source text (e.g., trailing em-dash or names).
     """
     if not text or not text.strip():
         return True  # Empty text is considered truncated
     
     cleaned = text.rstrip()
-    # Trim markdown emphasis wrappers (like * or _ or `) from the tail to inspect inner ending punctuation
-    trimmed = cleaned.rstrip('*_`~ \t\r\n')
+    if CHAPTER_END_PATTERN.search(cleaned):
+        return False
+        
+    # Trim markdown emphasis wrappers (like * or _ or ` or \) from the tail
+    trimmed = cleaned.rstrip('*_`~\\ \t\r\n')
     if not trimmed:
-        # If string was only markdown markers/spaces
         trimmed = cleaned
         
     last_char = trimmed[-1:]
-    return last_char not in PROPER_ENDING_CHARS
+    if last_char in PROPER_ENDING_CHARS:
+        return False
+        
+    # If original text is provided, check if the original also ended without sentence-ending punctuation or with an em-dash
+    if original_text and original_text.strip():
+        orig_cleaned = original_text.rstrip().rstrip('*_`~\\ \t\r\n')
+        orig_last = orig_cleaned[-1:] if orig_cleaned else ""
+        if orig_last not in PROPER_ENDING_CHARS or orig_last in '—-\u2014\u2015~～':
+            return False
+            
+    return True
 
 
 def verify_translation_fidelity(
@@ -133,13 +152,32 @@ def verify_translation_fidelity(
 
     is_suspicious = False
 
-    # Check paragraph ratio
-    if para_ratio < MIN_PARAGRAPH_RATIO:
+    # Mid-sentence truncation check
+    truncated = is_truncated_mid_sentence(translated_text, original_text=original_text)
+    if truncated:
         is_suspicious = True
         warnings.append(
-            f"Paragraph count dropped significantly: {orig_paras} original → {trans_paras} translated "
-            f"(ratio: {para_ratio:.2f}). Possible content truncation or summarization."
+            "Translation appears to be cut off mid-sentence. "
+            "The last character is not a proper sentence-ending punctuation."
         )
+
+    # Check paragraph ratio
+    if para_ratio < MIN_PARAGRAPH_RATIO:
+        avg_orig_len = orig_chars / max(orig_paras, 1)
+        # Web novels frequently format 1 sentence per line (avg_orig_len < 60 chars).
+        # If character expansion is healthy (char_ratio >= 1.0) and text is not truncated,
+        # this is normal paragraph consolidation into prose, NOT content truncation.
+        if avg_orig_len < 60 and char_ratio >= 1.0 and not truncated:
+            warnings.append(
+                f"Paragraph count consolidated: {orig_paras} original -> {trans_paras} translated "
+                f"(ratio: {para_ratio:.2f}). Character length is healthy ({char_ratio:.2f}x); normal paragraph consolidation."
+            )
+        else:
+            is_suspicious = True
+            warnings.append(
+                f"Paragraph count dropped significantly: {orig_paras} original -> {trans_paras} translated "
+                f"(ratio: {para_ratio:.2f}). Possible content truncation or summarization."
+            )
 
     if para_ratio > MAX_PARAGRAPH_RATIO:
         is_suspicious = True
@@ -182,15 +220,6 @@ def verify_translation_fidelity(
         warnings.append(
             f"Dialogue lines dropped severely: {orig_dialogue} original -> {trans_dialogue} translated "
             f"(ratio: {dialogue_ratio:.2f}). Possible dialogue omission or reformatting issue."
-        )
-
-    # Quaternary check: mid-sentence truncation (merged from fix-truncated endpoint)
-    truncated = is_truncated_mid_sentence(translated_text)
-    if truncated:
-        is_suspicious = True
-        warnings.append(
-            "Translation appears to be cut off mid-sentence. "
-            "The last character is not a proper sentence-ending punctuation."
         )
 
     # Log warnings

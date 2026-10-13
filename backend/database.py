@@ -3,8 +3,11 @@ Database setup — SQLite via SQLAlchemy 2.0.
 Tabel: threads, chapters, lorebook_entries, translation_segments, user_bookmarks, global_settings
 """
 
-from typing import List, Optional
+import re
+from typing import List, Optional, Any
 from datetime import datetime
+from contextlib import contextmanager
+from starlette.requests import Request
 from sqlalchemy import create_engine, event, String, Text, DateTime, ForeignKey, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -12,10 +15,18 @@ DATABASE_URL = "sqlite:///./app.db"
 DATABASE_URL_GHOST = "sqlite:///./ghost.db"
 
 engine_main = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 60},
+    pool_size=30,
+    max_overflow=50,
+    pool_timeout=60,
 )
 engine_ghost = create_engine(
-    DATABASE_URL_GHOST, connect_args={"check_same_thread": False}
+    DATABASE_URL_GHOST,
+    connect_args={"check_same_thread": False, "timeout": 60},
+    pool_size=30,
+    max_overflow=50,
+    pool_timeout=60,
 )
 
 # Activate WAL mode for concurrent read/write safety across multi-device sessions
@@ -36,10 +47,49 @@ SessionLocalGhost = sessionmaker(autocommit=False, autoflush=False, bind=engine_
 
 ACTIVE_WORKSPACE = "main"
 
-def SessionLocal():
-    if ACTIVE_WORKSPACE == "ghost":
-        return SessionLocalGhost()
-    return SessionLocalMain()
+def get_session_factory(workspace: str = "main") -> sessionmaker:
+    if str(workspace).lower() == "ghost":
+        return SessionLocalGhost
+    return SessionLocalMain
+
+
+@contextmanager
+def get_session(workspace: Optional[str] = "main"):
+    ws = str(workspace).lower() if workspace else (ACTIVE_WORKSPACE if ACTIVE_WORKSPACE in ["main", "ghost"] else "main")
+    factory = get_session_factory(ws)
+    db = factory()
+    db._workspace = ws
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def SessionLocal(workspace: Optional[str] = None):
+    ws = str(workspace).lower() if workspace else (ACTIVE_WORKSPACE if ACTIVE_WORKSPACE in ["main", "ghost"] else "main")
+    factory = get_session_factory(ws)
+    db = factory()
+    db._workspace = ws
+    return db
+
+
+def resolve_workspace(request: Optional[Any] = None) -> str:
+    if request is not None and hasattr(request, "headers"):
+        ws = request.headers.get("X-Workspace") or request.headers.get("x-workspace")
+        if ws and str(ws).lower() in ["main", "ghost"]:
+            return str(ws).lower()
+        if hasattr(request, "cookies"):
+            cookie_ws = request.cookies.get("readomni_workspace")
+            if cookie_ws and str(cookie_ws).lower() in ["main", "ghost"]:
+                return str(cookie_ws).lower()
+        return "main"
+    if ACTIVE_WORKSPACE in ["main", "ghost"]:
+        return ACTIVE_WORKSPACE
+    return "main"
+
+
+def get_db_workspace(db: Any) -> str:
+    return getattr(db, "_workspace", ACTIVE_WORKSPACE if ACTIVE_WORKSPACE in ["main", "ghost"] else "main")
 
 
 class Base(DeclarativeBase):
@@ -87,6 +137,9 @@ class GlobalSetting(Base):
     # Ghost Mode PIN authentication
     ghost_pin: Mapped[str] = mapped_column(String(100), default="03697")
     display_mode: Mapped[str] = mapped_column(String(20), default="translated") # translated, original, both
+    scraper_concurrency: Mapped[int] = mapped_column(default=2) # 1-5 concurrent browser workers
+    novalpie_auth_enabled: Mapped[int] = mapped_column(default=0) # 0 = guest, 1 = authenticated
+    novalpie_cookie: Mapped[Optional[str]] = mapped_column(Text, default="")
 
 
 
@@ -131,10 +184,46 @@ class Chapter(Base):
     translation_status: Mapped[str] = mapped_column(String(20), default="idle")
     is_bookmarked: Mapped[bool] = mapped_column(default=False)
     fidelity_warning: Mapped[Optional[str]] = mapped_column(Text)
+    image_count: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     thread: Mapped["Thread"] = relationship(back_populates="chapters")
     segments: Mapped[List["TranslationSegment"]] = relationship(back_populates="chapter", cascade="all, delete")
+
+
+IMAGE_TAG_PATTERN = re.compile(
+    r'!\[.*?\]\(.*?\) | <img[\s/][^>]*> | &lt;img[\s/][^&]*&gt;',
+    re.IGNORECASE | re.VERBOSE
+)
+
+
+def count_images_in_text(text: Optional[str]) -> int:
+    """Menghitung jumlah gambar dalam teks (Markdown ![alt](url) atau HTML <img ...>)."""
+    if not text:
+        return 0
+    return len(IMAGE_TAG_PATTERN.findall(text))
+
+
+@event.listens_for(Chapter, "before_insert")
+def _set_chapter_image_count_insert(mapper, connection, target):
+    orig = getattr(target, "content_original", None)
+    trans = getattr(target, "content_translated", None)
+    cnt = max(count_images_in_text(orig), count_images_in_text(trans))
+    if cnt > 0 or getattr(target, "image_count", 0) == 0:
+        target.image_count = cnt
+
+
+@event.listens_for(Chapter, "before_update")
+def _set_chapter_image_count_update(mapper, connection, target):
+    from sqlalchemy.orm.attributes import get_history
+    hist_orig = get_history(target, "content_original")
+    hist_trans = get_history(target, "content_translated")
+    if hist_orig.has_changes() or hist_trans.has_changes():
+        target.image_count = max(
+            count_images_in_text(getattr(target, "content_original", None)),
+            count_images_in_text(getattr(target, "content_translated", None))
+        )
+
 
 
 class TranslationSegment(Base):
@@ -188,6 +277,7 @@ class LorebookEntry(Base):
     original_term: Mapped[str] = mapped_column(String(200), nullable=False)
     translated_term: Mapped[str] = mapped_column(String(200), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    gender: Mapped[Optional[str]] = mapped_column(String(10))  # "MALE"/"FEMALE"/None (unknown)
     usage_count: Mapped[int] = mapped_column(default=0)
     last_used_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -197,8 +287,11 @@ class LorebookEntry(Base):
     thread: Mapped["Thread"] = relationship(back_populates="lorebook")
 
 
-def get_db():
-    db = SessionLocal()
+def get_db(request: Request = None):
+    ws = resolve_workspace(request)
+    factory = get_session_factory(ws)
+    db = factory()
+    db._workspace = ws
     try:
         yield db
     finally:
@@ -209,10 +302,9 @@ def _get_active_engine():
     return engine_ghost if ACTIVE_WORKSPACE == "ghost" else engine_main
 
 
-def init_db():
-    engine = _get_active_engine()
+def _migrate_engine(engine, db_label: str = "database"):
     Base.metadata.create_all(bind=engine)
-    
+
     # Auto-migration: check for missing columns in global_settings, lorebook_entries, and threads
     from sqlalchemy import inspect, text
     inspector = inspect(engine)
@@ -239,6 +331,27 @@ def init_db():
             print("[MIGRASI] Menambahkan kolom 'fidelity_warning' ke dalam tabel chapters...")
             conn.execute(text("ALTER TABLE chapters ADD COLUMN fidelity_warning TEXT"))
             conn.commit()
+
+        if 'image_count' not in columns_ch:
+            print("[MIGRASI] Menambahkan kolom 'image_count' ke dalam tabel chapters...")
+            conn.execute(text("ALTER TABLE chapters ADD COLUMN image_count INTEGER DEFAULT 0"))
+            conn.commit()
+
+            print("[MIGRASI] Menjalankan backfill 'image_count' untuk chapter yang ada...")
+            rows = conn.execute(text(
+                "SELECT id, content_original, content_translated FROM chapters "
+                "WHERE content_original LIKE '%![%' OR content_translated LIKE '%![%' "
+                "OR content_original LIKE '%<img%' OR content_translated LIKE '%<img%'"
+            )).fetchall()
+
+            updated = 0
+            for ch_id, orig, trans in rows:
+                cnt = max(count_images_in_text(orig), count_images_in_text(trans))
+                if cnt > 0:
+                    conn.execute(text("UPDATE chapters SET image_count = :cnt WHERE id = :id"), {"cnt": cnt, "id": ch_id})
+                    updated += 1
+            conn.commit()
+            print(f"[MIGRASI] Backfill 'image_count' selesai ({updated} chapter diperbarui).")
 
         if 'author' not in columns_th:
             print("[MIGRASI] Menambahkan kolom 'author' ke dalam tabel threads...")
@@ -414,6 +527,21 @@ def init_db():
             print("[MIGRASI] Menambahkan kolom 'ghost_pin' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN ghost_pin VARCHAR(100) DEFAULT '03697'"))
             conn.commit()
+
+        if 'scraper_concurrency' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'scraper_concurrency' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN scraper_concurrency INTEGER DEFAULT 2"))
+            conn.commit()
+
+        if 'novalpie_auth_enabled' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'novalpie_auth_enabled' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN novalpie_auth_enabled INTEGER DEFAULT 0"))
+            conn.commit()
+
+        if 'novalpie_cookie' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'novalpie_cookie' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN novalpie_cookie TEXT DEFAULT ''"))
+            conn.commit()
             
         if 'is_locked' not in columns_lb:
             print("[MIGRASI] Menambahkan kolom 'is_locked' ke dalam tabel lorebook_entries...")
@@ -423,6 +551,11 @@ def init_db():
         if 'is_archived' not in columns_lb:
             print("[MIGRASI] Menambahkan kolom 'is_archived' ke dalam tabel lorebook_entries...")
             conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN is_archived BOOLEAN DEFAULT FALSE"))
+            conn.commit()
+
+        if 'gender' not in columns_lb:
+            print("[MIGRASI] Menambahkan kolom 'gender' ke dalam tabel lorebook_entries...")
+            conn.execute(text("ALTER TABLE lorebook_entries ADD COLUMN gender VARCHAR(10)"))
             conn.commit()
             
         if 'scroll_progress' not in columns_ub:
@@ -451,7 +584,20 @@ def init_db():
         """))
         conn.commit()
             
-    print(f"[SUKSES] Inisialisasi basis data selesai - {'ghost.db' if ACTIVE_WORKSPACE == 'ghost' else 'app.db'} siap digunakan.")
+    print(f"[SUKSES] Inisialisasi basis data selesai - {db_label} siap digunakan.")
+
+
+def init_db(target: str = "all"):
+    """Inisialisasi dan migrasi skema database untuk target 'main', 'ghost', atau 'all'."""
+    active_engine = _get_active_engine()
+    if active_engine is not engine_main and active_engine is not engine_ghost:
+        _migrate_engine(active_engine, "test.db")
+        return
+
+    if target in ["main", "all"]:
+        _migrate_engine(engine_main, "app.db")
+    if target in ["ghost", "all"]:
+        _migrate_engine(engine_ghost, "ghost.db")
 
 
 def switch_workspace(target: str):
@@ -462,12 +608,12 @@ def switch_workspace(target: str):
     global ACTIVE_WORKSPACE
     if target not in ["main", "ghost"]:
         raise ValueError("Invalid workspace target")
-        
+
     ACTIVE_WORKSPACE = target
     print(f"[WORKSPACE] Switched to {target} workspace.")
-    
+
     # Initialize the target DB if it doesn't exist
-    init_db()
+    init_db(target=target)
     
     # Sync settings if moving to ghost
     if target == "ghost":

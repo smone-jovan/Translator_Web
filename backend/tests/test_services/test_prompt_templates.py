@@ -3,7 +3,8 @@ from services.prompt_templates import (
     detect_primary_genre,
     build_core_translation_guidelines,
     build_title_translation_prompt,
-    build_title_cleaning_prompt
+    build_title_cleaning_prompt,
+    build_synopsis_translation_prompt
 )
 
 def test_detect_primary_genre_from_tags():
@@ -55,5 +56,29 @@ def test_build_core_translation_guidelines_pure_prose_no_footnotes():
     prompt = build_core_translation_guidelines(lang_name="Indonesian", genre="default")
     assert "ABSOLUTELY NO INLINE DICTIONARY NOTES OR BILINGUAL ANNOTATIONS" in prompt
     assert "DO NOT embed footnotes in the story body" in prompt
+
+
+def test_build_synopsis_translation_prompt_strict_target_language():
+    """Test that synopsis translation prompt strictly enforces output in the target language and forbids drift."""
+    prompt_en = build_synopsis_translation_prompt(target_lang="English")
+    assert "into English" in prompt_en
+    assert "100% written in English" in prompt_en
+    assert "NEVER output in French" in prompt_en
+
+    prompt_id = build_synopsis_translation_prompt(target_lang="Indonesian")
+    assert "into Indonesian" in prompt_id
+    assert "100% written in Indonesian" in prompt_id
+    assert "NEVER output in French" in prompt_id
+
+
+def test_build_core_translation_guidelines_emoticons_and_gestures():
+    """Test that prompt preserves visual emoticons/kaomoji and mandates translating character reaction tags."""
+    prompt = build_core_translation_guidelines(lang_name="Indonesian", genre="default")
+    assert "Visual Emoticons & Character Gestures" in prompt
+    assert "囧" in prompt
+    assert "(⊙_⊙)" in prompt
+    assert "(keringat dingin)" in prompt
+    assert "MUST be translated into Indonesian within parentheses" in prompt
+
 
 

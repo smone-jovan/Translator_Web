@@ -11,6 +11,7 @@ import re
 import urllib.parse
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
+from starlette.requests import Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
@@ -18,7 +19,8 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting
+from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace
+from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.engine import MetadataScraperEngine
 
 router = APIRouter(prefix="/api", tags=["Scraping"])
@@ -104,63 +106,49 @@ def html_to_markdown(html: str) -> tuple[str, str]:
     )
 
     # Pre-process some tags to maintain structure
+    for tag in content_el.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        level = int(tag.name[1])
+        tag.insert_before(f"\n\n{'#' * level} ")
+        tag.insert_after("\n\n")
+
+    for tag in content_el.find_all("li"):
+        tag.insert_before("\n- ")
+
+    for tag in content_el.find_all("blockquote"):
+        tag.insert_before("\n> ")
+        tag.insert_after("\n")
+
     for br in content_el.find_all("br"):
-        br.replace_with("\n")
+        br.replace_with("\n\n")
     
-    for p in content_el.find_all("p"):
-        p.insert_before("\n\n")
-        p.insert_after("\n\n")
+    for p in content_el.find_all(["p", "div"]):
+        p.insert_before("\n")
+        p.insert_after("\n")
 
-    # Convert to text with paragraph breaks
-    lines = []
+    markdown = content_el.get_text(strip=False)
     
-    processed_tags = set()
-
-    for el in content_el.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "div"]):
-        if el in processed_tags:
-            continue
-            
-        # Check if this element is a meaningful block of text
-        # For DIVs, we only want them if they are "leaf" nodes in terms of text structure
-        if el.name == "div":
-            # If it has other block elements inside, let those be processed individually
-            if el.find(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li"]):
-                continue
-            # If it has other DIVs inside, skip this one and let the children be processed
-            if el.find("div"):
-                continue
-        
-        text = el.get_text(strip=True)
-        if not text or len(text) < 2: # Ignore very short artifacts
-            continue
-
-        # Mark children as processed to avoid double-dipping
-        for child in el.find_all(True):
-            processed_tags.add(child)
-
-        tag = el.name
-        if tag.startswith("h"):
-            level = int(tag[1])
-            lines.append(f"\n{'#' * level} {text}\n")
-        elif tag == "li":
-            lines.append(f"- {text}")
-        elif tag == "blockquote":
-            lines.append(f"> {text}")
-        else:
-            # For p and div, we just add the text block
-            lines.append(f"\n{text}\n")
-
-    markdown = "\n".join(lines).strip()
+    # Clean up whitespace
+    markdown = re.sub(r'[ \t]+', ' ', markdown)
     
-    # Fallback: if markdown is still empty, just try to get all text from body
-    if not markdown:
-        print("⚠️ No structured content found, falling back to simple text extraction")
-        markdown = content_el.get_text(separator="\n\n", strip=True)
-
+    # Remove ugly Novalpie Vue placeholders for failed images
+    markdown = markdown.replace("图片加载中...", "")
+    markdown = markdown.replace("图片加载失败", "")
+    markdown = markdown.replace("⚠️", "")
+    
     # Collapse excessive newlines
     markdown = re.sub(r"\n{3,}", "\n\n", markdown)
+    markdown = markdown.strip()
 
     return title, markdown
+
+
+def is_domain(url: str, domain: str) -> bool:
+    """Check if URL host matches domain or subdomain exactly."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        return host == domain or host.endswith(f".{domain}")
+    except Exception:
+        return False
 
 
 @router.post("/scrape", response_model=ScrapeResponse)
@@ -169,8 +157,51 @@ async def scrape_url(req: ScrapeRequest):
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
+    # SSRF guard: block requests to internal/private IPs
+    from services.security import validate_external_url
+    validate_external_url(req.url)
+
+    # 1. Dedicated Adapter: Novalpie
+    if is_domain(req.url, "novalpie.cc"):
+        try:
+            from services.scrapers.novalpie import NovalpieAdapter
+            novalpie = NovalpieAdapter()
+            title, markdown = await novalpie.scrape_chapter_content(req.url)
+            if not markdown:
+                raise HTTPException(422, "No content extracted from novalpie URL.")
+            return ScrapeResponse(
+                title=title,
+                markdown=markdown,
+                word_count=len(markdown.split()),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape novalpie chapter: {e}")
+
+    # 2. Dedicated Adapter: SFACG (book.sfacg.com)
+    if is_domain(req.url, "sfacg.com"):
+        try:
+            from services.scrapers.sfacg import SFACGAdapter
+            sfacg = SFACGAdapter()
+            title, markdown = await sfacg.scrape_chapter_content(req.url)
+            if not markdown:
+                raise HTTPException(422, "No content extracted from SFACG URL.")
+            return ScrapeResponse(
+                title=title,
+                markdown=markdown,
+                word_count=len(markdown.split()),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape SFACG chapter: {e}")
+
+    if re.match(r'^https?://(?:www\.)?novalpie\.cc/(?:book|novel)/\d+/?$', req.url):
+        raise HTTPException(400, "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.")
+
     try:
-        async with httpx.AsyncClient(
+        async with create_safe_async_client(
             follow_redirects=True,
             timeout=30.0,
             headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
@@ -198,18 +229,33 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
-    try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-        ) as client:
-            resp = await client.get(req.url)
-            resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch URL: {e}")
+    source_url = req.url
+    if re.match(r'^https?://(?:www\.)?novalpie\.cc/(?:book|novel)/\d+/?$', req.url):
+        raise HTTPException(400, "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.")
 
-    title, markdown = html_to_markdown(resp.text)
+    if "novalpie.cc" in req.url:
+        try:
+            from services.scrapers.novalpie import NovalpieAdapter
+            novalpie = NovalpieAdapter()
+            title, markdown = await novalpie.scrape_chapter_content(req.url)
+            if not markdown:
+                raise HTTPException(422, "No content extracted from novalpie URL.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape novalpie chapter: {e}")
+    else:
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=30.0,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+            ) as client:
+                resp = await client.get(req.url)
+                resp.raise_for_status()
+                title, markdown = html_to_markdown(resp.text)
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"Failed to fetch URL: {e}")
     
     is_vip = False
     if "/vip/" in req.url.lower():
@@ -217,7 +263,8 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     elif title and "VIP章节" in title:
         is_vip = True
     elif not markdown or len(markdown) < 50:
-        is_vip = True
+        if "novalpie.cc" not in req.url:
+            is_vip = True
 
     if is_vip:
         markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
@@ -247,17 +294,43 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
         return {"thread_id": thread.id, "chapter_id": chapter.id}
     else:
         # Create new Thread
+        # Check if URL belongs to a TOC-capable adapter (e.g. Novalpie)
+        novel_title = title
+        author = None
+        cover_image = None
+        synopsis = None
+        remaining_chapters = []
+
+        if "novalpie.cc" in req.url:
+            try:
+                from services.scrapers.novalpie import NovalpieAdapter
+                novalpie = NovalpieAdapter()
+                meta, remaining_chapters = await novalpie.get_remaining_chapters(req.url)
+                if meta and meta.success:
+                    if meta.original_title:
+                        novel_title = meta.original_title
+                    elif meta.title:
+                        novel_title = meta.title
+                    author = meta.author
+                    cover_image = meta.cover_image
+                    synopsis = meta.synopsis
+            except Exception as e:
+                print(f"⚠️ [Novalpie] Error auto-discovering novel metadata on single chapter import: {e}")
+
         thread = Thread(
-            title=title,
-            original_title=title,
+            title=novel_title,
+            original_title=novel_title,
+            author=author,
+            cover_image=cover_image,
+            synopsis=synopsis,
             source_type="url",
             source_url=req.url
         )
         db.add(thread)
         db.flush()  # Get ID
 
-        # Create first chapter
-        chapter = Chapter(
+        # Create first chapter (the requested chapter)
+        first_chapter = Chapter(
             thread_id=thread.id,
             order=0,
             title_original=title,
@@ -265,10 +338,21 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             source_url=req.url,
             translation_status="vip" if is_vip else "idle"
         )
-        db.add(chapter)
-        db.commit()
+        db.add(first_chapter)
 
-        return {"thread_id": thread.id, "chapter_id": chapter.id}
+        # Auto-populate remaining chapters from TOC (if discovered)
+        for i, rem_ch in enumerate(remaining_chapters, start=1):
+            db.add(Chapter(
+                thread_id=thread.id,
+                order=i,
+                title_original=rem_ch.get("title") or f"Chapter {i + 1}",
+                source_url=rem_ch.get("url"),
+                content_original=None,
+                translation_status="idle"
+            ))
+
+        db.commit()
+        return {"thread_id": thread.id, "chapter_id": first_chapter.id}
 
 
 @router.post("/threads/{thread_id}/scrape_metadata")
@@ -444,30 +528,54 @@ async def fetch_next_chapter(
     if not chapter.source_url:
         raise HTTPException(400, "Current chapter has no source_url to fetch from.")
 
-    try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-        ) as client:
-            resp = await client.get(chapter.source_url)
-            resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
+    # SSRF guard: block requests to internal/private IPs
+    from services.security import validate_external_url
+    validate_external_url(chapter.source_url)
 
-    soup = BeautifulSoup(resp.text, 'html.parser')
-    links = soup.find_all('a')
     next_url = None
     next_title = None
-    
-    for a in links:
-        text = a.get_text(strip=True)
-        if '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text:
-            href = a.get('href')
-            if href:
-                next_url = urllib.parse.urljoin(str(resp.url), href)
-                next_title = text
-                break
+
+    if is_domain(chapter.source_url, "novalpie.cc"):
+        try:
+            from services.scrapers.novalpie import NovalpieAdapter
+            novalpie = NovalpieAdapter()
+            next_info = await novalpie.get_next_chapter(chapter.source_url)
+            if next_info:
+                next_url, next_title = next_info
+        except Exception as e:
+            print(f"⚠️ [Novalpie] Error resolving next chapter: {e}")
+    elif is_domain(chapter.source_url, "sfacg.com"):
+        try:
+            from services.scrapers.sfacg import SFACGAdapter
+            sfacg = SFACGAdapter()
+            next_info = await sfacg.get_next_chapter(chapter.source_url)
+            if next_info:
+                next_url, next_title = next_info
+        except Exception as e:
+            print(f"⚠️ [SFACG] Error resolving next chapter: {e}")
+    else:
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=30.0,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+            ) as client:
+                resp = await client.get(chapter.source_url)
+                resp.raise_for_status()
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        links = soup.find_all('a')
+
+        for a in links:
+            text = a.get_text(strip=True)
+            if '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text:
+                href = a.get('href')
+                if href:
+                    next_url = urllib.parse.urljoin(str(resp.url), href)
+                    next_title = text
+                    break
 
     if not next_url:
         raise HTTPException(404, "Could not find a 'Next Chapter' link on the page.")
@@ -478,18 +586,27 @@ async def fetch_next_chapter(
         return {"success": True, "chapter_id": existing.id, "message": "Chapter already exists."}
 
     # Fetch and parse the new chapter content
-    try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-        ) as client:
-            next_resp = await client.get(next_url)
-            next_resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
+    if is_domain(next_url, "novalpie.cc"):
+        from services.scrapers.novalpie import NovalpieAdapter
+        novalpie = NovalpieAdapter()
+        parsed_title, markdown = await novalpie.scrape_chapter_content(next_url)
+    elif is_domain(next_url, "sfacg.com"):
+        from services.scrapers.sfacg import SFACGAdapter
+        sfacg = SFACGAdapter()
+        parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
+    else:
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=30.0,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+            ) as client:
+                next_resp = await client.get(next_url)
+                next_resp.raise_for_status()
+        except Exception as e:
+            raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
-    parsed_title, markdown = html_to_markdown(next_resp.text)
+        parsed_title, markdown = html_to_markdown(next_resp.text)
     
     is_vip = False
     if "/vip/" in next_url.lower():
@@ -497,7 +614,8 @@ async def fetch_next_chapter(
     elif parsed_title and "VIP章节" in parsed_title:
         is_vip = True
     elif not markdown or len(markdown) < 50:
-        is_vip = True
+        if "novalpie.cc" not in next_url:
+            is_vip = True
 
     if is_vip:
         markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
@@ -530,11 +648,14 @@ class CrawlNextChaptersRequest(BaseModel):
 @router.post("/threads/{thread_id}/crawl-next")
 async def crawl_next_chapters(
     thread_id: int,
-    req: CrawlNextChaptersRequest
+    req: CrawlNextChaptersRequest,
+    request: Request,
 ):
     """Crawl N upcoming chapters sequentially from the web using Next links with real-time SSE progress."""
+    ws = resolve_workspace(request)
+
     async def crawl_stream_generator():
-        db = SessionLocal()
+        db = SessionLocal(workspace=ws)
         try:
             # 1. Verify thread
             thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
@@ -590,37 +711,57 @@ async def crawl_next_chapters(
             yield f"data: {json.dumps({'type': 'start', 'start_order': start_order, 'start_title': start_title, 'target_count': target_count})}\n\n"
 
             for step in range(1, target_count + 1):
-                # A. Fetch current page HTML to find next link
-                try:
-                    async with httpx.AsyncClient(
-                        follow_redirects=True,
-                        timeout=30.0,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-                    ) as client:
-                        resp = await client.get(current_url)
-                        resp.raise_for_status()
-                except Exception as e:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to fetch URL ({current_url}): {e}'})}\n\n"
-                    break
-
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                links = soup.find_all('a')
+                # A. Fetch next link
                 next_url = None
                 next_title = None
 
-                for a in links:
-                    text = a.get_text(strip=True)
-                    rel = a.get('rel', [])
-                    is_rel_next = 'next' in rel if isinstance(rel, list) else 'next' in str(rel).lower()
-                    if is_rel_next or '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text or '下页' in text:
-                        href = a.get('href')
-                        if href:
-                            candidate_url = urllib.parse.urljoin(str(resp.url), href)
-                            # Avoid self loops or javascript anchors
-                            if candidate_url != current_url and not candidate_url.startswith("javascript:"):
-                                next_url = candidate_url
-                                next_title = text
-                                break
+                if is_domain(current_url, "novalpie.cc"):
+                    try:
+                        from services.scrapers.novalpie import NovalpieAdapter
+                        novalpie = NovalpieAdapter()
+                        next_info = await novalpie.get_next_chapter(current_url)
+                        if next_info:
+                            next_url, next_title = next_info
+                    except Exception as e:
+                        print(f"⚠️ [Novalpie] Error resolving next chapter in crawl stream: {e}")
+                elif is_domain(current_url, "sfacg.com"):
+                    try:
+                        from services.scrapers.sfacg import SFACGAdapter
+                        sfacg = SFACGAdapter()
+                        next_info = await sfacg.get_next_chapter(current_url)
+                        if next_info:
+                            next_url, next_title = next_info
+                    except Exception as e:
+                        print(f"⚠️ [SFACG] Error resolving next chapter in crawl stream: {e}")
+                else:
+                    try:
+                        async with httpx.AsyncClient(
+                            follow_redirects=True,
+                            timeout=30.0,
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                        ) as client:
+                            resp = await client.get(current_url)
+                            resp.raise_for_status()
+                    except Exception as e:
+                        yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to fetch URL ({current_url}): {e}'})}\n\n"
+                        break
+
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    links = soup.find_all('a')
+
+                    for a in links:
+                        text = a.get_text(strip=True)
+                        rel = a.get('rel', [])
+                        is_rel_next = 'next' in rel if isinstance(rel, list) else 'next' in str(rel).lower()
+                        if is_rel_next or '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text or '下页' in text:
+                            href = a.get('href')
+                            if href:
+                                candidate_url = urllib.parse.urljoin(str(resp.url), href)
+                                # Avoid self loops or javascript anchors
+                                if candidate_url != current_url and not candidate_url.startswith("javascript:"):
+                                    next_url = candidate_url
+                                    next_title = text
+                                    break
 
                 if not next_url:
                     yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'no_next_link', 'message': f'End of web chapters reached. Scraped {len(created_chapters)} new chapters.'})}\n\n"
@@ -641,27 +782,51 @@ async def crawl_next_chapters(
                     yield f"data: {json.dumps({'type': 'progress', 'current': step, 'total': target_count, 'status': 'skipped_existing', 'chapter': {'id': existing.id, 'order': existing.order, 'title': existing.title_original}})}\n\n"
                     continue
 
-                # C. Fetch and parse next chapter content
-                try:
-                    async with httpx.AsyncClient(
-                        follow_redirects=True,
-                        timeout=30.0,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-                    ) as client:
-                        next_resp = await client.get(next_url)
-                        next_resp.raise_for_status()
-                except Exception as e:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to download next chapter ({next_url}): {e}'})}\n\n"
-                    break
+                # C. Fetch and parse next chapter content (Retry up to 3 times on failure)
+                max_fetch_attempts = 3
+                parsed_title, markdown = None, None
+                for fetch_attempt in range(1, max_fetch_attempts + 1):
+                    try:
+                        if is_domain(next_url, "novalpie.cc"):
+                            from services.scrapers.novalpie import NovalpieAdapter
+                            novalpie = NovalpieAdapter()
+                            parsed_title, markdown = await novalpie.scrape_chapter_content(next_url)
+                        elif is_domain(next_url, "sfacg.com"):
+                            from services.scrapers.sfacg import SFACGAdapter
+                            sfacg = SFACGAdapter()
+                            parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
+                        else:
+                            validate_external_url(next_url)
+                            async with create_safe_async_client(
+                                follow_redirects=True,
+                                timeout=30.0,
+                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+                            ) as client:
+                                next_resp = await client.get(next_url)
+                                next_resp.raise_for_status()
+                            parsed_title, markdown = html_to_markdown(next_resp.text)
 
-                parsed_title, markdown = html_to_markdown(next_resp.text)
+                        # Check if successful content extracted
+                        if markdown and len(markdown.strip()) >= 50:
+                            err_keywords = ["加载章节内容失败", "请求过于频繁", "请稍后再试", "Ray ID:", "Cloudflare Turnstile blocked"]
+                            if not any(k in markdown for k in err_keywords):
+                                break
+                    except Exception as e:
+                        print(f"⚠️ [Crawl Attempt {fetch_attempt}/{max_fetch_attempts}] Error scraping {next_url}: {e}")
+
+                    if fetch_attempt < max_fetch_attempts:
+                        retry_label = "Playwright/Browser" if is_domain(next_url, "novalpie.cc") else "Network/HTTP"
+                        yield f"data: {json.dumps({'type': 'log', 'message': f'Gagal memuat bab, mencoba ulang {retry_label} (Percobaan {fetch_attempt + 1}/{max_fetch_attempts})...'})}\n\n"
+                        await asyncio.sleep(fetch_attempt * 2)
                 is_vip = False
                 if "/vip/" in next_url.lower():
                     is_vip = True
                 elif parsed_title and "VIP章节" in parsed_title:
                     is_vip = True
                 elif not markdown or len(markdown) < 50:
-                    is_vip = True
+                    if not is_domain(next_url, "novalpie.cc"):
+                        is_vip = True
+
 
                 if is_vip:
                     markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."

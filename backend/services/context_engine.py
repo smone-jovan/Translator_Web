@@ -61,14 +61,87 @@ class ContextEngine:
         if any(jo in orig_clean for jo in junk_originals):
             return True
 
-        # 3. Istilah Mandarin yang tidak diterjemahkan sama sekali (original == translated)
+        # 3. Istilah non-Latin (Mandarin / Korea / Jepang) yang tidak diterjemahkan sama sekali (original == translated)
         import re
-        chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-        if chinese_pattern.search(orig) and orig == trans:
+        east_asian_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff]")
+        if east_asian_pattern.search(orig) and orig == trans:
             return True
 
         # 4. Istilah hanya berisi angka
         if orig.isdigit() or trans.isdigit():
+            return True
+
+        return False
+
+    @staticmethod
+    def is_non_human_term(
+        original_term: str | None,
+        translated_term: str | None,
+        notes: str | None = None
+    ) -> bool:
+        """
+        Deteksi apakah suatu entri glosarium merupakan entitas non-manusia
+        (nama kota, wilayah, sekte, jurus, senjata, benda, pil, formasi, dll.)
+        sehingga TIDAK BOLEH diberi atribut gender atau pronoun di context.
+        """
+        import re
+
+        orig = (original_term or "").strip()
+        trans = (translated_term or "").strip()
+        note = (notes or "").strip().lower()
+
+        if not orig and not trans and not note:
+            return False
+
+        person_role_patterns = [
+            r"\b(?:saint|master|disciple|elder|leader|lord|emperor|empress|king|queen|prince|princess|concubine|patriarch|matriarch|cultivator|scholar|monk|priest|assassin|warrior|general|commander|captain|lieutenant|guard|doctor|physician|merchant|blacksmith|alchemist|ancestor|founder|creator|protagonist|antagonist|villain|hero|sister|brother|father|mother|daughter|son|uncle|aunt|cousin|friend|rival|enemy|apprentice|sovereign|duke|duchess|knight|maid|butler|servant)\b",
+            r"\b(?:pemimpin|ketua|tetua|guru|murid|raja|ratu|kaisar|permaisuri|pangeran|putri|selir|pendekar|kultivator|cendekiawan|biksu|pendeta|pembunuh|prajurit|panglima|komandan|kapten|penjaga|tabib|dokter|pedagang|pandai besi|alkemis|leluhur|pendiri|pencipta|tokoh|karakter|saudara|saudari|kakak|adik|ayah|ibu|anak|paman|bibi|sepupu|teman|sahabat|musuh|saingan|pelayan|dayang)\b",
+            r"(?:宗主|门主|派主|帮主|掌门|教主|楼主|阁主|殿主|城主|皇帝|皇后|王爷|皇子|公主|长老|师尊|师父|师兄|师弟|师姐|师妹|弟子|老祖|先祖|道友|前辈|晚辈|少主|公子|姑娘|夫人|侍女|管家|圣|仙)",
+        ]
+
+        non_human_terms = [
+            # Lokasi / Wilayah
+            r"\b(?:city|town|village|province|county|prefecture|state|district|region|territory|area|realm|continent|ocean|sea|river|lake|mountain|peak|valley|forest|desert|island|capital|palace|hall|pavilion|tower|chamber|courtyard|street|road|manor)\b",
+            r"\b(?:kota|desa|kampung|provinsi|kabupaten|wilayah|daerah|area|alam|benua|samudra|laut|sungai|danau|gunung|puncak|lembah|hutan|gurun|pulau|ibu kota|istana|aula|paviliun|menara|kamar|halaman|jalan)\b",
+            # Sekte / Organisasi
+            r"\b(?:sect|clan|guild|association|alliance|organization|academy|school|temple|monastery|church|faction)\b",
+            r"\b(?:sekte|klan|perguruan|asosiasi|aliansi|organisasi|akademi|sekolah|kuil|biara|gereja|faksi)\b",
+            # Benda / Senjata / Teknik / Item
+            r"\b(?:sword|blade|saber|spear|halberd|staff|bow|arrow|shield|armor|weapon|artifact|treasure|talisman|scroll|manual|technique|skill|art|method|formula|array|formation|pill|elixir|herb|potion|medicine|cauldron|furnace|beast|monster|creature|stone|crystal)\b",
+            r"\b(?:pedang|golok|tombak|tongkat|busur|panah|perisai|zirah|senjata|artefak|pusaka|jimat|gulungan|kitab|buku|teknik|jurus|ilmu|metode|formula|formasi|pil|eliksir|ramuan|obat|kuali|tungku|binatang|hewan|monster|makhluk|batu|kristal)\b",
+        ]
+
+        is_trans_non_human = any(re.search(pat + r"\s*$", trans, re.IGNORECASE) for pat in non_human_terms)
+        is_trans_person = any(re.search(pat + r"\s*$", trans, re.IGNORECASE) for pat in person_role_patterns)
+
+        # Jika berakhiran kata benda/tempat/sekte tanpa kata peran orang (misal "Heavenly Cloud Sect")
+        if is_trans_non_human and not is_trans_person:
+            return True
+
+        # Jika diawali kata penanda tempat/benda (misal "Kota Beijing", "Sekte Tianyun", "Pedang Pusaka")
+        is_trans_prefixed = bool(re.search(r"^(?:kota|desa|sekte|klan|perguruan|gunung|danau|sungai|pedang|teknik|jurus|pil|kitab)\s+", trans, re.IGNORECASE))
+        if is_trans_prefixed and not is_trans_person:
+            return True
+
+        has_person_role_in_notes = any(re.search(pat, note, re.IGNORECASE) for pat in person_role_patterns)
+
+        # Karakter Mandarin penanda tempat/organisasi/benda di akhir nama (e.g. 宗, 城, 剑, 丹, 诀, 派, 界)
+        # Catatan: 林 tidak dimasukkan karena sangat umum sebagai nama orang/marga
+        chinese_non_human_suffixes = r"[城市镇省洲山峰江河海湖谷洞宗门派帮阁殿宫塔院剑刀甲丹药鼎诀功法阵符界]$"
+        has_orig_person_suffix = bool(re.search(r"[主祖师友辈人老后皇王姬妾儿奴侍生仙圣君客]$", orig))
+        if re.search(chinese_non_human_suffixes, orig) and not has_orig_person_suffix and not is_trans_person and not has_person_role_in_notes:
+            return True
+
+        # Pola deskripsi/notes yang mendefinisikan benda/tempat/sekte
+        non_human_notes_patterns = [
+            r"\b(?:a|an|the|ancient|imperial|remote|large|small|major|minor)?\s*(?:capital\s+)?(?:city|town|village|province|region|territory|realm|continent|mountain|river|lake|valley|forest|sect|clan|guild|alliance|faction|sword|blade|weapon|artifact|treasure|technique|skill|art|manual|formation|array|pill|herb|medicine|location|place|building)\b",
+            r"\b(?:located in|situated in|capital of|capital city|headquarters of|territory of)\b",
+            r"\b(?:sebuah|suatu|kota|desa|wilayah|alam|benua|gunung|sungai|danau|lembah|hutan|sekte|klan|aliansi|pedang|senjata|artefak|pusaka|teknik|jurus|kitab|formasi|pil|ramuan|tempat|bangunan|lokasi)\b",
+            r"\b(?:terletak di|berlokasi di|ibu kota dari|ibu kota|markas dari|markas besar)\b",
+        ]
+        is_notes_non_human = any(re.search(pat, note, re.IGNORECASE) for pat in non_human_notes_patterns)
+
+        if is_notes_non_human and not has_person_role_in_notes and not is_trans_person:
             return True
 
         return False
@@ -97,8 +170,12 @@ class ContextEngine:
             if thread_obj:
                 genre = detect_primary_genre(thread_obj.genres, thread_obj.tags)
 
-        # Build core guidelines from centralized templates (ADR-074)
-        guidelines = build_core_translation_guidelines(lang_name, genre)
+        # Detect source language dynamically (ADR-111)
+        from services.prompt_templates import detect_source_language
+        source_lang = detect_source_language(original_text)
+
+        # Build core guidelines from centralized templates (ADR-074, ADR-111)
+        guidelines = build_core_translation_guidelines(lang_name, genre, source_lang=source_lang)
 
         # Tambahkan instruksi Translator Notes berdasarkan mode
         guidelines += build_translator_notes_instruction(is_quality, lang_name)
@@ -162,17 +239,60 @@ class ContextEngine:
 
             if entries:
                 terms_list = []
+                from services.glossary_lock import extract_pinyin_aliases, CHINESE_CHAR_PATTERN
+                gendered_count = 0
                 for e in entries:
                     if ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term):
                         continue
                     note = e.notes if e.notes else ""
                     if note and len(note) > GLOSSARY_NOTE_MAX_CHARS:
                         note = note[:GLOSSARY_NOTE_MAX_CHARS - 3] + "..."
-                    terms_list.append(f"- {e.original_term} → {e.translated_term}" + (f" ({note})" if note else ""))
+                    
+                    term_display = e.original_term
+                    if CHINESE_CHAR_PATTERN.search(term_display) and "(" not in term_display:
+                        aliases = extract_pinyin_aliases(term_display)
+                        spaced_alias = next((a for a in aliases if " " in a and a[0].isupper()), None)
+                        if spaced_alias:
+                            term_display = f"{term_display} (Pinyin: {spaced_alias})"
+
+                    # Whitelist-render gender (Step 4). gender berasal dari output LLM
+                    # ekstraksi (untrusted) — nilai mentah kolom TIDAK PERNAH diinterpolasi;
+                    # hanya token kanonik "MALE"/"FEMALE" yang boleh muncul di prompt.
+                    # getattr(): mock/dummy tanpa atribut gender tetap aman.
+                    raw_gender = getattr(e, "gender", None)
+                    gender_token = raw_gender if raw_gender in ("MALE", "FEMALE") else None
+
+                    # Safety guard: pastikan entitas non-manusia (kota, wilayah, sekte, benda, jurus)
+                    # TIDAK PERNAH membawa token gender ke context prompt.
+                    if gender_token and ContextEngine.is_non_human_term(e.original_term, e.translated_term, e.notes):
+                        gender_token = None
+
+                    if gender_token:
+                        gendered_count += 1
+
+                    # Note sudah memuat token (case-insensitive) → render persis seperti
+                    # sebelumnya (tanpa duplikasi). Selain itu, gender di-kolom disuntikkan
+                    # ke parenthetical. gender None/non-whitelist → format legacy.
+                    paren = ""
+                    if gender_token and not re.search(rf"\b{gender_token}\b", note, re.IGNORECASE):
+                        paren = f" ({gender_token} — {note})" if note else f" ({gender_token})"
+                    elif note:
+                        paren = f" ({note})"
+
+                    terms_list.append(f"- {term_display} → {e.translated_term}{paren}")
                 
                 if terms_list:
                     terms = "\n".join(terms_list)
                     full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
+                    # Blok instruksi pronomina HANYA bila >=1 entri ber-gender ter-inject
+                    # di prompt ini; tanpa entri ber-gender → tidak ada blok sama sekali.
+                    if gendered_count:
+                        full_prompt += (
+                            "\n[PRONOUN / GENDER RULES - MANDATORY]: Glossary entries marked MALE "
+                            "are male characters — always use he/him/his for them. Entries marked "
+                            "FEMALE are female — always use she/her/hers. NEVER infer a character's "
+                            "gender from the shape of their name; glossary declarations are authoritative.\n"
+                        )
 
         return full_prompt
 
@@ -377,11 +497,37 @@ class ContextEngine:
         if not cleaned.strip():
             return ""
 
+        cleaned = HallucinationDetector.strip_repetitive_character_loops(cleaned)
         cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
         cleaned = HallucinationDetector.strip_word_soup_hallucinations(cleaned)
         cleaned = re.sub(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u2060\u2000-\u200a]", "", cleaned)
         
         return cleaned.strip()
+
+    @staticmethod
+    def enforce_glossary_locking(db: Session, thread_id: int | None, text: str) -> str:
+        """
+        Kunci istilah glosarium secara deterministik pasca-terjemahan.
+        Mengambil entri aktif dari thread, menyusun aturan penguncian (termasuk pinyin alias),
+        dan menimpa istilah yang membangkang pada hasil terjemahan.
+        """
+        if not text or not thread_id:
+            return text
+        from services.glossary_lock import build_glossary_lock_rules, apply_glossary_lock
+        from sqlalchemy import select
+        from database import LorebookEntry
+        
+        entries_stmt = (
+            select(LorebookEntry)
+            .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
+        )
+        entries = db.execute(entries_stmt).scalars().all()
+        if not entries:
+            return text
+            
+        valid_entries = [e for e in entries if not ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term)]
+        rules = build_glossary_lock_rules(valid_entries)
+        return apply_glossary_lock(text, rules)
 
     @staticmethod
     def auto_save_glossary(db: Session, thread_id: int, full_text: str):
@@ -404,6 +550,7 @@ class ContextEngine:
         
         lines = notes_section.split("\n")
         new_entries = []
+        gender_updates = []
         seen_terms = set()
         
         # Kata kunci yang mengindikasikan teks tersebut hanyalah header, instruksi, atau catatan meta dari AI
@@ -446,16 +593,16 @@ class ContextEngine:
                     subterms = [raw_term]
 
                 for term in subterms:
-                    # Term asli MANDAT harus mengandung setidaknya satu karakter Hanzi (Aksara Mandarin)
-                    # ATAU merupakan pinyin term yang valid (2+ Latin words, maks 30 chars).
+                    # Term asli MANDAT harus mengandung setidaknya satu karakter Asia Timur (Hanzi, Hangul, atau Kana)
+                    # ATAU merupakan pinyin/romanized term yang valid (2+ Latin words, maks 30 chars).
                     # Ini mencegah kalimat Bahasa Inggris panjang tersimpan, tapi mengizinkan
-                    # nama-nama pinyin seperti "Ye Xiu", "Meng Hao" (penting untuk konsistensi novel kelas atas).
-                    chinese_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
-                    has_chinese = chinese_pattern.search(term)
-                    # Pinyin heuristic: 2-4 short words, each capitalized, total <= 30 chars
+                    # istilah Asia Timur atau nama pinyin/romanized seperti "Ye Xiu", "Meng Hao", "Sung Jinwoo".
+                    east_asian_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f\u3040-\u309f\u30a0-\u30ff]")
+                    has_source_script = bool(east_asian_pattern.search(term))
+                    # Pinyin/Latin heuristic: 2-4 short words, each capitalized, total <= 30 chars
                     pinyin_pattern = re.compile(r"^[A-Z][a-z]{0,8}(\s[A-Z][a-z]{0,8}){0,3}$")
                     is_valid_pinyin = bool(pinyin_pattern.match(term)) and len(term) <= GLOSSARY_TERM_MAX_LENGTH
-                    if not has_chinese and not is_valid_pinyin:
+                    if not has_source_script and not is_valid_pinyin:
                         continue
                     if len(term) > GLOSSARY_TERM_MAX_LENGTH:
                         continue
@@ -482,16 +629,32 @@ class ContextEngine:
                             func.lower(func.trim(LorebookEntry.original_term)) == term_clean
                         )
                         exists = db.execute(exists_stmt).scalars().first()
-                        
+
+                        # Strip trailing punctuation sebelum cek kurung tutup
+                        desc_check = desc.rstrip('.!;,。！ ')
+                        has_paren = "(" in desc_check and desc_check.endswith(")")
+                        p_start = desc_check.rfind("(") if has_paren else -1
+
+                        # Parse token gender dari parenthetical (Step 3), e.g. "(MALE — Protagonist, ...)".
+                        # Berlaku apa pun jenis entry-nya (prompt sudah scoping person-only).
+                        # Token TIDAK di-strip dari notes — biarkan apa adanya (Step 4 yang rendering).
+                        gender = None
+                        if has_paren:
+                            ctx = desc_check[p_start + 1:-1].strip()
+                            gender_match = re.match(r"\s*(MALE|FEMALE)\s*[—–-]\s*", ctx, re.IGNORECASE)
+                            if gender_match:
+                                cand_gender = gender_match.group(1).upper()
+                                cand_trans = exists.translated_term if exists else desc_check[:p_start].strip()
+                                # Pastikan bukan nama kota, wilayah, sekte, jurus, atau benda non-manusia
+                                if not ContextEngine.is_non_human_term(term, cand_trans, desc):
+                                    gender = cand_gender
+
                         if not exists:
                             # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
                             final_translated = desc
                             final_notes = f"Auto-extracted: {term}"
 
-                            # Strip trailing punctuation sebelum cek kurung tutup
-                            desc_check = desc.rstrip('.!;,。！ ')
-                            if "(" in desc_check and desc_check.endswith(")"):
-                                p_start = desc_check.rfind("(")
+                            if has_paren:
                                 final_translated = desc_check[:p_start].strip()
                                 final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
 
@@ -499,15 +662,25 @@ class ContextEngine:
                                 thread_id=thread_id,
                                 original_term=term,
                                 translated_term=final_translated,
-                                notes=final_notes
+                                notes=final_notes,
+                                gender=gender,
                             )
                             db.add(new_entry)
                             new_entries.append(f"{term} -> {final_translated}")
+                        elif gender and exists.gender is None:
+                            # Backfill satu-satunya untuk entri existing (sebelumnya tidak pernah
+                            # di-update sama sekali): isi gender bila masih NULL, jangan sentuh
+                            # translated_term/notes/field lain, dan jangan pernah timpa yang sudah ada.
+                            exists.gender = gender
+                            gender_updates.append(f"{term} -> {gender}")
         
-        if new_entries:
+        if new_entries or gender_updates:
             db.commit()
+        if new_entries:
             print(f"[LOREBOOK] Berhasil menyimpan {len(new_entries)} istilah baru untuk utas {thread_id}: {new_entries}")
             ContextEngine.enforce_context_limit(db, thread_id)
+        if gender_updates:
+            print(f"[LOREBOOK] Backfill gender {len(gender_updates)} entri untuk utas {thread_id}: {gender_updates}")
 
     @staticmethod
     async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None, target_lang: str = "English"):

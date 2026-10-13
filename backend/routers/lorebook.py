@@ -11,14 +11,32 @@ from sqlalchemy.orm import Session
 
 from sqlalchemy import select, func
 from database import get_db, LorebookEntry, Thread, GlobalSetting
+from services.context_engine import ContextEngine
 
 router = APIRouter(prefix="/api", tags=["Lorebook"])
+
+
+def _resolve_gender(gender_val: str | None, orig: str, trans: str, notes: str | None) -> str | None:
+    if gender_val is not None and str(gender_val).strip() in ("", "NONE", "null", "None"):
+        return None
+    val = gender_val
+    if not val and notes:
+        import re
+        match = re.search(r"\b(MALE|FEMALE)\b\s*[—–\-\ufffd]", notes, re.IGNORECASE)
+        if match:
+            val = match.group(1).upper()
+    if val and str(val).upper() in ("MALE", "FEMALE"):
+        if ContextEngine.is_non_human_term(orig, trans, notes):
+            return None
+        return str(val).upper()
+    return None
 
 
 class LorebookCreate(BaseModel):
     original_term: str
     translated_term: str
     notes: str | None = None
+    gender: str | None = None
     is_locked: bool | None = False
     is_archived: bool | None = False
 
@@ -29,6 +47,7 @@ class LorebookOut(BaseModel):
     original_term: str
     translated_term: str
     notes: str | None
+    gender: str | None = None
     is_locked: bool
     is_archived: bool
 
@@ -122,6 +141,10 @@ def create_lorebook_entry(
         existing_entry.is_archived = False
         existing_entry.translated_term = body.translated_term
         existing_entry.notes = body.notes
+        if body.gender is not None:
+            existing_entry.gender = _resolve_gender(body.gender, existing_entry.original_term, body.translated_term, body.notes)
+        elif not existing_entry.gender and body.notes:
+            existing_entry.gender = _resolve_gender(None, existing_entry.original_term, body.translated_term, body.notes)
         if body.is_locked is not None:
             existing_entry.is_locked = body.is_locked
         db.commit()
@@ -136,6 +159,7 @@ def create_lorebook_entry(
         original_term=body.original_term,
         translated_term=body.translated_term,
         notes=body.notes,
+        gender=_resolve_gender(body.gender, body.original_term, body.translated_term, body.notes),
         is_locked=body.is_locked if body.is_locked is not None else False,
         is_archived=body.is_archived if body.is_archived is not None else False,
     )
@@ -176,6 +200,7 @@ def update_lorebook_entry(
     entry.original_term = body.original_term
     entry.translated_term = body.translated_term
     entry.notes = body.notes
+    entry.gender = _resolve_gender(body.gender, entry.original_term, entry.translated_term, entry.notes)
     if body.is_locked is not None:
         entry.is_locked = body.is_locked
     if body.is_archived is not None:

@@ -9,6 +9,7 @@ export interface Chapter {
   is_bookmarked?: boolean;
   fidelity_warning?: string | null;
   source_url?: string | null;
+  image_count?: number;
 }
 
 export interface ThreadDetail {
@@ -40,4 +41,5 @@ export interface ChapterContent {
   is_bookmarked?: boolean;
   fidelity_warning?: string | null;
   source_url?: string | null;
+  image_count?: number;
 }

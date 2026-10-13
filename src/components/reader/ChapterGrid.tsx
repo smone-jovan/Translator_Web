@@ -1,12 +1,12 @@
 import React from 'react';
-import { Loader2, Sparkles, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Loader2, Sparkles, SlidersHorizontal, Trash2, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ThreadDetail } from './types';
 
 interface ChapterGridProps {
   thread: ThreadDetail;
   chapterSearch: string;
-  chapterFilter: 'all' | 'translated';
+  chapterFilter: 'all' | 'translated' | 'illustrated';
   sortOrder: 'asc' | 'desc';
   lastReadId: number | null;
   isTranslatingTitles: boolean;
@@ -45,6 +45,9 @@ export default function ChapterGrid({
       
       if (chapterFilter === 'translated') {
         return matchesSearch && ch.has_translation;
+      }
+      if (chapterFilter === 'illustrated') {
+        return matchesSearch && (ch.image_count ?? 0) > 0;
       }
       return matchesSearch;
     });
@@ -96,10 +99,19 @@ export default function ChapterGrid({
 
             {/* Bottom info */}
             <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-[var(--border)]/20">
-              <div className="flex items-center gap-1 text-[10px] text-[var(--muted-foreground)]">
+              <div className="flex items-center gap-1.5 text-[10px] text-[var(--muted-foreground)] flex-wrap">
                 <span className="font-mono">{ch.word_count?.toLocaleString() || 0} words</span>
+                {(ch.image_count ?? 0) > 0 && (
+                  <span 
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20" 
+                    title={`${ch.image_count} gambar/ilustrasi dalam chapter ini`}
+                  >
+                    <ImageIcon className="w-2.5 h-2.5 text-sky-400" />
+                    <span>{ch.image_count}</span>
+                  </span>
+                )}
                 {ch.fidelity_warning && (
-                  <span className="text-amber-500 cursor-help ml-1" title={ch.fidelity_warning} aria-label="Fidelity Warning">
+                  <span className="text-amber-500 cursor-help ml-0.5" title={ch.fidelity_warning} aria-label="Fidelity Warning">
                     ⚠️
                   </span>
                 )}
