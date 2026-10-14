@@ -108,7 +108,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-004 through ADR-117)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-118)
 ```
 
 ---
@@ -397,7 +397,7 @@ Every code change must adhere to the highest standard of type checking and compi
 
 Here are the immediate strategic features you are tasked to build next:
 
-Recent completed platform work (ADR-034 through ADR-117):
+Recent completed platform work (ADR-034 through ADR-118):
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 - ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging

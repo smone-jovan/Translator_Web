@@ -54,6 +54,7 @@ opencode.json
 backend/.pw_nu_profile/
 backend/cf_blocked.png
 uploads/
+graphify-out/
 
 # Imported Agent Skills
 .agent/skills/*

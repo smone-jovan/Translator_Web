@@ -35,25 +35,26 @@ export default function BookmarksPage({
   const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>(
     () => bookmarksCacheStore[ws] ?? []
   );
-  const [loading, setLoading] = useState(
-    () => !bookmarksCacheStore[ws]
-  );
+  const [loading, setLoading] = useState(() => !bookmarksCacheStore[ws]);
 
-  const fetchBookmarks = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      const res = await fetch(getApiUrl("/api/bookmarks"));
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setBookmarks(data);
-        bookmarksCacheStore[ws] = data;
+  const fetchBookmarks = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        const res = await fetch(getApiUrl("/api/bookmarks"));
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setBookmarks(data);
+          bookmarksCacheStore[ws] = data;
+        }
+      } catch (err) {
+        console.error("Failed to fetch bookmarks:", err);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error("Failed to fetch bookmarks:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [ws]);
+    },
+    [ws]
+  );
 
   useEffect(() => {
     let active = true;
