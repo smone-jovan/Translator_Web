@@ -82,3 +82,35 @@ def test_numpad_and_alias_mapping():
 def test_doctor_diagnostics():
     result = launcher.run_doctor()
     assert result in (0, 1)
+
+
+def test_strip_ansi():
+    colored = "\033[38;2;94;234;212mHello World\033[0m"
+    assert launcher.strip_ansi(colored) == "Hello World"
+    assert launcher.strip_ansi("Plain text") == "Plain text"
+
+
+def test_win_creation_flags():
+    flags = launcher._win_creation_flags()
+    if sys.platform == "win32":
+        assert flags == 0x08000000
+    else:
+        assert flags == 0
+
+
+def test_parse_args_options(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["launcher.py", "--gui"])
+    args = launcher.parse_args()
+    assert args.gui is True
+    assert args.cli is False
+
+    monkeypatch.setattr(sys, "argv", ["launcher.py", "--cli", "--browser"])
+    args = launcher.parse_args()
+    assert args.cli is True
+    assert args.open_browser is True
+
+
+def test_hide_console_window_safe():
+    # Calling hide_console_window should not raise exceptions even in non-console or test runners
+    launcher.hide_console_window()
+
