@@ -637,7 +637,7 @@ class BackgroundTranslator:
         ws_str = str(workspace).lower()
         recent_finished_batches.pop(ws_str, None)
         batch_key = (ws_str, thread_id)
-        if batch_key in active_batches or thread_id in active_batches:
+        if batch_key in active_batches:
             await BackgroundTranslator.stop_batch(thread_id, workspace=workspace)
 
         batch = ActiveBatch(
@@ -654,7 +654,6 @@ class BackgroundTranslator:
             workspace=workspace,
         )
         active_batches[batch_key] = batch
-        active_batches[thread_id] = batch
 
         # Masukkan ke antrian global
         await master_batch_queue.put(batch)
@@ -666,7 +665,7 @@ class BackgroundTranslator:
 
     @staticmethod
     def _cleanup_batch(batch: ActiveBatch, status: str = "completed"):
-        """Pembersihan terpusat: hapus kedua key dari active_batches dan simpan status terminal."""
+        """Pembersihan terpusat: hapus compound key dari active_batches dan simpan status terminal."""
         ws = str(getattr(batch, "workspace", "main")).lower()
         batch_key = (ws, batch.thread_id)
 
@@ -690,13 +689,12 @@ class BackgroundTranslator:
         }
 
         active_batches.pop(batch_key, None)
-        active_batches.pop(batch.thread_id, None)
 
     @staticmethod
     async def stop_batch(thread_id: int, workspace: str = "main"):
         """Hentikan batch translation yang sedang berjalan."""
         batch_key = (str(workspace).lower(), thread_id)
-        batch = active_batches.get(batch_key) or active_batches.get(thread_id)
+        batch = active_batches.get(batch_key)
         if batch:
             batch.is_stopped = True
             batch.is_waiting = False
@@ -708,8 +706,6 @@ class BackgroundTranslator:
             ch_key = (str(ws).lower(), batch.current_chapter_id)
             if ch_key in active_tasks:
                 active_tasks[ch_key].cancel()
-            elif batch.current_chapter_id in active_tasks:
-                active_tasks[batch.current_chapter_id].cancel()
             BackgroundTranslator._cleanup_batch(batch, status="stopped")
 
     @staticmethod

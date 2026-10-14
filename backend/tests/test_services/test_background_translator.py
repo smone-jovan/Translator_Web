@@ -65,9 +65,9 @@ async def test_sequential_queueing_behavior():
         await asyncio.sleep(0.1)
         
         # Assert
-        batch_1 = active_batches.get(1)
-        batch_2 = active_batches.get(2)
-        
+        batch_1 = active_batches.get(("main", 1))
+        batch_2 = active_batches.get(("main", 2))
+
         assert batch_1 is not None, "Thread 1 should be in active_batches"
         assert batch_2 is not None, "Thread 2 should be in active_batches"
         
@@ -95,8 +95,8 @@ async def test_sequential_processing_transition():
         
         # Wait enough time for Thread 1 to finish and Thread 2 to be picked up
         await asyncio.sleep(0.3)
-        
-        batch_2 = active_batches.get(2)
+
+        batch_2 = active_batches.get(("main", 2))
         assert batch_2 is not None
         assert batch_2.is_waiting is False, "Thread 2 should become active after Thread 1 finishes"
 
@@ -115,33 +115,33 @@ async def test_graceful_cancellation():
         except asyncio.CancelledError:
             pass
     mock_worker.side_effect = slow_worker
-    
+
     with patch("services.background_translator.BackgroundTranslator._run_batch_worker", new=mock_worker):
         # Start 3 threads
         await BackgroundTranslator.start_batch(1, [101], "Id")
         await asyncio.sleep(0.05)
         await BackgroundTranslator.start_batch(2, [201], "Id")
         await BackgroundTranslator.start_batch(3, [301], "Id")
-        
+
         await asyncio.sleep(0.1) # Let Thread 1 be picked up
-        
-        assert active_batches[1].is_waiting is False
-        assert active_batches[2].is_waiting is True
-        assert active_batches[3].is_waiting is True
-        
+
+        assert active_batches[("main", 1)].is_waiting is False
+        assert active_batches[("main", 2)].is_waiting is True
+        assert active_batches[("main", 3)].is_waiting is True
+
         # Cancel Thread 3 (waiting)
         await BackgroundTranslator.stop_batch(3)
-        assert 3 not in active_batches, "Thread 3 should be removed entirely"
-        
+        assert ("main", 3) not in active_batches, "Thread 3 should be removed entirely"
+
         # Cancel Thread 1 (active)
         await BackgroundTranslator.stop_batch(1)
-        assert 1 not in active_batches, "Thread 1 should be removed entirely"
-        
+        assert ("main", 1) not in active_batches, "Thread 1 should be removed entirely"
+
         # Give master loop a moment to pick up Thread 2
         await asyncio.sleep(0.2)
-        
-        assert 2 in active_batches
-        assert active_batches[2].is_waiting is False, "Thread 2 should now be active"
+
+        assert ("main", 2) in active_batches
+        assert active_batches[("main", 2)].is_waiting is False, "Thread 2 should now be active"
 
 def test_calculate_concurrency_limit_lm_studio():
     # LM Studio should ALWAYS be 1 for local VRAM safety
@@ -208,7 +208,7 @@ async def test_start_batch_load_mode_storage():
             target_lang="Indonesian",
             load_mode="hard"
         )
-        batch = active_batches.get(99)
+        batch = active_batches.get(("main", 99))
         assert batch is not None
         assert getattr(batch, "load_mode", None) == "hard"
 

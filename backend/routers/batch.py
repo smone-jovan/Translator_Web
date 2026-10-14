@@ -76,7 +76,7 @@ async def batch_translate(
 def get_batch_status(thread_id: int, db: Session = Depends(get_db)):
     """Get the active stateful batch translation progress for a specific thread."""
     ws = get_db_workspace(db).lower()
-    batch = active_batches.get((ws, thread_id)) or active_batches.get(thread_id)
+    batch = active_batches.get((ws, thread_id))
     if batch and getattr(batch, "workspace", "main").lower() != ws:
         batch = None
 

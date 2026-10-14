@@ -143,7 +143,7 @@ def test_active_batch_switches_to_next_when_first_completes(client):
     assert data["queue_count"] == 0
 
 
-def test_batch_cleanup_removes_both_keys():
+def test_batch_cleanup_removes_compound_key():
     from services.background_translator import BackgroundTranslator, ActiveBatch, recent_finished_batches
     batch = ActiveBatch(
         thread_id=99,
@@ -156,12 +156,10 @@ def test_batch_cleanup_removes_both_keys():
         workspace="main"
     )
     active_batches[("main", 99)] = batch
-    active_batches[99] = batch
 
     BackgroundTranslator._cleanup_batch(batch, status="completed")
 
     assert ("main", 99) not in active_batches
-    assert 99 not in active_batches
     assert "main" in recent_finished_batches
     assert recent_finished_batches["main"]["thread_id"] == 99
     assert recent_finished_batches["main"]["status"] == "completed"

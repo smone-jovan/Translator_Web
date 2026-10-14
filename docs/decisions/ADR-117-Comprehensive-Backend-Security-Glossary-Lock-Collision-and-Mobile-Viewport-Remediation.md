@@ -48,11 +48,14 @@ Following a full-system audit across backend services, scraping adapters, SQLite
 - **Path Traversal Protection**: Implemented strict `Path.resolve()` and `candidate.is_relative_to(base_dir)` validation in `epub.py`.
 
 ### 2. Pure Compound Key Multi-Tenancy
-- **Purged Integer Alias Keys**: Removed integer mirrors from `ACTIVE_IMAGE_JOBS` and `active_tasks`. All queries strictly scope by `(str(workspace).lower(), id)`.
-- **Workspace Scoped Scraper Config**: Updated `get_scraper_concurrency(workspace)` and `get_novalpie_auth_config(workspace)` in `novalpie.py`.
+- **Purged Integer Alias Keys**: Removed integer mirrors from `ACTIVE_IMAGE_JOBS`, `active_tasks`, and `active_batches`. All queries strictly scope by `(str(workspace).lower(), id)`.
+- **Workspace Scoped Scraper Config**: Updated `get_scraper_concurrency(workspace)` and `get_novalpie_auth_config(workspace)` in `novalpie.py`, with full instance property propagation (`self.workspace`) in `NovalpieAdapter`.
 - **Isolated Workspace Switching**: Removed global `stop_all_batches()` from `system.py:switch_workspace`.
 
-### 3. Glossary Lock Case-Sensitivity & Expanded Stopwords
+### 3. Dependency Manifest Hygiene
+- **Synchronized requirements.txt**: Removed obsolete `crawl4ai>=0.4.0` and explicitly pinned `playwright>=1.40.0` and `playwright-stealth>=1.0.6` for the headless scraping engine.
+
+### 4. Glossary Lock Case-Sensitivity & Expanded Stopwords
 - **Enforced Case-Sensitivity on 1-Syllable Pinyin**: In `glossary_lock.py`, all single-syllable Hanzi terms and single-word aliases now strictly match capitalized tokens (`\bSong\b`, `\bLong\b`).
 - **Expanded Collision Stopwords**: Added `song`, `fang`, `long`, `wang`, `tang`, `gang`, `ring`, `king`, `wing`, `hang`, `bang`, `yang`, `uang`, `tiang`, `siang`, `liar` to `COMMON_COLLISION_STOPWORDS`.
 

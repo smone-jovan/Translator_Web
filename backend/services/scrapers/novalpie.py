@@ -182,9 +182,9 @@ class NovalpieAdapter(BaseScraperAdapter):
     API_BASE = "https://novalpie.cc/api"
 
     @classmethod
-    def get_semaphore(cls):
+    def get_semaphore(cls, workspace: str = None):
         """Returns or updates the dynamic concurrency semaphore based on GlobalSetting safely and event-loop aware."""
-        concurrency = get_scraper_concurrency()
+        concurrency = get_scraper_concurrency(workspace)
         try:
             current_loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -204,7 +204,8 @@ class NovalpieAdapter(BaseScraperAdapter):
                 cls._current_concurrency = concurrency
         return cls._playwright_sem
 
-    def __init__(self):
+    def __init__(self, workspace: Optional[str] = None):
+        self.workspace = workspace
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
@@ -216,7 +217,7 @@ class NovalpieAdapter(BaseScraperAdapter):
     def get_request_headers(self) -> Dict[str, str]:
         """Returns request headers, automatically augmented with auth session cookie/token if enabled."""
         headers = dict(self.headers)
-        auth_enabled, raw_cookie, auth_token, _ = get_novalpie_auth_config()
+        auth_enabled, raw_cookie, auth_token, _ = get_novalpie_auth_config(self.workspace)
         if auth_enabled:
             if raw_cookie:
                 headers["Cookie"] = raw_cookie if "=" in raw_cookie else f"auth_token={raw_cookie}"
@@ -489,7 +490,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                     )
-                    auth_enabled, raw_cookie, auth_token, pw_cookies = get_novalpie_auth_config()
+                    auth_enabled, raw_cookie, auth_token, pw_cookies = get_novalpie_auth_config(self.workspace)
                     if auth_enabled and pw_cookies:
                         try:
                             context.add_cookies(pw_cookies)
@@ -600,7 +601,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                 print(f"❌ [Playwright Context] Seluruh {max_retries} percobaan gagal untuk {target_url}: {last_err}")
                 return ""
 
-            sem = self.get_semaphore()
+            sem = self.get_semaphore(self.workspace)
             async with sem:
                 raw_html = await asyncio.to_thread(_run_playwright_sync, direct_url)
             if raw_html:
