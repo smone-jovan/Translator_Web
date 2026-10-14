@@ -1056,6 +1056,7 @@ export default function BulkTranslateModal({
                     return `Gemini • ${rpm} RPM${rpm > 0 ? " (free)" : ""}`;
                   }
                   if (provider === "openai") return "OpenAI Cloud";
+                  if (provider === "openrouter") return "OpenRouter Cloud";
                   return "LM Studio (Local)";
                 })()}
               </Typography>

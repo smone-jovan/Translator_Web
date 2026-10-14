@@ -15,6 +15,7 @@ import {
   Search,
   Palette,
   RefreshCw,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getApiUrl, getActiveWorkspace } from "@/lib/api";
@@ -993,9 +994,14 @@ export default function ChapterReader({
 
           <div className="h-4 w-px bg-[var(--border)] hidden sm:block" />
 
-          <span className="text-[10px] md:text-xs font-bold tracking-tight px-1 text-[var(--foreground)] truncate max-w-[120px] sm:max-w-none">
-            BAB {selectedChapterIdx + 1}
-          </span>
+          <button
+            onClick={() => setIsTocOpen(true)}
+            className="text-[10px] md:text-xs font-bold tracking-tight px-1.5 py-0.5 rounded-lg hover:bg-[var(--secondary)] text-[var(--foreground)] truncate max-w-[140px] sm:max-w-none cursor-pointer flex items-center gap-1 transition-colors"
+            title="Pilih Bab (Table of Contents)"
+          >
+            <span>BAB {selectedChapterIdx + 1}</span>
+            <span className="text-[var(--muted-foreground)] font-normal text-[9px]">/ {thread.chapters.length}</span>
+          </button>
 
           <button
             onClick={toggleBookmark}
@@ -1291,6 +1297,14 @@ export default function ChapterReader({
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
+          <button
+            onClick={() => setIsTocOpen(true)}
+            className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border border-[var(--border)] bg-[var(--card)]/50 hover:bg-[var(--secondary)] text-[var(--foreground)] transition-all cursor-pointer shadow-sm"
+            title="Pilih Bab (Table of Contents)"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-[var(--primary)]" />
+            <span className="font-mono">{selectedChapterIdx + 1} / {thread.chapters.length}</span>
+          </button>
           <Button
             variant="outline"
             size="icon"
