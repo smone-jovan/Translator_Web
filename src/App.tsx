@@ -10,10 +10,10 @@ import ReaderPage from "./pages/ReaderPage";
 import BookmarksPage from "./pages/BookmarksPage";
 import BulkStatusCenter from "./components/BulkStatusCenter";
 import type { TabId } from "./components/Sidebar";
-import { getActiveWorkspace } from "./lib/api";
+import { getWorkspaceStorageKey } from "./lib/api";
 
 function getAppSessionKey(): string {
-  return `readomni_app_session_v1_${getActiveWorkspace()}`;
+  return getWorkspaceStorageKey("readomni_app_session_v1");
 }
 
 const APP_SESSION_MAX_IDLE_MS = 6 * 60 * 60 * 1000;

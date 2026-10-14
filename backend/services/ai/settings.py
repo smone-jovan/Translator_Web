@@ -18,9 +18,11 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
             return requested_model
         return getattr(gs, "openai_model", None)
     if provider == "openrouter":
-        if requested_model:
+        saved_or_model = getattr(gs, "openrouter_model", None) or "deepseek/deepseek-chat"
+        # Ignore local LM Studio model names that lack an 'author/model' slash or match gs.lm_model
+        if requested_model and "/" in requested_model and requested_model != getattr(gs, "lm_model", None):
             return requested_model
-        return getattr(gs, "openrouter_model", None) or "deepseek/deepseek-chat"
+        return saved_or_model
     if requested_model:
         return requested_model
     return getattr(gs, "lm_model", None)

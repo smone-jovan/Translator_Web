@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   ArrowUpDown,
   SlidersHorizontal,
@@ -109,20 +109,28 @@ export default function ChapterListControls({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showPolishPopover]);
 
-  const isPolished = (title: string | null | undefined) => {
-    if (!title) return false;
-    const containsChinese = /[\u4e00-\u9fff]/.test(title);
-    if (containsChinese && targetLanguage.toLowerCase() !== "chinese")
-      return false;
-    return true;
-  };
+  const isPolished = useCallback(
+    (title: string | null | undefined) => {
+      if (!title) return false;
+      const containsSourceScript =
+        /[\u4e00-\u9fff\uac00-\ud7a3\u3131-\u318e\u3040-\u30ff]/.test(title);
+      if (containsSourceScript && targetLanguage.toLowerCase() !== "chinese")
+        return false;
+      return true;
+    },
+    [targetLanguage]
+  );
 
-  const somePolished = thread.chapters.some((ch) =>
-    isPolished(ch.title_translated)
-  );
-  const allPolished = thread.chapters.every((ch) =>
-    isPolished(ch.title_translated)
-  );
+  const somePolished = useMemo(() => {
+    return thread.chapters.some((ch) => isPolished(ch.title_translated));
+  }, [thread.chapters, isPolished]);
+
+  const allPolished = useMemo(() => {
+    return (
+      thread.chapters.length > 0 &&
+      thread.chapters.every((ch) => isPolished(ch.title_translated))
+    );
+  }, [thread.chapters, isPolished]);
   const fidelityCount = thread.chapters.filter(
     (ch) => !!ch.fidelity_warning
   ).length;

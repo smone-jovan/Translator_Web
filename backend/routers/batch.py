@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from typing import List, Optional
 
-from database import get_db, Thread, GlobalSetting, LorebookEntry, get_db_workspace
+from database import get_db, Thread, GlobalSetting, LorebookEntry, get_db_workspace, make_workspace_key, normalize_workspace
 from services.background_translator import BackgroundTranslator, active_batches, recent_finished_batches
 from services.ai.settings import resolve_active_base_url, resolve_active_model
 
@@ -75,8 +75,8 @@ async def batch_translate(
 @router.get("/threads/{thread_id}/batch-status")
 def get_batch_status(thread_id: int, db: Session = Depends(get_db)):
     """Get the active stateful batch translation progress for a specific thread."""
-    ws = get_db_workspace(db).lower()
-    batch = active_batches.get((ws, thread_id))
+    ws = normalize_workspace(get_db_workspace(db))
+    batch = active_batches.get(make_workspace_key(ws, thread_id))
     if batch and getattr(batch, "workspace", "main").lower() != ws:
         batch = None
 

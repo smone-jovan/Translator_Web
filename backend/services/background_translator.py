@@ -4,7 +4,7 @@ import re
 import time
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from database import Chapter, GlobalSetting, Thread, get_session
+from database import Chapter, GlobalSetting, Thread, get_session, make_workspace_key, normalize_workspace
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -30,14 +30,32 @@ translation_queues: dict = {}
 
 def get_chapter_translation_queues(workspace: str, chapter_id: int) -> list:
     """Safely get all queues listening to a chapter stream scoped strictly by (workspace, chapter_id)."""
-    ws_key = (str(workspace).lower(), chapter_id)
+    ws_key = make_workspace_key(workspace, chapter_id)
     return translation_queues.get(ws_key) or []
 
 # Strong references to prevent garbage collection of wrapper tasks
 _prefetch_tasks = set()
 
-# Global lock to ensure single-concurrency for AI requests under Soft Load
+# Global lock fallback + Per-workspace locks to prevent 'main' and 'ghost' from blocking each other
 translation_lock = asyncio.Lock()
+_workspace_translation_locks: dict[str, asyncio.Lock] = {}
+_thread_glossary_locks: dict[tuple[str, int], asyncio.Lock] = {}
+
+
+def get_workspace_translation_lock(workspace_id: str = "main") -> asyncio.Lock:
+    ws = normalize_workspace(workspace_id)
+    if ws not in _workspace_translation_locks:
+        _workspace_translation_locks[ws] = asyncio.Lock()
+    return _workspace_translation_locks[ws]
+
+
+def get_thread_glossary_lock(workspace_id: str, thread_id: int) -> asyncio.Lock:
+    key = make_workspace_key(workspace_id, thread_id)
+    if key not in _thread_glossary_locks:
+        _thread_glossary_locks[key] = asyncio.Lock()
+    return _thread_glossary_locks[key]
+
+
 # Global state to track last request timestamp for pacing (ADR-029)
 _last_api_call_time = 0.0
 
@@ -146,7 +164,7 @@ class BackgroundTranslator:
         workspace: str = "main",
     ) -> bool:
         """Start background chapter translation task."""
-        task_key = (str(workspace).lower(), chapter_id)
+        task_key = make_workspace_key(workspace, chapter_id)
         if task_key in active_tasks:
             print(f"[WARN] Chapter {chapter_id} ({workspace}) is already being translated. Ignoring duplicate request.")
             return
@@ -316,10 +334,11 @@ class BackgroundTranslator:
             use_lock = (effective_mode == "soft")
 
         # Acquire lock if needed BEFORE we update state and start LLM operations
+        ws_lock = get_workspace_translation_lock(workspace)
         if use_lock:
-            print(f"[LOCK] [Soft Load] Chapter {chapter_id} waiting for AI translation lock...")
-            await translation_lock.acquire()
-            print(f"[LOCK] [Soft Load] Chapter {chapter_id} acquired AI translation lock.")
+            print(f"[LOCK] [Soft Load] Chapter {chapter_id} waiting for AI translation lock ({workspace})...")
+            await ws_lock.acquire()
+            print(f"[LOCK] [Soft Load] Chapter {chapter_id} acquired AI translation lock ({workspace}).")
 
         try:
             with get_session(workspace) as db:
@@ -332,7 +351,8 @@ class BackgroundTranslator:
                 if force_extract:
                     print(f"[EXTRACT] Starting glossary extraction for chapter {chapter_id} before translation...")
                     await BackgroundTranslator._enforce_pacing(model, gs, db_session=db, workspace=workspace)
-                    await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model, target_lang)
+                    async with get_thread_glossary_lock(workspace, thread_id):
+                        await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model, target_lang)
 
                 # Ambil konten aslinya dan set status ke processing
                 content_original = chapter.content_original
@@ -550,6 +570,15 @@ class BackgroundTranslator:
                         ch.content_translated = clean_to_save
                         ch.translation_status = "done"
                         db.commit()
+
+                        # Send post-processed final_text to live SSE listeners BEFORE [DONE]
+                        target_queues = get_chapter_translation_queues(workspace, chapter_id)
+                        for q in list(target_queues):
+                            try:
+                                q.put_nowait(f"FINAL_TEXT:{clean_to_save}")
+                            except Exception:
+                                pass
+
                         print(f"[OK] Chapter {chapter_id} background translation completed successfully.")
 
                 # Cek apakah harus otomatis nerjemahin bab selanjutnya (prefetch)
@@ -570,8 +599,9 @@ class BackgroundTranslator:
         finally:
             if use_lock:
                 try:
-                    translation_lock.release()
-                    print(f"[BUKA KUNCI] [Muat Halus] Kunci terjemahan AI untuk bab {chapter_id} telah dilepaskan.")
+                    if ws_lock.locked():
+                        ws_lock.release()
+                    print(f"[BUKA KUNCI] [Muat Halus] Kunci terjemahan AI untuk bab {chapter_id} ({workspace}) telah dilepaskan.")
                 except RuntimeError:
                     pass
 
@@ -634,9 +664,9 @@ class BackgroundTranslator:
         workspace: str = "main",
     ):
         """Mulai proses batch translation secara berurutan (Sequential Queue)."""
-        ws_str = str(workspace).lower()
+        ws_str = normalize_workspace(workspace)
         recent_finished_batches.pop(ws_str, None)
-        batch_key = (ws_str, thread_id)
+        batch_key = make_workspace_key(ws_str, thread_id)
         if batch_key in active_batches:
             await BackgroundTranslator.stop_batch(thread_id, workspace=workspace)
 
@@ -666,8 +696,8 @@ class BackgroundTranslator:
     @staticmethod
     def _cleanup_batch(batch: ActiveBatch, status: str = "completed"):
         """Pembersihan terpusat: hapus compound key dari active_batches dan simpan status terminal."""
-        ws = str(getattr(batch, "workspace", "main")).lower()
-        batch_key = (ws, batch.thread_id)
+        ws = normalize_workspace(getattr(batch, "workspace", "main"))
+        batch_key = make_workspace_key(ws, batch.thread_id)
 
         batch.status = status
         batch.finished_at = time.time()
@@ -693,7 +723,7 @@ class BackgroundTranslator:
     @staticmethod
     async def stop_batch(thread_id: int, workspace: str = "main"):
         """Hentikan batch translation yang sedang berjalan."""
-        batch_key = (str(workspace).lower(), thread_id)
+        batch_key = make_workspace_key(workspace, thread_id)
         batch = active_batches.get(batch_key)
         if batch:
             batch.is_stopped = True
@@ -703,9 +733,10 @@ class BackgroundTranslator:
                 batch.active_task.cancel()
             # Cancel current active chapter task if any
             ws = getattr(batch, "workspace", workspace)
-            ch_key = (str(ws).lower(), batch.current_chapter_id)
-            if ch_key in active_tasks:
-                active_tasks[ch_key].cancel()
+            if batch.current_chapter_id is not None:
+                ch_key = make_workspace_key(ws, batch.current_chapter_id)
+                if ch_key in active_tasks:
+                    active_tasks[ch_key].cancel()
             BackgroundTranslator._cleanup_batch(batch, status="stopped")
 
     @staticmethod
@@ -910,7 +941,11 @@ class BackgroundTranslator:
                     else:
                         concurrency_limit = 2
             else:
-                concurrency_limit = BackgroundTranslator._calculate_concurrency_limit(provider, api_keys_json)
+                if getattr(batch, "load_mode", "soft") == "hard":
+                    concurrency_limit = BackgroundTranslator._calculate_concurrency_limit(provider, api_keys_json)
+                else:
+                    # Soft Load: strict sequential execution (Ch 1 -> Ch 2 -> Ch 3)
+                    concurrency_limit = 1
 
             print(f"[BATCH] Starting batch worker with {concurrency_limit} concurrent tasks for thread {batch.thread_id} (workspace: {ws}).")
 

@@ -17,7 +17,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, getActiveWorkspace } from "@/lib/api";
 import { renderMarkdown, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { ThreadDetail, ChapterContent } from "./types";
@@ -38,6 +38,7 @@ interface ChapterReaderProps {
   thread: ThreadDetail;
   selectedChapterIdx: number;
   setSelectedChapterIdx: (idx: number) => void;
+  onSelectChapter?: (idx: number) => void;
   chapterContent: ChapterContent | null;
   loadingContent: boolean;
   translatedText: string;
@@ -76,6 +77,7 @@ export default function ChapterReader({
   thread,
   selectedChapterIdx,
   setSelectedChapterIdx,
+  onSelectChapter,
   chapterContent,
   loadingContent,
   translatedText,
@@ -108,6 +110,18 @@ export default function ChapterReader({
   const [prevChapterContent, setPrevChapterContent] = useState(chapterContent);
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [tocSearch, setTocSearch] = useState("");
+  const activeChapterItemRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (isTocOpen) {
+      requestAnimationFrame(() => {
+        activeChapterItemRef.current?.scrollIntoView({
+          block: "center",
+          behavior: "instant" as ScrollBehavior,
+        });
+      });
+    }
+  }, [isTocOpen]);
   const [isAppearanceOpen, setIsAppearanceOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState(
     () => localStorage.getItem("theme") || "sepia"
@@ -250,11 +264,22 @@ export default function ChapterReader({
     null
   );
   const controlsVisibleRef = useRef(controlsVisible);
+  const mobileToolbarVisibleRef = useRef(mobileToolbarVisible);
+  const loadingContentRef = useRef(loadingContent);
 
   useEffect(() => {
-    controlsVisibleRef.current = controlsVisible;
-    // Keep floating circle button visible in reader mode
-    if (scrollBtnRef.current) {
+    loadingContentRef.current = loadingContent;
+  }, [loadingContent]);
+
+  // Helper tunggal untuk mengatur visibilitas tombol mengambang Scroll-to-Top:
+  // HANYA tampil jika navbar terlihat (bukan mode immersive) DAN posisi baca > 8%.
+  // Mencegah jempol kanan tidak sengaja menekan tombol ini saat slide di pojok kanan bawah!
+  const syncScrollButtonVisibility = (
+    pct: number,
+    isControlsShown: boolean
+  ) => {
+    if (!scrollBtnRef.current) return;
+    if (isControlsShown && pct > 8) {
       scrollBtnRef.current.classList.remove(
         "translate-y-28",
         "opacity-0",
@@ -266,23 +291,64 @@ export default function ChapterReader({
         "opacity-100",
         "scale-100"
       );
+    } else {
+      scrollBtnRef.current.classList.add(
+        "translate-y-28",
+        "opacity-0",
+        "scale-75",
+        "pointer-events-none"
+      );
+      scrollBtnRef.current.classList.remove(
+        "translate-y-0",
+        "opacity-100",
+        "scale-100"
+      );
     }
-  }, [controlsVisible]);
+  };
 
+  useEffect(() => {
+    controlsVisibleRef.current = controlsVisible;
+    mobileToolbarVisibleRef.current = mobileToolbarVisible;
+    syncScrollButtonVisibility(
+      scrollProgressRef.current,
+      controlsVisible || mobileToolbarVisible
+    );
+  }, [controlsVisible, mobileToolbarVisible]);
+
+  // Refs untuk scroll containers & cumulative directional physics
   const originalScrollContainerRef = useRef<HTMLDivElement>(null);
   const translatedScrollContainerRef = useRef<HTMLDivElement>(null);
-
   const lastScrollTopOriginal = useRef(0);
   const lastScrollTopTranslated = useRef(0);
+  const lastWindowScrollTop = useRef(0);
 
   const scrollRafOriginalId = useRef<number | null>(null);
+  const scrollRafTranslatedId = useRef<number | null>(null);
+  const scrollRafWindowId = useRef<number | null>(null);
+
+  // Cumulative scroll delta & gesture protection refs
+  const accumulatedDeltaRef = useRef(0);
+  const lastControlsToggleTimeRef = useRef(0);
+  const lastScrollEventTimeRef = useRef(0);
+  const userInteractedRef = useRef(false);
+  const pointerStartRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    scrollTop: number;
+    moved: boolean;
+    wasScrolling: boolean;
+  } | null>(null);
 
   const lastSavedScrollTopRef = useRef<number | null>(null);
   const prevChapterIdRef = useRef<number | null>(null);
 
+  const getScrollStorageKey = (chapterId: number) =>
+    `readomni_scroll_${getActiveWorkspace()}_${thread.id}_${chapterId}`;
+
   const saveScrollPosition = (pct: number, top?: number) => {
-    if (!chapterContent) return;
-    const key = `readomni_scroll_${thread.id}_${chapterContent.id}`;
+    if (!chapterContent || loadingContentRef.current) return;
+    const key = getScrollStorageKey(chapterContent.id);
     try {
       localStorage.setItem(key, JSON.stringify({ pct, top, ts: Date.now() }));
     } catch {
@@ -291,13 +357,22 @@ export default function ChapterReader({
   };
 
   // Shared DOM update logic
-  const updateScrollUI = (pct: number, scrollTop?: number) => {
+  const updateScrollUI = (
+    pct: number,
+    scrollTop?: number,
+    shouldPersist: boolean = true
+  ) => {
     scrollProgressRef.current = pct;
     if (scrollTop !== undefined) {
       lastSavedScrollTopRef.current = scrollTop;
     }
 
-    if (chapterContent && pct >= 0) {
+    if (
+      shouldPersist &&
+      chapterContent &&
+      !loadingContentRef.current &&
+      pct >= 0
+    ) {
       saveScrollPosition(
         pct,
         scrollTop ?? lastSavedScrollTopRef.current ?? undefined
@@ -313,111 +388,235 @@ export default function ChapterReader({
     if (scrollBtnRef.current) {
       scrollBtnRef.current.style.borderRadius = `${Math.min(50, 16 + (pct / 100) * 34)}%`;
       scrollBtnRef.current.title = `Scroll to Top (${Math.round(pct)}%)`;
-
-      scrollBtnRef.current.classList.remove(
-        "translate-y-28",
-        "opacity-0",
-        "scale-75",
-        "pointer-events-none"
-      );
-      scrollBtnRef.current.classList.add(
-        "translate-y-0",
-        "opacity-100",
-        "scale-100"
+      syncScrollButtonVisibility(
+        pct,
+        controlsVisibleRef.current || mobileToolbarVisibleRef.current
       );
     }
 
     // Debounced API save
-    if (saveProgressTimeout.current) clearTimeout(saveProgressTimeout.current);
-    saveProgressTimeout.current = setTimeout(() => {
-      if (chapterContent && pct > 0) {
-        fetch(
-          getApiUrl(
-            `/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`
-          ),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scroll_progress: pct }),
-          }
-        ).catch((err) => console.error("Failed to save scroll progress", err));
+    if (shouldPersist && !loadingContentRef.current) {
+      if (saveProgressTimeout.current)
+        clearTimeout(saveProgressTimeout.current);
+      saveProgressTimeout.current = setTimeout(() => {
+        if (chapterContent && !loadingContentRef.current && pct > 0) {
+          fetch(
+            getApiUrl(
+              `/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`
+            ),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ scroll_progress: pct }),
+            }
+          ).catch((err) =>
+            console.error("Failed to save scroll progress", err)
+          );
+        }
+      }, 1000);
+    }
+  };
+
+  // Cumulative Directional Scroll Evaluators (Anti-Bounce / Anti-Mental)
+  const evaluateDirectionalScroll = (
+    scrollTop: number,
+    scrollHeight: number,
+    delta: number
+  ) => {
+    const now = Date.now();
+    lastScrollEventTimeRef.current = now;
+
+    // 1. Cooldown guard: ignore synthetic scroll shifts during 380ms header height animation
+    if (now - lastControlsToggleTimeRef.current < 380) {
+      accumulatedDeltaRef.current = 0;
+      return;
+    }
+
+    // 2. Always show controls at the very top of the chapter
+    if (scrollTop < 24) {
+      accumulatedDeltaRef.current = 0;
+      if (!controlsVisibleRef.current || !mobileToolbarVisibleRef.current) {
+        lastControlsToggleTimeRef.current = now;
+        setControlsVisible(true);
+        setMobileToolbarVisible(true);
       }
-    }, 1000);
+      return;
+    }
+
+    // 3. Ignore bottom rubber-band / overscroll bounce zone
+    if (scrollHeight > 0 && scrollHeight - scrollTop < 48 && delta < 0) {
+      return;
+    }
+
+    // 4. Ignore sub-pixel / touch-release micro-jitter (< 3px per frame)
+    if (Math.abs(delta) < 3) {
+      return;
+    }
+
+    // 5. Reset accumulator if user reverses scroll direction
+    if (
+      (delta > 0 && accumulatedDeltaRef.current < 0) ||
+      (delta < 0 && accumulatedDeltaRef.current > 0)
+    ) {
+      accumulatedDeltaRef.current = 0;
+    }
+
+    accumulatedDeltaRef.current += delta;
+
+    // 6. Hysteresis thresholds:
+    // - Hide controls after cumulative 45px downward scroll
+    // - Show controls ONLY after deliberate cumulative 75px upward scroll
+    if (
+      accumulatedDeltaRef.current > 45 &&
+      (controlsVisibleRef.current || mobileToolbarVisibleRef.current)
+    ) {
+      accumulatedDeltaRef.current = 0;
+      lastControlsToggleTimeRef.current = now;
+      setControlsVisible(false);
+      setMobileToolbarVisible(false);
+    } else if (
+      accumulatedDeltaRef.current < -75 &&
+      (!controlsVisibleRef.current || !mobileToolbarVisibleRef.current)
+    ) {
+      accumulatedDeltaRef.current = 0;
+      lastControlsToggleTimeRef.current = now;
+      setControlsVisible(true);
+      setMobileToolbarVisible(true);
+    }
   };
 
   const handleScrollOriginal = (e: React.UIEvent<HTMLDivElement>) => {
+    if (loadingContentRef.current) return;
     if (scrollRafOriginalId.current !== null) return;
     const target = e.currentTarget;
     const scrollTop = target.scrollTop;
     const scrollHeight = target.scrollHeight - target.clientHeight;
 
     scrollRafOriginalId.current = requestAnimationFrame(() => {
+      if (loadingContentRef.current) {
+        scrollRafOriginalId.current = null;
+        return;
+      }
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      updateScrollUI(pct, scrollTop);
+      updateScrollUI(pct, scrollTop, true);
 
       const delta = scrollTop - lastScrollTopOriginal.current;
-
-      if (scrollTop < 20) {
-        setControlsVisible(true);
-        setMobileToolbarVisible(true);
-      } else if (delta > 30) {
-        setControlsVisible(false);
-        setMobileToolbarVisible(false);
-      } else if (delta < -15) {
-        setControlsVisible(true);
-        setMobileToolbarVisible(true);
-      }
+      evaluateDirectionalScroll(scrollTop, scrollHeight, delta);
 
       lastScrollTopOriginal.current = scrollTop;
       scrollRafOriginalId.current = null;
     });
   };
 
-  const scrollRafTranslatedId = useRef<number | null>(null);
-
   const handleScrollTranslated = (e: React.UIEvent<HTMLDivElement>) => {
+    if (loadingContentRef.current) return;
     if (scrollRafTranslatedId.current !== null) return;
     const target = e.currentTarget;
     const scrollTop = target.scrollTop;
     const scrollHeight = target.scrollHeight - target.clientHeight;
 
     scrollRafTranslatedId.current = requestAnimationFrame(() => {
+      if (loadingContentRef.current) {
+        scrollRafTranslatedId.current = null;
+        return;
+      }
       const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-      updateScrollUI(pct, scrollTop);
+      updateScrollUI(pct, scrollTop, true);
 
       const delta = scrollTop - lastScrollTopTranslated.current;
-
-      if (scrollTop < 20) {
-        setControlsVisible(true);
-        setMobileToolbarVisible(true);
-      } else if (delta > 30) {
-        setControlsVisible(false);
-        setMobileToolbarVisible(false);
-      } else if (delta < -15) {
-        setControlsVisible(true);
-        setMobileToolbarVisible(true);
-      }
+      evaluateDirectionalScroll(scrollTop, scrollHeight, delta);
 
       lastScrollTopTranslated.current = scrollTop;
       scrollRafTranslatedId.current = null;
     });
   };
 
-  const handleContentClick = () => {
+  // Pointer / Touch Gesture Recognizer to distinguish a true stationary tap from a slide/scroll stop
+  const handleReaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    userInteractedRef.current = true;
+    const now = Date.now();
+    pointerStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      time: now,
+      scrollTop: e.currentTarget.scrollTop,
+      moved: false,
+      wasScrolling: now - lastScrollEventTimeRef.current < 320,
+    };
+  };
+
+  const handleReaderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointerStartRef.current || pointerStartRef.current.moved) return;
+    const dx = e.clientX - pointerStartRef.current.x;
+    const dy = e.clientY - pointerStartRef.current.y;
+    if (Math.hypot(dx, dy) > 8) {
+      pointerStartRef.current.moved = true;
+    }
+  };
+
+  const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 1. Ignore if user is selecting text
     if (window.getSelection()?.toString()) return;
-    const nextState = !(controlsVisible || mobileToolbarVisible);
+
+    // 2. Ignore clicks on interactive child elements (buttons, links, images, inputs)
+    const targetEl = e.target as HTMLElement | null;
+    if (
+      targetEl?.closest(
+        'button, a, input, select, textarea, label, img, [role="button"], [data-no-reader-toggle]'
+      )
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const pStart = pointerStartRef.current;
+
+    // 3. Ignore if container was scrolling within the last 320ms (e.g. tapping to stop momentum scroll)
+    if (now - lastScrollEventTimeRef.current < 320) {
+      return;
+    }
+
+    // 4. Validate pointer gesture metrics (must be a clean, short < 260ms, stationary < 8px tap)
+    if (pStart) {
+      const duration = now - pStart.time;
+      const scrollDiff = Math.abs(e.currentTarget.scrollTop - pStart.scrollTop);
+      if (
+        pStart.moved ||
+        pStart.wasScrolling ||
+        duration > 260 ||
+        scrollDiff > 2
+      ) {
+        return;
+      }
+    }
+
+    // 5. Edge-Zone Guard: When in immersive mode (controls hidden), ignore accidental touches
+    // at the very top (< 12%) or bottom (> 85%) where thumbs start a swipe gesture.
+    const isCurrentlyVisible = controlsVisible || mobileToolbarVisible;
+    if (!isCurrentlyVisible && window.innerHeight > 0) {
+      const relY = e.clientY / window.innerHeight;
+      if (relY < 0.12 || relY > 0.85) {
+        return;
+      }
+    }
+
+    const nextState = !isCurrentlyVisible;
+    lastControlsToggleTimeRef.current = now;
+    accumulatedDeltaRef.current = 0;
     setControlsVisible(nextState);
     setMobileToolbarVisible(nextState);
   };
 
-  const lastWindowScrollTop = useRef(0);
-  const scrollRafWindowId = useRef<number | null>(null);
-
   useEffect(() => {
     const handleWindowScroll = () => {
+      if (loadingContentRef.current) return;
       if (scrollRafWindowId.current !== null) return;
 
       scrollRafWindowId.current = requestAnimationFrame(() => {
+        if (loadingContentRef.current) {
+          scrollRafWindowId.current = null;
+          return;
+        }
         const scrollTop =
           window.scrollY ||
           document.documentElement.scrollTop ||
@@ -426,25 +625,17 @@ export default function ChapterReader({
           document.documentElement.scrollHeight - window.innerHeight;
         const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
 
-        updateScrollUI(pct, scrollTop);
+        updateScrollUI(pct, scrollTop, true);
 
         const delta = scrollTop - lastWindowScrollTop.current;
-        if (scrollTop < 20) {
-          setControlsVisible(true);
-          setMobileToolbarVisible(true);
-        } else if (delta > 30) {
-          setControlsVisible(false);
-          setMobileToolbarVisible(false);
-        } else if (delta < -15) {
-          setControlsVisible(true);
-          setMobileToolbarVisible(true);
-        }
+        evaluateDirectionalScroll(scrollTop, scrollHeight, delta);
+
         lastWindowScrollTop.current = scrollTop;
         scrollRafWindowId.current = null;
       });
     };
 
-    window.addEventListener("scroll", handleWindowScroll);
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", handleWindowScroll);
       if (scrollRafWindowId.current !== null)
@@ -456,7 +647,11 @@ export default function ChapterReader({
   // Save scroll position immediately on mobile screen-lock / visibility change
   useEffect(() => {
     const handlePageHide = () => {
-      if (chapterContent && scrollProgressRef.current > 0) {
+      if (
+        chapterContent &&
+        !loadingContentRef.current &&
+        scrollProgressRef.current > 0
+      ) {
         const pct = scrollProgressRef.current;
         const top = lastSavedScrollTopRef.current ?? undefined;
         saveScrollPosition(pct, top);
@@ -494,12 +689,16 @@ export default function ChapterReader({
     const currentId = chapterContent.id;
     const isSameChapter = prevChapterIdRef.current === currentId;
     prevChapterIdRef.current = currentId;
+    userInteractedRef.current = false;
+    accumulatedDeltaRef.current = 0;
 
-    // Read saved local scroll position first
-    const key = `readomni_scroll_${thread.id}_${currentId}`;
+    // Read saved local scroll position first (with fallback to legacy unscoped key)
+    const scopedKey = getScrollStorageKey(currentId);
+    const legacyKey = `readomni_scroll_${thread.id}_${currentId}`;
     let savedLocal: { pct?: number; top?: number } | null = null;
     try {
-      const raw = localStorage.getItem(key);
+      const raw =
+        localStorage.getItem(scopedKey) || localStorage.getItem(legacyKey);
       if (raw) savedLocal = JSON.parse(raw);
     } catch {
       /* ignore */
@@ -507,39 +706,67 @@ export default function ChapterReader({
 
     const targetPct = savedLocal?.pct ?? chapterContent.scroll_progress ?? 0;
     const targetTop = savedLocal?.top;
+    const hasSavedPosition =
+      (targetTop !== undefined && targetTop > 0) || targetPct > 0;
 
-    // If switching to a DIFFERENT chapter and no saved position exists, start at top (0)
-    if (!isSameChapter && targetTop === undefined && targetPct === 0) {
-      if (originalScrollContainerRef.current)
-        originalScrollContainerRef.current.scrollTop = 0;
-      if (translatedScrollContainerRef.current)
-        translatedScrollContainerRef.current.scrollTop = 0;
-      window.scrollTo(0, 0);
-      updateScrollUI(0, 0);
+    // CRITICAL FIX: Properly reset scroll to 0 when switching to a chapter at 0%
+    // (even when savedLocal has { pct: 0, top: 0 } where targetTop is 0, not undefined!)
+    if (!hasSavedPosition) {
+      if (!isSameChapter) {
+        if (originalScrollContainerRef.current)
+          originalScrollContainerRef.current.scrollTop = 0;
+        if (translatedScrollContainerRef.current)
+          translatedScrollContainerRef.current.scrollTop = 0;
+        window.scrollTo(0, 0);
+        lastScrollTopOriginal.current = 0;
+        lastScrollTopTranslated.current = 0;
+        lastWindowScrollTop.current = 0;
+        updateScrollUI(0, 0, false);
+      }
       return;
     }
 
     const applyScroll = () => {
+      // Stop overriding scroll immediately if the user has already touched/scrolled the screen!
+      if (userInteractedRef.current) return;
+
       if (targetTop !== undefined && targetTop > 0) {
-        if (originalScrollContainerRef.current)
+        if (originalScrollContainerRef.current) {
           originalScrollContainerRef.current.scrollTop = targetTop;
-        if (translatedScrollContainerRef.current)
+          lastScrollTopOriginal.current = targetTop;
+        }
+        if (translatedScrollContainerRef.current) {
           translatedScrollContainerRef.current.scrollTop = targetTop;
+          lastScrollTopTranslated.current = targetTop;
+        }
         window.scrollTo(0, targetTop);
+        lastWindowScrollTop.current = targetTop;
       } else if (targetPct > 0) {
         if (originalScrollContainerRef.current) {
           const el = originalScrollContainerRef.current;
           const scrollHeight = el.scrollHeight - el.clientHeight;
-          if (scrollHeight > 0) el.scrollTop = (targetPct / 100) * scrollHeight;
+          if (scrollHeight > 0) {
+            const nextTop = (targetPct / 100) * scrollHeight;
+            el.scrollTop = nextTop;
+            lastScrollTopOriginal.current = nextTop;
+          }
         }
         if (translatedScrollContainerRef.current) {
           const el = translatedScrollContainerRef.current;
           const scrollHeight = el.scrollHeight - el.clientHeight;
-          if (scrollHeight > 0) el.scrollTop = (targetPct / 100) * scrollHeight;
+          if (scrollHeight > 0) {
+            const nextTop = (targetPct / 100) * scrollHeight;
+            el.scrollTop = nextTop;
+            lastScrollTopTranslated.current = nextTop;
+          }
         }
         const docHeight =
           document.documentElement.scrollHeight - window.innerHeight;
-        if (docHeight > 0) window.scrollTo(0, (targetPct / 100) * docHeight);
+        if (docHeight > 0) {
+          const nextTop = (targetPct / 100) * docHeight;
+          window.scrollTo(0, nextTop);
+          lastWindowScrollTop.current = nextTop;
+        }
       }
     };
 
@@ -559,6 +786,8 @@ export default function ChapterReader({
   }, [chapterContent?.id, thread.id]);
 
   const scrollToTop = () => {
+    lastControlsToggleTimeRef.current = Date.now();
+    accumulatedDeltaRef.current = 0;
     window.scrollTo({ top: 0, behavior: "smooth" });
     document.documentElement.scrollTo({ top: 0, behavior: "smooth" });
     document.body.scrollTo({ top: 0, behavior: "smooth" });
@@ -575,7 +804,7 @@ export default function ChapterReader({
         behavior: "smooth",
       });
     }
-    updateScrollUI(0);
+    updateScrollUI(0, 0, true);
     setControlsVisible(true);
     setMobileToolbarVisible(true);
   };
@@ -1107,9 +1336,14 @@ export default function ChapterReader({
             </div>
             <div
               ref={originalScrollContainerRef}
-              className={`flex-1 overflow-auto px-4 py-6 md:p-10 select-text ${fontClass}`}
+              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 py-6 md:p-10 select-text ${fontClass}`}
               style={{ fontSize: `${fontSize}px`, lineHeight }}
               onScroll={handleScrollOriginal}
+              onPointerDown={handleReaderPointerDown}
+              onPointerMove={handleReaderPointerMove}
+              onWheel={() => {
+                userInteractedRef.current = true;
+              }}
               onClick={handleContentClick}
             >
               {loadingContent ? (
@@ -1270,9 +1504,14 @@ export default function ChapterReader({
             </div>
             <div
               ref={translatedScrollContainerRef}
-              className={`flex-1 overflow-auto px-4 py-6 md:p-10 bg-[var(--background)] select-text ${fontClass}`}
+              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 py-6 md:p-10 bg-[var(--background)] select-text ${fontClass}`}
               style={{ fontSize: `${fontSize}px`, lineHeight }}
               onScroll={handleScrollTranslated}
+              onPointerDown={handleReaderPointerDown}
+              onPointerMove={handleReaderPointerMove}
+              onWheel={() => {
+                userInteractedRef.current = true;
+              }}
               onClick={handleContentClick}
             >
               {loadingContent ? (
@@ -1405,7 +1644,7 @@ export default function ChapterReader({
         onClick={scrollToTop}
         className={`fixed right-4 md:right-6 flex items-center justify-center w-[56px] h-[56px] shadow-2xl z-50 transition-all duration-300 cursor-pointer focus:outline-none ${
           mobileToolbarVisible ? "bottom-28 md:bottom-6" : "bottom-6"
-        } translate-y-0 opacity-100 scale-100 hover:scale-105 active:scale-95`}
+        } translate-y-28 opacity-0 scale-75 pointer-events-none hover:scale-105 active:scale-95`}
         style={{
           backgroundColor: "var(--card)",
           boxShadow: "0 8px 30px rgba(0, 0, 0, 0.25)",
@@ -1527,8 +1766,13 @@ export default function ChapterReader({
                   return (
                     <button
                       key={ch.id}
+                      ref={isCurrent ? activeChapterItemRef : undefined}
                       onClick={() => {
-                        setSelectedChapterIdx(actualIdx);
+                        if (onSelectChapter) {
+                          onSelectChapter(actualIdx);
+                        } else {
+                          setSelectedChapterIdx(actualIdx);
+                        }
                         setIsTocOpen(false);
                       }}
                       className={cn(

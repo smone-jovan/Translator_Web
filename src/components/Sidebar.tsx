@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, clearWorkspaceSessionCache } from "@/lib/api";
 
 export type TabId =
   | "translate"
@@ -78,11 +78,7 @@ export default function Sidebar({
       if (data?.workspace) {
         localStorage.setItem("readomni_workspace", data.workspace);
       }
-      try {
-        sessionStorage.clear();
-      } catch {
-        // ignore
-      }
+      clearWorkspaceSessionCache();
       window.location.reload();
     } catch (e) {
       console.error(e);

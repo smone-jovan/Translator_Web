@@ -11,7 +11,11 @@ import {
   Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiUrl, getActiveWorkspace } from "@/lib/api";
+import {
+  getApiUrl,
+  getActiveWorkspace,
+  getWorkspaceStorageKey,
+} from "@/lib/api";
 import ExportModal from "@/components/ExportModal";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
 import BulkFetchModal from "@/components/BulkFetchModal";
@@ -191,33 +195,53 @@ export default function ReaderPage({
   const [alwaysHideThoughts, setAlwaysHideThoughts] = useState<boolean>(true);
 
   const [autoDetectStart, setAutoDetectStart] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`auto_detect_start_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("auto_detect_start", threadId)
+    );
     return saved !== null ? saved === "true" : true;
   });
   const [manualStartNum, setManualStartNum] = useState<number>(() => {
-    const saved = localStorage.getItem(`manual_start_num_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("manual_start_num", threadId)
+    );
     return saved !== null ? parseInt(saved, 10) : 1;
   });
   const [volumeMode, setVolumeMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`volume_mode_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("volume_mode", threadId)
+    );
     return saved !== null ? saved === "true" : true;
   });
   const [autoDetectVolume, setAutoDetectVolume] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`auto_detect_volume_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("auto_detect_volume", threadId)
+    );
     return saved !== null ? saved === "true" : true;
   });
   const [manualStartVolume, setManualStartVolume] = useState<number>(() => {
-    const saved = localStorage.getItem(`manual_start_volume_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("manual_start_volume", threadId)
+    );
     return saved !== null ? parseInt(saved, 10) : 1;
   });
   const [volumeBoundaries, setVolumeBoundaries] = useState<string>(() => {
-    return localStorage.getItem(`volume_boundaries_${threadId}`) || "";
+    return (
+      localStorage.getItem(
+        getWorkspaceStorageKey("volume_boundaries", threadId)
+      ) || ""
+    );
   });
   const [volumeBoundaryType, setVolumeBoundaryType] = useState<string>(() => {
-    return localStorage.getItem(`volume_boundary_type_${threadId}`) || "raw";
+    return (
+      localStorage.getItem(
+        getWorkspaceStorageKey("volume_boundary_type", threadId)
+      ) || "raw"
+    );
   });
   const [chaptersPerVolume, setChaptersPerVolume] = useState<number>(() => {
-    const saved = localStorage.getItem(`chapters_per_volume_${threadId}`);
+    const saved = localStorage.getItem(
+      getWorkspaceStorageKey("chapters_per_volume", threadId)
+    );
     return saved !== null ? parseInt(saved, 10) : 0;
   });
 
@@ -240,29 +264,35 @@ export default function ReaderPage({
 
   useEffect(() => {
     localStorage.setItem(
-      `auto_detect_start_${threadId}`,
+      getWorkspaceStorageKey("auto_detect_start", threadId),
       String(autoDetectStart)
     );
     localStorage.setItem(
-      `manual_start_num_${threadId}`,
+      getWorkspaceStorageKey("manual_start_num", threadId),
       String(manualStartNum)
     );
-    localStorage.setItem(`volume_mode_${threadId}`, String(volumeMode));
     localStorage.setItem(
-      `auto_detect_volume_${threadId}`,
+      getWorkspaceStorageKey("volume_mode", threadId),
+      String(volumeMode)
+    );
+    localStorage.setItem(
+      getWorkspaceStorageKey("auto_detect_volume", threadId),
       String(autoDetectVolume)
     );
     localStorage.setItem(
-      `manual_start_volume_${threadId}`,
+      getWorkspaceStorageKey("manual_start_volume", threadId),
       String(manualStartVolume)
     );
-    localStorage.setItem(`volume_boundaries_${threadId}`, volumeBoundaries);
     localStorage.setItem(
-      `volume_boundary_type_${threadId}`,
+      getWorkspaceStorageKey("volume_boundaries", threadId),
+      volumeBoundaries
+    );
+    localStorage.setItem(
+      getWorkspaceStorageKey("volume_boundary_type", threadId),
       volumeBoundaryType
     );
     localStorage.setItem(
-      `chapters_per_volume_${threadId}`,
+      getWorkspaceStorageKey("chapters_per_volume", threadId),
       String(chaptersPerVolume)
     );
   }, [
@@ -582,9 +612,20 @@ export default function ReaderPage({
         setPolishMode(gs.polish_mode || "soft");
         setPolishSoftLimit(gs.polish_soft_limit || 100);
         setAlwaysHideThoughts(gs.always_hide_thoughts !== 0);
+
+        const provider = gs.llm_provider || "lm_studio";
+        const activeModel =
+          provider === "gemini"
+            ? gs.gemini_model || "gemini-2.5-flash"
+            : provider === "openai"
+              ? gs.openai_model || "gpt-4o-mini"
+              : provider === "openrouter"
+                ? gs.openrouter_model || "deepseek/deepseek-chat"
+                : gs.lm_model || "qwen2.5-7b";
+
         setGlobalSettings({
           lm_url: gs.lm_url,
-          lm_model: gs.lm_model,
+          lm_model: activeModel,
           target_language: gs.target_language,
         });
       }
@@ -662,7 +703,14 @@ export default function ReaderPage({
               if (dataStr === "[DONE]") break;
               try {
                 const data = JSON.parse(dataStr);
-                if (data.content) {
+                if (data.final_text) {
+                  setTranslatedText(data.final_text);
+                  setChapterContent((prev) =>
+                    prev
+                      ? { ...prev, content_translated: data.final_text }
+                      : prev
+                  );
+                } else if (data.content) {
                   setTranslatedText((prev) => prev + data.content);
                 } else if (data.error) {
                   setTranslatedText((prev) => prev + "\n⚠️ " + data.error);
@@ -775,6 +823,35 @@ export default function ReaderPage({
             sessionStorage.setItem(CH_CACHE_KEY, JSON.stringify(data));
           } catch {
             /* quota exceeded — ignore */
+          }
+
+          // Background prefetch adjacent chapters (N+1, N-1) into sessionStorage
+          if (thread?.chapters) {
+            [selectedChapterIdx + 1, selectedChapterIdx - 1].forEach(
+              (adjIdx) => {
+                const adjCh = thread.chapters[adjIdx];
+                if (!adjCh) return;
+                const adjKey = getWorkspaceStorageKey(
+                  "readomni_chapter_cache",
+                  `${threadId}_${adjCh.id}`
+                );
+                if (sessionStorage.getItem(adjKey)) return;
+                fetch(
+                  getApiUrl(`/api/threads/${threadId}/chapters/${adjCh.id}`)
+                )
+                  .then((r) => (r.ok ? r.json() : null))
+                  .then((adjData) => {
+                    if (adjData) {
+                      try {
+                        sessionStorage.setItem(adjKey, JSON.stringify(adjData));
+                      } catch {
+                        /* ignore quota */
+                      }
+                    }
+                  })
+                  .catch(() => {});
+              }
+            );
           }
         }
       } catch (err: unknown) {
@@ -1024,6 +1101,17 @@ export default function ReaderPage({
         { method: "DELETE" }
       );
       if (res.ok) {
+        sessionStorage.removeItem(`readomni_thread_cache_${threadId}`);
+        sessionStorage.removeItem(`readomni_ch_cache_${threadId}_${chapterId}`);
+        sessionStorage.removeItem(
+          getWorkspaceStorageKey(
+            "readomni_ch_cache",
+            `${threadId}_${chapterId}`
+          )
+        );
+        setSelectedChapterIdx((prev) =>
+          prev !== null && prev > 0 ? prev - 1 : prev
+        );
         toast.success("Chapter deleted");
         await fetchThread();
       }
@@ -1062,19 +1150,35 @@ export default function ReaderPage({
       if (res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          // Decode chunk to keep connection alive and prevent timeout
-          decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let payload: any;
+            try {
+              payload = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (payload.status === "error" || payload.error) {
+              throw new Error(
+                payload.message || payload.error || "Failed to polish titles"
+              );
+            }
+          }
         }
       }
 
       await fetchThread();
       toast.success("Titles polished successfully.");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Title translation failed:", err);
-      toast.error("Title translation failed.");
+      toast.error(err?.message || "Title translation failed.");
     } finally {
       setIsTranslatingTitles(false);
     }
@@ -1459,6 +1563,7 @@ export default function ReaderPage({
               thread={thread}
               selectedChapterIdx={selectedChapterIdx}
               setSelectedChapterIdx={setSelectedChapterIdx}
+              onSelectChapter={(idx) => goToChapter(idx)}
               chapterContent={chapterContent}
               loadingContent={loadingContent}
               translatedText={translatedText}

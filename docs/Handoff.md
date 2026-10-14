@@ -378,6 +378,27 @@ When maintaining or creating novel scrapers in `backend/services/scrapers/`, adh
    - For new novel websites protected by aggressive Cloudflare Turnstile/Interstitial challenges or dynamic anti-bot defenses.
    - Use `StealthyNovelAdapter` (`services/scrapers/stealth_base.py`) providing automatic Turnstile bypass (`solve_cloudflare=True`), resource blocking (`disable_resources=True`), and adaptive DOM selectors (`adaptive=True`).
 
+### Q. Graphify Knowledge Graph & Multi-Tenancy Helpers (ADR-118)
+* **`GlobalSetting` as Architectural God Node:** Graphify centrality analysis (`betweenness: 0.082`, `104` edges) identifies `GlobalSetting` (`backend/database.py`) as the central hub bridging Batch Translation, Novalpie Scraper Concurrency/Auth, Settings/Secrets, and Ghost Mode Dual-DB Isolation.
+* **Canonical Backend Tenancy Key (`make_workspace_key`):** All in-memory registries (`active_batches`, `active_tasks`, `translation_queues`, `ACTIVE_IMAGE_JOBS`) must use `make_workspace_key(workspace, entity_id)` from `backend/database.py` rather than raw integer IDs.
+* **Canonical Frontend Storage Key (`getWorkspaceStorageKey` & `clearWorkspaceSessionCache`):** All client-side storage keys in `App.tsx`, `LibraryPage.tsx`, `ReaderPage.tsx`, and `BookmarksPage.tsx` must use `getWorkspaceStorageKey(baseKey, suffix)` from `src/lib/api.ts`, and workspace switches must call `clearWorkspaceSessionCache()` prior to `window.location.reload()`.
+
+### R. Agent Playbook (Operational Boundaries & Invariants)
+Sebagai panduan resmi bagi AI Agent yang bekerja di repositori ini:
+1. **Scope Aman untuk Refactor:**
+   - Komponen UI presentasional (`src/components/`, `src/pages/`) asalkan typecheck dan linting tetap 0 error.
+   - Penambahan template prompt dan adapter genre di `backend/services/prompt_templates.py`.
+   - Penambahan unit test baru di `backend/tests/`.
+   - Optimasi query database asalkan mempertahankan signature return models Pydantic.
+2. **Endpoint & Invariant yang DILARANG Diubah Sembarangan:**
+   - **Dual-DB Tenancy (`backend/database.py`):** Dilarang mencampur sesi `app.db` dan `ghost.db`. Dilarang menggunakan integer key pada antrean in-memory (`make_workspace_key` wajib digunakan).
+   - **Tooling & Package Safety:** Dilarang mengedit `package.json` atau `requirements.txt` tanpa izin eksplisit. Dilarang menambah git hooks atau linter wrappers.
+   - **Git Operations:** Dilarang melakukan force-push, reset hard, atau rebase ke shared branch.
+3. **Pola Pengujian Wajib (Mandatory Gates):**
+   - Jalankan `npm run typecheck` (harus 0 error).
+   - Jalankan `npm run lint` (harus 0 warning/error).
+   - Jalankan `py -m pytest backend/tests/ -v` (seluruh test suite modul terkait harus hijau).
+
 ---
 
 ## 🧪 5. Sandbox Quality Control & Verification

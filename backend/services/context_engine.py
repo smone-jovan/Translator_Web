@@ -153,14 +153,44 @@ class ContextEngine:
         return False
 
     @staticmethod
+    def detect_source_language(text: str | None) -> str:
+        from services.prompt_templates import detect_source_language
+        return detect_source_language(text)
+
+    @staticmethod
+    def _term_matches_text(original_term: str, text: str) -> bool:
+        """
+        Check whether any clean variant of a glossary original_term appears in text.
+        Supports slash-separated variants (e.g. '夏茵 / 夏恩') and strips parenthetical notes.
+        """
+        if not original_term or not text:
+            return False
+        if original_term in text:
+            return True
+        raw_variants = [v.strip() for v in original_term.split("/") if v.strip()]
+        for rv in raw_variants:
+            clean_v = re.sub(r"\s*[\(\（].*?[\)\）]", "", rv).strip()
+            if clean_v and (len(clean_v) > 1 or ord(clean_v[0]) > 127):
+                if clean_v in text:
+                    return True
+        return False
+
+    @staticmethod
     def build_translation_prompt(
         db: Session,
         thread_id: int | None,
         target_lang: str,
         original_text: str | None = None,
         translation_mode: str = "quality",
-        model: str | None = None
+        model: str | None = None,
+        limit: int | None = None,
+        mode: str | None = None,
+        current_chapter_index: int | None = None,
+        custom_instructions: str | None = None,
     ) -> str:
+        if mode:
+            translation_mode = mode
+
         # Atur bahasa target (Indo atau Inggris)
         is_indo = target_lang.lower() == "indonesian"
         lang_name = "Indonesian" if is_indo else "English"
@@ -217,31 +247,52 @@ class ContextEngine:
                 sg_trunc = thread.style_guide[:sg_max] + "... (truncated)" if len(thread.style_guide) > sg_max else thread.style_guide
                 full_prompt += f"\n[Style Guide for This Novel]:\n{sg_trunc}\n"
 
+            if custom_instructions:
+                full_prompt += f"\n[Custom Instructions]:\n{custom_instructions}\n"
+
             # Mode-aware glossary limit:
             # - Quality: follow global max_context_terms setting (user controls depth)
             # - Fast: locked at 10 (protect local LLMs from context bloat)
             global_limit = gs.max_context_terms if gs else 50
-            limit = global_limit if is_quality else min(10, global_limit)
-            
-            # Ambil istilah aktif (non-archived) yang paling sering dipakai atau yang terbaru biar AI gak overload
+            effective_limit = limit if limit is not None else (global_limit if is_quality else min(10, global_limit))
+
+            # Ambil seluruh istilah aktif (non-archived) kandidat thread
             from sqlalchemy import desc
-            entries_stmt = (
+            all_entries_stmt = (
                 select(LorebookEntry)
                 .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
-                .order_by(desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count), desc(LorebookEntry.last_used_at))
-                .limit(limit)
+                .order_by(
+                    desc(LorebookEntry.is_locked),
+                    desc(LorebookEntry.usage_count),
+                    desc(LorebookEntry.last_used_at),
+                    desc(LorebookEntry.id),
+                )
             )
-            entries = db.execute(entries_stmt).scalars().all()
-            
-            # Update counter kalau istilah tersebut muncul di teks asli
-            if original_text and entries:
+            all_entries = db.execute(all_entries_stmt).scalars().all()
+
+            # Prioritaskan istilah yang benar-benar muncul di bab ini dan naikkan usage_count
+            if original_text and all_entries:
+                matched_entries = []
+                unmatched_entries = []
                 updated = False
-                for e in entries:
-                    if e.original_term in original_text:
-                        e.usage_count += 1
+                for e in all_entries:
+                    if ContextEngine._term_matches_text(e.original_term, original_text):
+                        e.usage_count = (e.usage_count or 0) + 1
+                        matched_entries.append(e)
                         updated = True
+                    else:
+                        unmatched_entries.append(e)
                 if updated:
-                    db.commit()
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
+                entries = matched_entries[:effective_limit]
+                if len(entries) < effective_limit:
+                    entries.extend(unmatched_entries[: effective_limit - len(entries)])
+            else:
+                entries = all_entries[:effective_limit]
 
             if entries:
                 terms_list = []
@@ -536,25 +587,43 @@ class ContextEngine:
         return apply_glossary_lock(text, rules)
 
     @staticmethod
-    def auto_save_glossary(db: Session, thread_id: int, full_text: str):
+    def auto_save_glossary(
+        db: Session,
+        thread_id: int,
+        full_text: str | dict = "",
+        chapter_index: int | None = None,
+        glossary_data: dict | None = None,
+    ):
         """
         Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
         Mendukung pemisah kayak :, ->, →, atau —
         """
         import re
         from sqlalchemy import select, func
-        
-        # Cari header semacam "Translator Notes:", "Translation Notes:", "Glossary:", dsb.
-        header_pattern = re.compile(r"([-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*)", re.IGNORECASE)
-        match = header_pattern.search(full_text)
-        
-        if not match:
-            return
 
-        # Ambil semua teks setelah header tersebut
-        notes_section = full_text[match.end():].strip()
-        
-        lines = notes_section.split("\n")
+        if glossary_data is not None:
+            data_dict = glossary_data
+        elif isinstance(full_text, dict):
+            data_dict = full_text
+        else:
+            data_dict = None
+
+        if data_dict is not None:
+            lines = [f"- {k} -> {v}" for k, v in data_dict.items()]
+        else:
+            if not isinstance(full_text, str) or not full_text:
+                return
+
+            # Cari header semacam "Translator Notes:", "Translation Notes:", "Glossary:", dsb.
+            header_pattern = re.compile(
+                r"([-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*)",
+                re.IGNORECASE,
+            )
+            match = header_pattern.search(full_text)
+            if not match:
+                return
+            notes_section = full_text[match.end():].strip()
+            lines = notes_section.split("\n")
         new_entries = []
         gender_updates = []
         seen_terms = set()
@@ -664,6 +733,10 @@ class ContextEngine:
                                 final_translated = desc_check[:p_start].strip()
                                 final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
 
+                            # CRITICAL FIX: Re-validate final_translated after stripping parenthetical notes!
+                            if not final_translated or ContextEngine.is_garbage_lorebook_entry(term, final_translated):
+                                continue
+
                             new_entry = LorebookEntry(
                                 thread_id=thread_id,
                                 original_term=term,
@@ -695,7 +768,8 @@ class ContextEngine:
         from database import GlobalSetting
         from sqlalchemy import select
 
-        sys_prompt = build_glossary_extraction_prompt(target_lang)
+        source_lang = ContextEngine.detect_source_language(original_text)
+        sys_prompt = build_glossary_extraction_prompt(target_lang, source_lang=source_lang)
         
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
@@ -723,7 +797,8 @@ class ContextEngine:
         import json
         import re
 
-        sys_prompt = build_relationship_extraction_prompt(target_lang)
+        source_lang = ContextEngine.detect_source_language(original_text)
+        sys_prompt = build_relationship_extraction_prompt(target_lang, source_lang=source_lang)
 
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()

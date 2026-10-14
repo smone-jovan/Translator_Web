@@ -171,12 +171,12 @@ async def translate_titles(
     # Clean thread original title and translate thread synopsis/description if bulk polishing
     if not chapter_id:
         # A. Clean Original Title (ADR-020 Compliance)
-        if thread.original_title and contains_chinese(thread.original_title):
+        if thread.original_title and contains_source_script(thread.original_title):
             print(f"🔄 [ADR-020] Cleansing original title: {thread.original_title}")
             sys_prompt_clean = build_title_cleaning_prompt()
             user_prompt_clean = f"Please clean this title: {thread.original_title}"
             try:
-                provider = AIProviderFactory.get_provider(base_url=lm_url)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
                 messages_clean = [
                     {"role": "system", "content": sys_prompt_clean},
                     {"role": "user", "content": user_prompt_clean}
@@ -188,14 +188,14 @@ async def translate_titles(
                     thread.original_title = cleaned_title
             except Exception as e:
                 print(f"⚠️ Failed to clean original_title in translate_titles: {e}")
- 
-        # B. Translate Synopsis if still in Chinese
-        if thread.synopsis and contains_chinese(thread.synopsis):
-            print(f"🔄 Translating Chinese synopsis/description...")
+
+        # B. Translate Synopsis if still in source script (Chinese/Korean/Japanese)
+        if thread.synopsis and contains_source_script(thread.synopsis):
+            print(f"🔄 Translating source script synopsis/description...")
             sys_prompt_syn = build_synopsis_translation_prompt(target_lang)
             user_prompt_syn = thread.synopsis
             try:
-                provider = AIProviderFactory.get_provider(base_url=lm_url)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
                 messages_syn = [
                     {"role": "system", "content": sys_prompt_syn},
                     {"role": "user", "content": user_prompt_syn}
@@ -408,7 +408,7 @@ async def translate_titles(
 
             try:
                 print(f"🔄 Processing title batch {chunk_num}...")
-                provider = AIProviderFactory.get_provider(base_url=lm_url)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
                 messages = [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt}

@@ -16,6 +16,33 @@ export function getActiveWorkspace(): string {
   return "main";
 }
 
+/**
+ * Helper kanonik ADR-118 untuk membuat key localStorage / sessionStorage
+ * yang terisolasi berdasarkan workspace aktif ('main' atau 'ghost').
+ */
+export function getWorkspaceStorageKey(
+  baseKey: string,
+  suffix?: string | number
+): string {
+  const ws = getActiveWorkspace();
+  if (suffix !== undefined && suffix !== null && suffix !== "") {
+    return `${baseKey}_${ws}_${suffix}`;
+  }
+  return `${baseKey}_${ws}`;
+}
+
+/**
+ * Bersihkan seluruh cache sessionStorage saat pengguna berpindah workspace (main <-> ghost)
+ * agar tidak terjadi kebocoran tampilan data antar workspace saat reload.
+ */
+export function clearWorkspaceSessionCache(): void {
+  try {
+    sessionStorage.clear();
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function getWorkspaceHeaders(): Record<string, string> {
   return {
     "X-Workspace": getActiveWorkspace(),

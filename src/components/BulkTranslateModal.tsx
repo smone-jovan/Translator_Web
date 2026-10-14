@@ -1,35 +1,35 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/exhaustive-deps */
-import { useState, useEffect, memo, useCallback, useMemo } from 'react';
-import { Virtuoso } from 'react-virtuoso';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import Button from '@mui/material/Button';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import Checkbox from '@mui/material/Checkbox';
-import Slider from '@mui/material/Slider';
-import Typography from '@mui/material/Typography';
-import Box from '@mui/material/Box';
-import ToggleButton from '@mui/material/ToggleButton';
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import Tooltip from '@mui/material/Tooltip';
-import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
-import { getApiUrl } from '@/lib/api';
-import { useEngineLoadMode } from '@/lib/settingsSync';
+import { useState, useEffect, memo, useCallback, useMemo } from "react";
+import { Virtuoso } from "react-virtuoso";
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import DialogActions from "@mui/material/DialogActions";
+import Button from "@mui/material/Button";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Checkbox from "@mui/material/Checkbox";
+import Slider from "@mui/material/Slider";
+import Typography from "@mui/material/Typography";
+import Box from "@mui/material/Box";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
+import CircularProgress from "@mui/material/CircularProgress";
+import IconButton from "@mui/material/IconButton";
+import { getApiUrl } from "@/lib/api";
+import { useEngineLoadMode } from "@/lib/settingsSync";
 
-import AutoAwesome from '@mui/icons-material/AutoAwesome';
-import Settings from '@mui/icons-material/Settings';
-import ListAlt from '@mui/icons-material/ListAlt';
-import PlayArrow from '@mui/icons-material/PlayArrow';
-import History from '@mui/icons-material/History';
-import Close from '@mui/icons-material/Close';
-import Bolt from '@mui/icons-material/Bolt';
-import Shield from '@mui/icons-material/Shield';
-import Translate from '@mui/icons-material/Translate';
+import AutoAwesome from "@mui/icons-material/AutoAwesome";
+import Settings from "@mui/icons-material/Settings";
+import ListAlt from "@mui/icons-material/ListAlt";
+import PlayArrow from "@mui/icons-material/PlayArrow";
+import History from "@mui/icons-material/History";
+import Close from "@mui/icons-material/Close";
+import Bolt from "@mui/icons-material/Bolt";
+import Shield from "@mui/icons-material/Shield";
+import Translate from "@mui/icons-material/Translate";
 
 interface Chapter {
   id: number;
@@ -46,75 +46,129 @@ interface BulkTranslateModalProps {
   threadId: number;
   threadTitle: string;
   chapters: Chapter[];
-  onStartBatch: (chapterIds: number[], aiExtract: boolean, loadMode: 'soft' | 'hard', targetLang: string, overwrite: boolean, translationMode: 'quality' | 'fast') => void;
+  onStartBatch: (
+    chapterIds: number[],
+    aiExtract: boolean,
+    loadMode: "soft" | "hard",
+    targetLang: string,
+    overwrite: boolean,
+    translationMode: "quality" | "fast"
+  ) => void;
   onSuccess?: () => void;
 }
 
-const ChapterItem = memo(({ ch, isSelected, onToggle }: { ch: Chapter, isSelected: boolean, onToggle: (id: number) => void }) => (
-  <Box 
-    onClick={() => onToggle(ch.id)}
-    sx={{ 
-      height: '42px',
-      boxSizing: 'border-box',
-      borderRadius: '10px', 
-      mb: '2px',
-      px: 1.5,
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      background: isSelected ? 'rgba(var(--primary-rgb), 0.12)' : 'transparent',
-      border: isSelected ? '1px solid rgba(var(--primary-rgb), 0.35)' : '1px solid transparent',
-      transition: 'background 0.12s ease',
-      userSelect: 'none',
-      '&:hover': { 
-        background: isSelected ? 'rgba(var(--primary-rgb), 0.18)' : 'rgba(255,255,255,0.04)' 
-      }
-    }}
-  >
-    <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0, flex: 1, mr: 1 }}>
-      <Checkbox 
-        checked={isSelected} 
-        size="small"
-        sx={{ 
-          p: 0.5,
+const ChapterItem = memo(
+  ({
+    ch,
+    isSelected,
+    onToggle,
+  }: {
+    ch: Chapter;
+    isSelected: boolean;
+    onToggle: (id: number) => void;
+  }) => (
+    <Box
+      onClick={() => onToggle(ch.id)}
+      sx={{
+        height: "42px",
+        boxSizing: "border-box",
+        borderRadius: "10px",
+        mb: "2px",
+        px: 1.5,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: isSelected
+          ? "rgba(var(--primary-rgb), 0.12)"
+          : "transparent",
+        border: isSelected
+          ? "1px solid rgba(var(--primary-rgb), 0.35)"
+          : "1px solid transparent",
+        transition: "background 0.12s ease",
+        userSelect: "none",
+        "&:hover": {
+          background: isSelected
+            ? "rgba(var(--primary-rgb), 0.18)"
+            : "rgba(255,255,255,0.04)",
+        },
+      }}
+    >
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          minWidth: 0,
+          flex: 1,
           mr: 1,
-          color: 'var(--muted-foreground)', 
-          '&.Mui-checked': { color: 'var(--primary)' } 
-        }}
-      />
-      <Typography 
-        noWrap
-        sx={{ 
-          fontSize: '0.8rem', 
-          fontWeight: 600, 
-          color: 'var(--foreground)',
-          opacity: ch.has_translation ? 0.55 : 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
         }}
       >
-        {`Ch ${ch.order}: ${ch.title_original || 'Untitled'}`}
-      </Typography>
-      {ch.translation_status === 'prohibited' && (
-        <span style={{ marginLeft: 8, fontSize: '0.6rem', fontWeight: 900, background: 'rgba(239, 68, 68, 0.15)', color: '#ef5350', padding: '2px 6px', borderRadius: '4px', flexShrink: 0 }}>
-          PROHIBITED
-        </span>
+        <Checkbox
+          checked={isSelected}
+          size="small"
+          sx={{
+            p: 0.5,
+            mr: 1,
+            color: "var(--muted-foreground)",
+            "&.Mui-checked": { color: "var(--primary)" },
+          }}
+        />
+        <Typography
+          noWrap
+          sx={{
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            color: "var(--foreground)",
+            opacity: ch.has_translation ? 0.55 : 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {`Ch ${ch.order}: ${ch.title_original || "Untitled"}`}
+        </Typography>
+        {ch.translation_status === "prohibited" && (
+          <span
+            style={{
+              marginLeft: 8,
+              fontSize: "0.6rem",
+              fontWeight: 900,
+              background: "rgba(239, 68, 68, 0.15)",
+              color: "#ef5350",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              flexShrink: 0,
+            }}
+          >
+            PROHIBITED
+          </span>
+        )}
+      </Box>
+      {ch.has_translation && (
+        <Tooltip title="Already translated. Re-translating will overwrite it.">
+          <History
+            sx={{
+              fontSize: 16,
+              opacity: 0.5,
+              color: "var(--primary)",
+              flexShrink: 0,
+            }}
+          />
+        </Tooltip>
       )}
     </Box>
-    {ch.has_translation && (
-      <Tooltip title="Already translated. Re-translating will overwrite it.">
-        <History sx={{ fontSize: 16, opacity: 0.5, color: 'var(--primary)', flexShrink: 0 }} />
-      </Tooltip>
-    )}
-  </Box>
-));
+  )
+);
 
-export default function BulkTranslateModal({ 
-  isOpen, onClose, threadId, threadTitle, chapters, onStartBatch
+export default function BulkTranslateModal({
+  isOpen,
+  onClose,
+  threadId,
+  threadTitle,
+  chapters,
+  onStartBatch,
 }: BulkTranslateModalProps) {
-  const [mode, setMode] = useState<'easy' | 'advanced'>('easy');
+  const [mode, setMode] = useState<"easy" | "advanced">("easy");
   const [loadMode, setLoadMode] = useEngineLoadMode();
   const [range, setRange] = useState<number>(5);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -123,34 +177,54 @@ export default function BulkTranslateModal({
   const [loreCount, setLoreCount] = useState<number>(0);
   const [isStarting, setIsStarting] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
-  const [targetLang, setTargetLang] = useState<'Indonesian' | 'English'>(
-    () => (localStorage.getItem('target_language') as 'Indonesian' | 'English') || 'Indonesian'
+  const [targetLang, setTargetLang] = useState<"Indonesian" | "English">(
+    () =>
+      (localStorage.getItem("target_language") as "Indonesian" | "English") ||
+      "Indonesian"
   );
-  const [translationMode, setTranslationMode] = useState<'quality' | 'fast'>(
-    () => (localStorage.getItem('translation_mode') as 'quality' | 'fast') || 'quality'
+  const [translationMode, setTranslationMode] = useState<"quality" | "fast">(
+    () =>
+      (localStorage.getItem("translation_mode") as "quality" | "fast") ||
+      "quality"
   );
   const [includeProhibited, setIncludeProhibited] = useState<boolean>(false);
   const maxEasy = Math.max(chapters.length, 1);
 
   // Update selected IDs in Easy Mode
-  const updateEasySelection = (quantity: number, incProhibited = includeProhibited) => {
-    const untranslated = chapters.filter(c => {
-      return !c.has_translation && (incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
+  const updateEasySelection = (
+    quantity: number,
+    incProhibited = includeProhibited
+  ) => {
+    const untranslated = chapters.filter((c) => {
+      return (
+        !c.has_translation &&
+        (incProhibited ||
+          (c.translation_status !== "prohibited" &&
+            c.translation_status !== "error"))
+      );
     });
 
-    const baseList = untranslated.length > 0 ? untranslated : chapters.filter(c => incProhibited || (c.translation_status !== 'prohibited' && c.translation_status !== 'error'));
-    
-    const result = baseList.slice(0, quantity).map(c => c.id);
+    const baseList =
+      untranslated.length > 0
+        ? untranslated
+        : chapters.filter(
+            (c) =>
+              incProhibited ||
+              (c.translation_status !== "prohibited" &&
+                c.translation_status !== "error")
+          );
+
+    const result = baseList.slice(0, quantity).map((c) => c.id);
     setSelectedIds(result);
   };
 
   useEffect(() => {
     if (isOpen) {
-      fetch(getApiUrl('/api/settings'))
-        .then(res => res.json())
-        .then(data => {
+      fetch(getApiUrl("/api/settings"))
+        .then((res) => res.json())
+        .then((data) => {
           const mode = data?.load_mode || data?.prefetch_mode;
-          if (mode === 'hard' || mode === 'soft') {
+          if (mode === "hard" || mode === "soft") {
             setLoadMode(mode);
           }
         })
@@ -159,8 +233,8 @@ export default function BulkTranslateModal({
       if (!hasInitialized) {
         // Fetch lorebook count to determine recommendation
         fetch(getApiUrl(`/api/threads/${threadId}/lorebook`))
-          .then(res => res.json())
-          .then(data => {
+          .then((res) => res.json())
+          .then((data) => {
             const count = data.length || 0;
             setLoreCount(count);
             // If already has some entries, don't force extraction
@@ -181,26 +255,28 @@ export default function BulkTranslateModal({
   const handleRangeChange = (_: any, newValue: number | number[]) => {
     const val = newValue as number;
     setRange(val);
-    if (mode === 'easy') {
+    if (mode === "easy") {
       updateEasySelection(val);
     }
   };
 
   const toggleChapter = useCallback((id: number) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
   }, []);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const selectAllUntranslated = () => {
-    const untranslated = chapters.filter(c => !c.has_translation).map(c => c.id);
+    const untranslated = chapters
+      .filter((c) => !c.has_translation)
+      .map((c) => c.id);
     setSelectedIds(untranslated);
   };
 
   const selectAll = () => {
-    const all = chapters.map(c => c.id);
+    const all = chapters.map((c) => c.id);
     setSelectedIds(all);
   };
 
@@ -210,12 +286,19 @@ export default function BulkTranslateModal({
 
   const handleStart = async () => {
     if (selectedIds.length === 0) {
-      alert('Please select at least 1 chapter to translate!');
+      alert("Please select at least 1 chapter to translate!");
       return;
     }
     setIsStarting(true);
     try {
-      await onStartBatch(selectedIds, aiExtract, loadMode, targetLang, overwrite, translationMode);
+      await onStartBatch(
+        selectedIds,
+        aiExtract,
+        loadMode,
+        targetLang,
+        overwrite,
+        translationMode
+      );
       onClose();
     } finally {
       setIsStarting(false);
@@ -227,115 +310,146 @@ export default function BulkTranslateModal({
   const getEstimatedTokens = () => {
     const count = selectedIds.length;
     if (count === 0) return 0;
-    
+
     const baseTranslateTokens = 6500;
     const extractTokens = aiExtract ? 250 : 0;
-    
+
     return count * (baseTranslateTokens + extractTokens);
   };
 
   const estTokens = getEstimatedTokens();
 
   return (
-    <Dialog 
-      open={isOpen} 
+    <Dialog
+      open={isOpen}
       onClose={onClose}
       fullWidth
       maxWidth="sm"
       slotProps={{
         paper: {
           sx: {
-            background: 'var(--card)', 
-            backgroundImage: 'radial-gradient(circle at top left, var(--primary), transparent)',
-            border: '1px solid var(--border)',
-            borderRadius: { xs: '0px', sm: '28px' },
-            color: 'var(--foreground)',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            overflow: 'hidden',
+            background: "var(--card)",
+            backgroundImage:
+              "radial-gradient(circle at top left, var(--primary), transparent)",
+            border: "1px solid var(--border)",
+            borderRadius: { xs: "0px", sm: "28px" },
+            color: "var(--foreground)",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            overflow: "hidden",
             m: { xs: 0, sm: 2 },
-            maxHeight: { xs: '100dvh', sm: '90vh' },
-            height: { xs: '100%', sm: 'auto' }
-          }
-        }
+            maxHeight: { xs: "100dvh", sm: "90vh" },
+            height: { xs: "100%", sm: "auto" },
+          },
+        },
       }}
     >
-      <DialogTitle sx={{ 
-        m: 0, 
-        p: { xs: 2, sm: 3.5 }, 
-        pb: { xs: 1, sm: 1 }, 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: { xs: 1.5, sm: 2.5 } 
-      }}>
-        <Box sx={{ 
-          width: { xs: 44, sm: 54 }, 
-          height: { xs: 44, sm: 54 }, 
-          borderRadius: { xs: '14px', sm: '18px' }, 
-          background: 'var(--primary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 8px 20px var(--primary)',
-          flexShrink: 0
-        }}>
-          <AutoAwesome sx={{ color: 'var(--primary-foreground)', fontSize: { xs: 22, sm: 28 } }} />
+      <DialogTitle
+        sx={{
+          m: 0,
+          p: { xs: 2, sm: 3.5 },
+          pb: { xs: 1, sm: 1 },
+          display: "flex",
+          alignItems: "center",
+          gap: { xs: 1.5, sm: 2.5 },
+        }}
+      >
+        <Box
+          sx={{
+            width: { xs: 44, sm: 54 },
+            height: { xs: 44, sm: 54 },
+            borderRadius: { xs: "14px", sm: "18px" },
+            background: "var(--primary)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 8px 20px var(--primary)",
+            flexShrink: 0,
+          }}
+        >
+          <AutoAwesome
+            sx={{
+              color: "var(--primary-foreground)",
+              fontSize: { xs: 22, sm: 28 },
+            }}
+          />
         </Box>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="h6" sx={{ fontWeight: 900, color: 'var(--foreground)', letterSpacing: '-0.5px', fontSize: { xs: '1.05rem', sm: '1.25rem' }, lineHeight: 1.2 }}>
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 900,
+              color: "var(--foreground)",
+              letterSpacing: "-0.5px",
+              fontSize: { xs: "1.05rem", sm: "1.25rem" },
+              lineHeight: 1.2,
+            }}
+          >
             Batch Translation Studio
           </Typography>
-          <Typography variant="body2" sx={{ color: 'var(--muted-foreground)', fontWeight: 500, fontSize: { xs: '0.75rem', sm: '0.85rem' }, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {threadTitle || 'Novel batch processor'}
+          <Typography
+            variant="body2"
+            sx={{
+              color: "var(--muted-foreground)",
+              fontWeight: 500,
+              fontSize: { xs: "0.75rem", sm: "0.85rem" },
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {threadTitle || "Novel batch processor"}
           </Typography>
         </Box>
         <IconButton
           onClick={onClose}
           sx={{
-            color: 'rgba(255,255,255,0.4)',
-            '&:hover': { color: '#fff', background: 'rgba(255,255,255,0.05)' },
-            flexShrink: 0
+            color: "rgba(255,255,255,0.4)",
+            "&:hover": { color: "#fff", background: "rgba(255,255,255,0.05)" },
+            flexShrink: 0,
           }}
         >
           <Close fontSize="small" />
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ px: { xs: 2, sm: 4 }, pt: 2, pb: 0, flex: 1, overflowY: 'auto' }}>
+      <DialogContent
+        sx={{ px: { xs: 2, sm: 4 }, pt: 2, pb: 0, flex: 1, overflowY: "auto" }}
+      >
         {/* Toggle Mode Mode Selector */}
-        <Box sx={{ mb: 3.5, display: 'flex', justifyContent: 'center' }}>
+        <Box sx={{ mb: 3.5, display: "flex", justifyContent: "center" }}>
           <ToggleButtonGroup
             value={mode}
             exclusive
             onChange={(_, val) => {
               if (val) {
                 setMode(val);
-                if (val === 'easy') {
+                if (val === "easy") {
                   updateEasySelection(range);
                 }
               }
             }}
-            sx={{ 
-              background: 'rgba(0,0,0,0.3)',
+            sx={{
+              background: "rgba(0,0,0,0.3)",
               p: 0.5,
-              borderRadius: '16px',
-              border: '1px solid rgba(255,255,255,0.05)',
-              '& .MuiToggleButton-root': {
-                color: 'var(--muted-foreground)',
-                border: 'none',
+              borderRadius: "16px",
+              border: "1px solid rgba(255,255,255,0.05)",
+              "& .MuiToggleButton-root": {
+                color: "var(--muted-foreground)",
+                border: "none",
                 px: 3.5,
                 py: 0.8,
-                borderRadius: '12px',
-                fontSize: '0.75rem',
+                borderRadius: "12px",
+                fontSize: "0.75rem",
                 fontWeight: 800,
-                textTransform: 'uppercase',
-                transition: 'all 0.2s ease',
-                '&.Mui-selected': {
-                  background: 'var(--primary)',
-                  color: 'var(--primary-foreground)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                  '&:hover': { background: 'var(--primary)' }
-                }
-              }
+                textTransform: "uppercase",
+                transition: "all 0.2s ease",
+                "&.Mui-selected": {
+                  background: "var(--primary)",
+                  color: "var(--primary-foreground)",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  "&:hover": { background: "var(--primary)" },
+                },
+              },
             }}
           >
             <ToggleButton value="easy">Easy Selection</ToggleButton>
@@ -344,17 +458,36 @@ export default function BulkTranslateModal({
         </Box>
 
         {/* 1. EASY MODE CONTENT */}
-        {mode === 'easy' && (
+        {mode === "easy" && (
           <Box sx={{ px: 1 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900 }}>
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                mb: 1,
+              }}
+            >
+              <Typography
+                variant="overline"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  color: "var(--primary)",
+                  fontWeight: 900,
+                }}
+              >
                 <PlayArrow sx={{ fontSize: 16 }} /> Quantity to Translate
               </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 800, color: 'var(--primary)' }}>
+              <Typography
+                variant="body2"
+                sx={{ fontWeight: 800, color: "var(--primary)" }}
+              >
                 {range} Chapters
               </Typography>
             </Box>
-            
+
             <Slider
               value={range}
               onChange={handleRangeChange}
@@ -362,70 +495,209 @@ export default function BulkTranslateModal({
               max={maxEasy}
               step={1}
               marks={[
-                { value: 1, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>1</span> },
-                ...(maxEasy >= 5 ? [{ value: 5, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>5</span> }] : []),
-                ...(maxEasy >= 10 ? [{ value: 10, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>10</span> }] : []),
-                ...(maxEasy >= 25 ? [{ value: 25, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>25</span> }] : []),
-                ...(maxEasy >= 50 ? [{ value: 50, label: <span style={{ color: 'var(--muted-foreground)', fontSize: '10px', fontWeight: 600 }}>50</span> }] : []),
-                { value: maxEasy, label: <span style={{ color: 'var(--primary)', fontSize: '10px', fontWeight: 800 }}>{maxEasy}</span> }
+                {
+                  value: 1,
+                  label: (
+                    <span
+                      style={{
+                        color: "var(--muted-foreground)",
+                        fontSize: "10px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      1
+                    </span>
+                  ),
+                },
+                ...(maxEasy >= 5
+                  ? [
+                      {
+                        value: 5,
+                        label: (
+                          <span
+                            style={{
+                              color: "var(--muted-foreground)",
+                              fontSize: "10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            5
+                          </span>
+                        ),
+                      },
+                    ]
+                  : []),
+                ...(maxEasy >= 10
+                  ? [
+                      {
+                        value: 10,
+                        label: (
+                          <span
+                            style={{
+                              color: "var(--muted-foreground)",
+                              fontSize: "10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            10
+                          </span>
+                        ),
+                      },
+                    ]
+                  : []),
+                ...(maxEasy >= 25
+                  ? [
+                      {
+                        value: 25,
+                        label: (
+                          <span
+                            style={{
+                              color: "var(--muted-foreground)",
+                              fontSize: "10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            25
+                          </span>
+                        ),
+                      },
+                    ]
+                  : []),
+                ...(maxEasy >= 50
+                  ? [
+                      {
+                        value: 50,
+                        label: (
+                          <span
+                            style={{
+                              color: "var(--muted-foreground)",
+                              fontSize: "10px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            50
+                          </span>
+                        ),
+                      },
+                    ]
+                  : []),
+                {
+                  value: maxEasy,
+                  label: (
+                    <span
+                      style={{
+                        color: "var(--primary)",
+                        fontSize: "10px",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {maxEasy}
+                    </span>
+                  ),
+                },
               ]}
-              sx={{ 
-                color: 'var(--primary)', 
+              sx={{
+                color: "var(--primary)",
                 mt: 1,
                 mb: 3,
                 height: 6,
-                '& .MuiSlider-track': { border: 'none' },
-                '& .MuiSlider-thumb': {
+                "& .MuiSlider-track": { border: "none" },
+                "& .MuiSlider-thumb": {
                   width: 20,
                   height: 20,
-                  backgroundColor: 'var(--primary-foreground)',
-                  boxShadow: '0 0 15px var(--primary)',
-                  '&:hover, &.Mui-focusVisible': {
-                    boxShadow: '0 0 0 8px var(--primary)'
-                  }
-                }
+                  backgroundColor: "var(--primary-foreground)",
+                  boxShadow: "0 0 15px var(--primary)",
+                  "&:hover, &.Mui-focusVisible": {
+                    boxShadow: "0 0 0 8px var(--primary)",
+                  },
+                },
               }}
             />
 
             {/* Quick preset buttons in Easy Mode */}
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                onClick={() => { setRange(Math.min(5, maxEasy)); updateEasySelection(Math.min(5, maxEasy)); }}
-                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 1.5 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setRange(Math.min(5, maxEasy));
+                  updateEasySelection(Math.min(5, maxEasy));
+                }}
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
+                }}
               >
                 Next 5
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                onClick={() => { setRange(Math.min(10, maxEasy)); updateEasySelection(Math.min(10, maxEasy)); }}
-                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setRange(Math.min(10, maxEasy));
+                  updateEasySelection(Math.min(10, maxEasy));
+                }}
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
+                }}
               >
                 Next 10
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                onClick={() => { setRange(Math.min(25, maxEasy)); updateEasySelection(Math.min(25, maxEasy)); }}
-                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setRange(Math.min(25, maxEasy));
+                  updateEasySelection(Math.min(25, maxEasy));
+                }}
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
+                }}
               >
                 Next 25
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                onClick={() => { setRange(maxEasy); selectAllUntranslated(); }}
-                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 800 }}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setRange(maxEasy);
+                  selectAllUntranslated();
+                }}
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--primary)",
+                  color: "var(--primary)",
+                  fontWeight: 800,
+                }}
               >
                 All Untranslated
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                onClick={() => { setRange(maxEasy); selectAll(); }}
-                sx={{ fontSize: '0.65rem', borderRadius: '8px', borderColor: 'var(--border)', color: 'var(--foreground)', fontWeight: 700 }}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setRange(maxEasy);
+                  selectAll();
+                }}
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
+                }}
               >
                 All ({chapters.length})
               </Button>
@@ -433,35 +705,60 @@ export default function BulkTranslateModal({
 
             {/* Quick Prohibited Toggle in Easy Mode */}
             {(() => {
-              const prohibitedCount = chapters.filter(c => c.translation_status === 'prohibited').length;
+              const prohibitedCount = chapters.filter(
+                (c) => c.translation_status === "prohibited"
+              ).length;
               if (prohibitedCount === 0) return null;
-              
+
               return (
-                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 1.5, background: 'rgba(239, 68, 68, 0.1)', borderRadius: '12px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                  <Typography variant="caption" sx={{ color: '#ef5350', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
+                <Box
+                  sx={{
+                    mt: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    p: 1.5,
+                    background: "rgba(239, 68, 68, 0.1)",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(239, 68, 68, 0.2)",
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "#ef5350",
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                  >
                     <Shield sx={{ fontSize: 16, mr: 0.5 }} />
                     {prohibitedCount} chapters were previously blocked by AI.
                   </Typography>
-                  <Button 
-                    size="small" 
+                  <Button
+                    size="small"
                     variant={includeProhibited ? "outlined" : "contained"}
                     onClick={() => {
                       const newVal = !includeProhibited;
                       setIncludeProhibited(newVal);
                       updateEasySelection(range, newVal);
                     }}
-                    sx={{ 
-                      fontSize: '0.65rem', 
-                      fontWeight: 800, 
-                      borderRadius: '8px',
-                      background: includeProhibited ? 'transparent' : '#ef5350', 
-                      borderColor: '#ef5350',
-                      color: includeProhibited ? '#ef5350' : '#fff',
-                      boxShadow: 'none',
-                      '&:hover': { background: '#d32f2f', color: '#fff', borderColor: '#d32f2f' }
+                    sx={{
+                      fontSize: "0.65rem",
+                      fontWeight: 800,
+                      borderRadius: "8px",
+                      background: includeProhibited ? "transparent" : "#ef5350",
+                      borderColor: "#ef5350",
+                      color: includeProhibited ? "#ef5350" : "#fff",
+                      boxShadow: "none",
+                      "&:hover": {
+                        background: "#d32f2f",
+                        color: "#fff",
+                        borderColor: "#d32f2f",
+                      },
                     }}
                   >
-                    {includeProhibited ? 'Exclude' : 'Include (+)'}
+                    {includeProhibited ? "Exclude" : "Include (+)"}
                   </Button>
                 </Box>
               );
@@ -470,74 +767,97 @@ export default function BulkTranslateModal({
         )}
 
         {/* 2. ADVANCED MODE CONTENT */}
-        {mode === 'advanced' && (
+        {mode === "advanced" && (
           <Box sx={{ mb: 3 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
-              <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 'bold' }}>
-                <ListAlt fontSize="small" sx={{ color: 'var(--primary)' }} /> Select Chapters Manually
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                mb: 1.5,
+              }}
+            >
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  fontWeight: "bold",
+                }}
+              >
+                <ListAlt fontSize="small" sx={{ color: "var(--primary)" }} />{" "}
+                Select Chapters Manually
               </Typography>
-              <Typography variant="caption" sx={{ color: 'var(--primary)', fontWeight: 800 }}>
+              <Typography
+                variant="caption"
+                sx={{ color: "var(--primary)", fontWeight: 800 }}
+              >
                 {selectedIds.length} of {chapters.length} Selected
               </Typography>
             </Box>
 
             {/* Quick action buttons */}
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
-              <Button 
-                size="small" 
-                variant="outlined" 
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 1.5 }}>
+              <Button
+                size="small"
+                variant="outlined"
                 onClick={selectAllUntranslated}
-                sx={{ 
-                  fontSize: '0.65rem', 
-                  borderRadius: '8px', 
-                  borderColor: 'var(--primary)', 
-                  color: 'var(--primary)',
-                  fontWeight: 800
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--primary)",
+                  color: "var(--primary)",
+                  fontWeight: 800,
                 }}
               >
                 Untranslated Only
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
+              <Button
+                size="small"
+                variant="outlined"
                 onClick={selectAll}
-                sx={{ 
-                  fontSize: '0.65rem', 
-                  borderRadius: '8px', 
-                  borderColor: 'var(--border)', 
-                  color: 'var(--foreground)',
-                  fontWeight: 700
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
                 }}
               >
                 Select All ({chapters.length})
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
+              <Button
+                size="small"
+                variant="outlined"
                 onClick={deselectAll}
-                sx={{ 
-                  fontSize: '0.65rem', 
-                  borderRadius: '8px', 
-                  borderColor: 'var(--border)', 
-                  color: 'var(--foreground)',
-                  fontWeight: 700
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground)",
+                  fontWeight: 700,
                 }}
               >
                 Clear All
               </Button>
-              <Button 
-                size="small" 
-                variant="outlined" 
+              <Button
+                size="small"
+                variant="outlined"
                 onClick={() => {
-                  const prohibited = chapters.filter(c => c.translation_status === 'prohibited').map(c => c.id);
-                  setSelectedIds(prev => Array.from(new Set([...prev, ...prohibited])));
+                  const prohibited = chapters
+                    .filter((c) => c.translation_status === "prohibited")
+                    .map((c) => c.id);
+                  setSelectedIds((prev) =>
+                    Array.from(new Set([...prev, ...prohibited]))
+                  );
                 }}
-                sx={{ 
-                  fontSize: '0.65rem', 
-                  borderRadius: '8px', 
-                  borderColor: 'rgba(239, 68, 68, 0.5)', 
-                  color: '#ef5350',
-                  fontWeight: 700
+                sx={{
+                  fontSize: "0.65rem",
+                  borderRadius: "8px",
+                  borderColor: "rgba(239, 68, 68, 0.5)",
+                  color: "#ef5350",
+                  fontWeight: 700,
                 }}
               >
                 Select Prohibited
@@ -545,25 +865,27 @@ export default function BulkTranslateModal({
             </Box>
 
             {/* Manual Checkbox List with Fast Virtualization */}
-            <Box sx={{ 
-              height: 260, 
-              background: 'rgba(0,0,0,0.3)', 
-              border: '1px solid var(--border)',
-              borderRadius: '16px', 
-              p: 0.5,
-              overflow: 'hidden'
-            }}>
+            <Box
+              sx={{
+                height: 260,
+                background: "rgba(0,0,0,0.3)",
+                border: "1px solid var(--border)",
+                borderRadius: "16px",
+                p: 0.5,
+                overflow: "hidden",
+              }}
+            >
               <Virtuoso
-                style={{ height: '100%', width: '100%' }}
+                style={{ height: "100%", width: "100%" }}
                 data={chapters}
                 overscan={600}
                 computeItemKey={(_index, ch) => ch.id}
                 itemContent={(_index, ch) => (
-                  <ChapterItem 
-                    key={ch.id} 
-                    ch={ch} 
-                    isSelected={selectedSet.has(ch.id)} 
-                    onToggle={toggleChapter} 
+                  <ChapterItem
+                    key={ch.id}
+                    ch={ch}
+                    isSelected={selectedSet.has(ch.id)}
+                    onToggle={toggleChapter}
                   />
                 )}
               />
@@ -573,40 +895,58 @@ export default function BulkTranslateModal({
 
         {/* Target Language Selection */}
         <Box sx={{ mb: 3.5 }}>
-          <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900, mb: 1.5 }}>
+          <Typography
+            variant="overline"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              color: "var(--primary)",
+              fontWeight: 900,
+              mb: 1.5,
+            }}
+          >
             <Translate sx={{ fontSize: 16 }} /> Target Language
           </Typography>
 
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            {['Indonesian', 'English'].map((lang) => {
+          <Box sx={{ display: "flex", gap: 2 }}>
+            {["Indonesian", "English"].map((lang) => {
               const active = targetLang === lang;
               return (
                 <button
                   key={lang}
                   type="button"
-                  onClick={() => setTargetLang(lang as 'Indonesian' | 'English')}
+                  onClick={() =>
+                    setTargetLang(lang as "Indonesian" | "English")
+                  }
                   style={{
                     flex: 1,
-                    padding: '12px 16px',
-                    borderRadius: '16px',
-                    fontSize: '0.75rem',
+                    padding: "12px 16px",
+                    borderRadius: "16px",
+                    fontSize: "0.75rem",
                     fontWeight: 800,
-                    border: active ? '1px solid var(--primary)' : '1px solid var(--border)',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    background: active ? 'var(--primary)' : 'rgba(0, 0, 0, 0.2)',
-                    color: active ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+                    border: active
+                      ? "1px solid var(--primary)"
+                      : "1px solid var(--border)",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    background: active
+                      ? "var(--primary)"
+                      : "rgba(0, 0, 0, 0.2)",
+                    color: active
+                      ? "var(--primary-foreground)"
+                      : "var(--muted-foreground)",
                   }}
                   onMouseEnter={(e) => {
                     if (!active) {
-                      e.currentTarget.style.borderColor = 'var(--primary)';
-                      e.currentTarget.style.color = 'var(--foreground)';
+                      e.currentTarget.style.borderColor = "var(--primary)";
+                      e.currentTarget.style.color = "var(--foreground)";
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!active) {
-                      e.currentTarget.style.borderColor = 'var(--border)';
-                      e.currentTarget.style.color = 'var(--muted-foreground)';
+                      e.currentTarget.style.borderColor = "var(--border)";
+                      e.currentTarget.style.color = "var(--muted-foreground)";
                     }
                   }}
                 >
@@ -618,48 +958,105 @@ export default function BulkTranslateModal({
         </Box>
 
         {/* Current Model Info */}
-        <Box sx={{ mb: 3, p: 2, background: 'rgba(0,0,0,0.2)', borderRadius: '16px', border: '1px solid var(--border)' }}>
-          <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontWeight: 600, display: 'block', mb: 1 }}>
+        <Box
+          sx={{
+            mb: 3,
+            p: 2,
+            background: "rgba(0,0,0,0.2)",
+            borderRadius: "16px",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "var(--muted-foreground)",
+              fontWeight: 600,
+              display: "block",
+              mb: 1,
+            }}
+          >
             Active Model
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Box sx={{ 
-              width: 32, height: 32, borderRadius: '10px', 
-              background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '14px', fontWeight: 900, color: 'var(--primary-foreground)'
-            }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 32,
+                height: 32,
+                borderRadius: "10px",
+                background: "var(--primary)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "14px",
+                fontWeight: 900,
+                color: "var(--primary-foreground)",
+              }}
+            >
               {(() => {
-                const provider = localStorage.getItem('llm_provider') || 'lm_studio';
-                if (provider === 'gemini') return 'G';
-                if (provider === 'openai') return 'O';
-                return 'L';
+                const provider =
+                  localStorage.getItem("llm_provider") || "lm_studio";
+                if (provider === "gemini") return "G";
+                if (provider === "openai") return "O";
+                if (provider === "openrouter") return "R";
+                return "L";
               })()}
             </Box>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {localStorage.getItem('gemini_model') || localStorage.getItem('lm_model') || 'Unknown Model'}
-              </Typography>
-              <Typography variant="caption" sx={{ color: 'var(--muted-foreground)', fontSize: '0.7rem' }}>
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  fontWeight: 800,
+                  fontSize: "0.85rem",
+                  color: "var(--foreground)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {(() => {
-                  const provider = localStorage.getItem('llm_provider') || 'lm_studio';
-                  const model = localStorage.getItem('gemini_model') || '';
-                  if (provider === 'gemini') {
+                  const p = localStorage.getItem("llm_provider") || "lm_studio";
+                  if (p === "gemini")
+                    return (
+                      localStorage.getItem("gemini_model") || "gemini-2.5-flash"
+                    );
+                  if (p === "openai")
+                    return (
+                      localStorage.getItem("openai_model") || "gpt-4o-mini"
+                    );
+                  if (p === "openrouter")
+                    return (
+                      localStorage.getItem("openrouter_model") ||
+                      "deepseek/deepseek-chat"
+                    );
+                  return localStorage.getItem("lm_model") || "Local Model";
+                })()}
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{ color: "var(--muted-foreground)", fontSize: "0.7rem" }}
+              >
+                {(() => {
+                  const provider =
+                    localStorage.getItem("llm_provider") || "lm_studio";
+                  const model = localStorage.getItem("gemini_model") || "";
+                  if (provider === "gemini") {
                     const rpmMap: Record<string, number> = {
-                      'gemini-3.1-flash-lite': 15,
-                      'gemini-3.5-flash-lite': 15,
-                      'gemma-4-31b': 30,
-                      'gemma-4-26b': 30,
-                      'gemini-3.6-flash': 5,
-                      'gemini-3.5-flash': 5,
-                      'gemini-3-flash': 5,
-                      'gemini-2.5-flash': 5,
-                      'gemini-2.5-flash-lite': 10,
+                      "gemini-3.1-flash-lite": 15,
+                      "gemini-3.5-flash-lite": 15,
+                      "gemma-4-31b": 30,
+                      "gemma-4-26b": 30,
+                      "gemini-3.6-flash": 5,
+                      "gemini-3.5-flash": 5,
+                      "gemini-3-flash": 5,
+                      "gemini-2.5-flash": 5,
+                      "gemini-2.5-flash-lite": 10,
                     };
                     const rpm = rpmMap[model] || 0;
-                    return `Gemini • ${rpm} RPM${rpm > 0 ? ' (free)' : ''}`;
+                    return `Gemini • ${rpm} RPM${rpm > 0 ? " (free)" : ""}`;
                   }
-                  if (provider === 'openai') return 'OpenAI Cloud';
-                  return 'LM Studio (Local)';
+                  if (provider === "openai") return "OpenAI Cloud";
+                  return "LM Studio (Local)";
                 })()}
               </Typography>
             </Box>
@@ -668,167 +1065,283 @@ export default function BulkTranslateModal({
 
         {/* Safety Engine Settings */}
         <Box sx={{ mb: 3 }}>
-          <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900, mb: 1.5 }}>
+          <Typography
+            variant="overline"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              color: "var(--primary)",
+              fontWeight: 900,
+              mb: 1.5,
+            }}
+          >
             <Settings sx={{ fontSize: 16 }} /> Engine Core Speed
           </Typography>
 
-          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
             <ToggleButtonGroup
               value={loadMode}
               exclusive
               onChange={(_, val) => val && setLoadMode(val)}
-              sx={{ 
-                background: 'rgba(0,0,0,0.3)',
+              sx={{
+                background: "rgba(0,0,0,0.3)",
                 p: 0.5,
-                borderRadius: '16px',
-                border: '1px solid rgba(255,255,255,0.05)',
-                width: '100%',
-                '& .MuiToggleButton-root': {
-                  color: 'var(--muted-foreground)',
-                  border: 'none',
+                borderRadius: "16px",
+                border: "1px solid rgba(255,255,255,0.05)",
+                width: "100%",
+                "& .MuiToggleButton-root": {
+                  color: "var(--muted-foreground)",
+                  border: "none",
                   flexGrow: 1,
                   py: 1,
-                  borderRadius: '12px',
-                  fontSize: '0.75rem',
+                  borderRadius: "12px",
+                  fontSize: "0.75rem",
                   fontWeight: 900,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   gap: 1,
-                }
+                },
               }}
             >
-              <ToggleButton value="soft" sx={{
-                '&.Mui-selected': {
-                  background: 'rgba(76, 175, 80, 0.15) !important',
-                  color: '#81c784 !important',
-                  border: '1px solid var(--border)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  '&:hover': { background: 'rgba(76, 175, 80, 0.25) !important' }
-                }
-              }}>
+              <ToggleButton
+                value="soft"
+                sx={{
+                  "&.Mui-selected": {
+                    background: "rgba(76, 175, 80, 0.15) !important",
+                    color: "#81c784 !important",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    "&:hover": {
+                      background: "rgba(76, 175, 80, 0.25) !important",
+                    },
+                  },
+                }}
+              >
                 <Shield sx={{ fontSize: 16 }} /> SEQUENTIAL MODE (🛡️ SAFE)
               </ToggleButton>
-              <ToggleButton value="hard" sx={{
-                '&.Mui-selected': {
-                  background: 'rgba(239, 68, 68, 0.15) !important',
-                  color: '#ef5350 !important',
-                  border: '1px solid var(--border)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  '&:hover': { background: 'rgba(239, 68, 68, 0.25) !important' }
-                }
-              }}>
+              <ToggleButton
+                value="hard"
+                sx={{
+                  "&.Mui-selected": {
+                    background: "rgba(239, 68, 68, 0.15) !important",
+                    color: "#ef5350 !important",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    "&:hover": {
+                      background: "rgba(239, 68, 68, 0.25) !important",
+                    },
+                  },
+                }}
+              >
                 <Bolt sx={{ fontSize: 16 }} /> PARALLEL MODE (⚡ SPEED)
               </ToggleButton>
             </ToggleButtonGroup>
           </Box>
 
-          <Typography variant="caption" sx={{ display: 'block', opacity: 0.6, fontStyle: 'italic', textAlign: 'center', px: 1, color: 'var(--muted-foreground)', minHeight: 32 }}>
-            {loadMode === 'soft' 
-              ? '🛡️ Sequential Mode: Translates chapters one by one. Fully safe for GPUs with low VRAM.' 
-              : '⚡ Parallel Mode: Forces high-concurrency translation segment pipelines. Extremely fast, but may crash on limited VRAM.'}
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              opacity: 0.6,
+              fontStyle: "italic",
+              textAlign: "center",
+              px: 1,
+              color: "var(--muted-foreground)",
+              minHeight: 32,
+            }}
+          >
+            {loadMode === "soft"
+              ? "🛡️ Sequential Mode: Translates chapters one by one. Fully safe for GPUs with low VRAM."
+              : "⚡ Parallel Mode: Forces high-concurrency translation segment pipelines. Extremely fast, but may crash on limited VRAM."}
           </Typography>
         </Box>
 
         {/* Translation Quality Mode */}
         <Box sx={{ mb: 3 }}>
-          <Typography variant="overline" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--primary)', fontWeight: 900, mb: 1.5 }}>
+          <Typography
+            variant="overline"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              color: "var(--primary)",
+              fontWeight: 900,
+              mb: 1.5,
+            }}
+          >
             <Translate sx={{ fontSize: 16 }} /> Translation Quality
           </Typography>
 
-          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
             <ToggleButtonGroup
               value={translationMode}
               exclusive
               onChange={(_, val) => val && setTranslationMode(val)}
               sx={{
-                background: 'rgba(0,0,0,0.3)',
+                background: "rgba(0,0,0,0.3)",
                 p: 0.5,
-                borderRadius: '16px',
-                border: '1px solid rgba(255,255,255,0.05)',
-                width: '100%',
-                '& .MuiToggleButton-root': {
-                  color: 'var(--muted-foreground)',
-                  border: 'none',
+                borderRadius: "16px",
+                border: "1px solid rgba(255,255,255,0.05)",
+                width: "100%",
+                "& .MuiToggleButton-root": {
+                  color: "var(--muted-foreground)",
+                  border: "none",
                   flexGrow: 1,
                   py: 1,
-                  borderRadius: '12px',
-                  fontSize: '0.75rem',
+                  borderRadius: "12px",
+                  fontSize: "0.75rem",
                   fontWeight: 900,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   gap: 1,
-                }
+                },
               }}
             >
-              <ToggleButton value="quality" sx={{
-                '&.Mui-selected': {
-                  background: 'rgba(156, 39, 176, 0.15) !important',
-                  color: '#ce93d8 !important',
-                  border: '1px solid var(--border)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  '&:hover': { background: 'rgba(156, 39, 176, 0.25) !important' }
-                }
-              }}>
+              <ToggleButton
+                value="quality"
+                sx={{
+                  "&.Mui-selected": {
+                    background: "rgba(156, 39, 176, 0.15) !important",
+                    color: "#ce93d8 !important",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    "&:hover": {
+                      background: "rgba(156, 39, 176, 0.25) !important",
+                    },
+                  },
+                }}
+              >
                 <AutoAwesome sx={{ fontSize: 16 }} /> QUALITY
               </ToggleButton>
-              <ToggleButton value="fast" sx={{
-                '&.Mui-selected': {
-                  background: 'rgba(255, 152, 0, 0.15) !important',
-                  color: '#ffb74d !important',
-                  border: '1px solid var(--border)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  '&:hover': { background: 'rgba(255, 152, 0, 0.25) !important' }
-                }
-              }}>
+              <ToggleButton
+                value="fast"
+                sx={{
+                  "&.Mui-selected": {
+                    background: "rgba(255, 152, 0, 0.15) !important",
+                    color: "#ffb74d !important",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    "&:hover": {
+                      background: "rgba(255, 152, 0, 0.25) !important",
+                    },
+                  },
+                }}
+              >
                 <Bolt sx={{ fontSize: 16 }} /> FAST
               </ToggleButton>
             </ToggleButtonGroup>
           </Box>
 
-          <Typography variant="caption" sx={{ display: 'block', opacity: 0.6, fontStyle: 'italic', textAlign: 'center', px: 1, color: 'var(--muted-foreground)', minHeight: 32 }}>
-            {translationMode === 'quality'
-              ? '✨ Quality: Full glossary (30 terms), style guide injection, higher token cap. Best for Gemini.'
-              : '⚡ Fast: Minimal glossary (10 terms), no style guide, 10K token cap. Best for LM Studio.'}
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              opacity: 0.6,
+              fontStyle: "italic",
+              textAlign: "center",
+              px: 1,
+              color: "var(--muted-foreground)",
+              minHeight: 32,
+            }}
+          >
+            {translationMode === "quality"
+              ? "✨ Quality: Full glossary (30 terms), style guide injection, higher token cap. Best for Gemini."
+              : "⚡ Fast: Minimal glossary (10 terms), no style guide, 10K token cap. Best for LM Studio."}
           </Typography>
         </Box>
 
         {/* Overwrite Translations Panel */}
-        <Box sx={{ 
-          p: 2.5, 
-          background: 'rgba(0,0,0,0.3)', 
-          borderRadius: '20px', 
-          border: '1px solid var(--border)',
-          mb: 3
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--foreground)', fontWeight: 'bold' }}>
-              <History fontSize="small" sx={{ color: 'var(--primary)' }} /> Overwrite Translate
+        <Box
+          sx={{
+            p: 2.5,
+            background: "rgba(0,0,0,0.3)",
+            borderRadius: "20px",
+            border: "1px solid var(--border)",
+            mb: 3,
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 1.5,
+            }}
+          >
+            <Typography
+              variant="subtitle2"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                color: "var(--foreground)",
+                fontWeight: "bold",
+              }}
+            >
+              <History fontSize="small" sx={{ color: "var(--primary)" }} />{" "}
+              Overwrite Translate
             </Typography>
             {overwrite ? (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef5350', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(239, 68, 68, 0.12)",
+                  color: "#ef5350",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 FORCE OVERWRITE
               </Box>
             ) : (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(255,255,255,0.05)', color: 'var(--muted-foreground)', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(255,255,255,0.05)",
+                  color: "var(--muted-foreground)",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 SKIP TRANSLATED
               </Box>
             )}
           </Box>
-          
+
           <FormControlLabel
             control={
-              <Checkbox 
-                checked={overwrite} 
+              <Checkbox
+                checked={overwrite}
                 onChange={(e) => setOverwrite(e.target.checked)}
-                sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: 'var(--primary)' } }}
+                sx={{
+                  color: "var(--muted-foreground)",
+                  "&.Mui-checked": { color: "var(--primary)" },
+                }}
               />
             }
             label={
               <Box>
-                <Typography variant="body2" sx={{ color: 'var(--foreground)', fontWeight: 'bold' }}>Force Overwrite Existing</Typography>
-                <Typography variant="caption" sx={{ opacity: 0.5, display: 'block', color: 'var(--muted-foreground)' }}>
+                <Typography
+                  variant="body2"
+                  sx={{ color: "var(--foreground)", fontWeight: "bold" }}
+                >
+                  Force Overwrite Existing
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    opacity: 0.5,
+                    display: "block",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
                   Re-translate chapters that already have saved translations.
                 </Typography>
               </Box>
@@ -837,47 +1350,102 @@ export default function BulkTranslateModal({
         </Box>
 
         {/* Prohibited Content Toggle */}
-        <Box sx={{ 
-          p: 2.5, 
-          background: 'rgba(0,0,0,0.3)', 
-          borderRadius: '20px', 
-          border: '1px solid var(--border)',
-          mb: 3
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--foreground)', fontWeight: 'bold' }}>
-              <Shield fontSize="small" sx={{ color: '#ef5350' }} /> Retry Prohibited
+        <Box
+          sx={{
+            p: 2.5,
+            background: "rgba(0,0,0,0.3)",
+            borderRadius: "20px",
+            border: "1px solid var(--border)",
+            mb: 3,
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 1.5,
+            }}
+          >
+            <Typography
+              variant="subtitle2"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                color: "var(--foreground)",
+                fontWeight: "bold",
+              }}
+            >
+              <Shield fontSize="small" sx={{ color: "#ef5350" }} /> Retry
+              Prohibited
             </Typography>
             {includeProhibited ? (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef5350', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(239, 68, 68, 0.12)",
+                  color: "#ef5350",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 RISKY
               </Box>
             ) : (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(76, 175, 80, 0.12)', color: '#81c784', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(76, 175, 80, 0.12)",
+                  color: "#81c784",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 SAFE (IGNORED)
               </Box>
             )}
           </Box>
-          
+
           <FormControlLabel
             control={
-              <Checkbox 
-                checked={includeProhibited} 
+              <Checkbox
+                checked={includeProhibited}
                 onChange={(e) => {
                   const val = e.target.checked;
                   setIncludeProhibited(val);
-                  if (mode === 'easy') {
+                  if (mode === "easy") {
                     updateEasySelection(range, val);
                   }
                 }}
-                sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: '#ef5350' } }}
+                sx={{
+                  color: "var(--muted-foreground)",
+                  "&.Mui-checked": { color: "#ef5350" },
+                }}
               />
             }
             label={
               <Box>
-                <Typography variant="body2" sx={{ color: 'var(--foreground)', fontWeight: 'bold' }}>Include Prohibited Content</Typography>
-                <Typography variant="caption" sx={{ opacity: 0.5, display: 'block', color: 'var(--muted-foreground)' }}>
-                  Translates chapters previously blocked by AI due to adult/violent content. May cause failures.
+                <Typography
+                  variant="body2"
+                  sx={{ color: "var(--foreground)", fontWeight: "bold" }}
+                >
+                  Include Prohibited Content
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    opacity: 0.5,
+                    display: "block",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
+                  Translates chapters previously blocked by AI due to
+                  adult/violent content. May cause failures.
                 </Typography>
               </Box>
             }
@@ -885,41 +1453,97 @@ export default function BulkTranslateModal({
         </Box>
 
         {/* AI Terminology Scan Panel */}
-        <Box sx={{ 
-          p: 2.5, 
-          background: 'rgba(0,0,0,0.3)', 
-          borderRadius: '20px', 
-          border: '1px solid var(--border)',
-          mb: 3
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justify: 'space-between', justifyContent: 'space-between', mb: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'var(--foreground)', fontWeight: 'bold' }}>
-              <AutoAwesome fontSize="small" sx={{ color: 'var(--primary)' }} /> AI Glossary Extraction
+        <Box
+          sx={{
+            p: 2.5,
+            background: "rgba(0,0,0,0.3)",
+            borderRadius: "20px",
+            border: "1px solid var(--border)",
+            mb: 3,
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justify: "space-between",
+              justifyContent: "space-between",
+              mb: 1.5,
+            }}
+          >
+            <Typography
+              variant="subtitle2"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                color: "var(--foreground)",
+                fontWeight: "bold",
+              }}
+            >
+              <AutoAwesome fontSize="small" sx={{ color: "var(--primary)" }} />{" "}
+              AI Glossary Extraction
             </Typography>
             {loreCount > 30 ? (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(76, 175, 80, 0.12)', color: '#81c784', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(76, 175, 80, 0.12)",
+                  color: "#81c784",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 LORE ACTIVE ({loreCount})
               </Box>
             ) : (
-              <Box sx={{ px: 1.5, py: 0.5, borderRadius: '8px', background: 'rgba(255, 152, 0, 0.12)', color: '#ffb74d', fontSize: '0.65rem', fontWeight: 900 }}>
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "8px",
+                  background: "rgba(255, 152, 0, 0.12)",
+                  color: "#ffb74d",
+                  fontSize: "0.65rem",
+                  fontWeight: 900,
+                }}
+              >
                 RECOMMENDED
               </Box>
             )}
           </Box>
-          
+
           <FormControlLabel
             control={
-              <Checkbox 
-                checked={aiExtract} 
+              <Checkbox
+                checked={aiExtract}
                 onChange={(e) => setAiExtract(e.target.checked)}
-                sx={{ color: 'var(--muted-foreground)', '&.Mui-checked': { color: 'var(--primary)' } }}
+                sx={{
+                  color: "var(--muted-foreground)",
+                  "&.Mui-checked": { color: "var(--primary)" },
+                }}
               />
             }
             label={
               <Box>
-                <Typography variant="body2" sx={{ color: 'var(--foreground)', fontWeight: 'bold' }}>Glossary Scan First</Typography>
-                <Typography variant="caption" sx={{ opacity: 0.5, display: 'block', color: 'var(--muted-foreground)' }}>
-                  Extract fresh character names & terminology before translation runs.
+                <Typography
+                  variant="body2"
+                  sx={{ color: "var(--foreground)", fontWeight: "bold" }}
+                >
+                  Glossary Scan First
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    opacity: 0.5,
+                    display: "block",
+                    color: "var(--muted-foreground)",
+                  }}
+                >
+                  Extract fresh character names & terminology before translation
+                  runs.
                 </Typography>
               </Box>
             }
@@ -928,84 +1552,178 @@ export default function BulkTranslateModal({
 
         {/* HONEST TOKEN ESTIMATOR BADGE */}
         {selectedIds.length > 0 && (
-          <Box sx={{ 
-            p: 2.5, 
-            borderRadius: '20px', 
-            background: loadMode === 'hard' ? 'rgba(239, 68, 68, 0.05)' : 'rgba(76, 175, 80, 0.05)', 
-            border: loadMode === 'hard' ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(76, 175, 80, 0.2)',
-            display: 'flex',
-            gap: 2,
-            alignItems: 'flex-start',
-            mb: 2
-          }}>
-            <Box sx={{ 
-              p: 1, 
-              borderRadius: '12px', 
-              background: loadMode === 'hard' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(76, 175, 80, 0.1)', 
-              display: 'flex' 
-            }}>
-              <Bolt sx={{ color: loadMode === 'hard' ? '#ef5350' : '#81c784', fontSize: 20 }} />
+          <Box
+            sx={{
+              p: 2.5,
+              borderRadius: "20px",
+              background:
+                loadMode === "hard"
+                  ? "rgba(239, 68, 68, 0.05)"
+                  : "rgba(76, 175, 80, 0.05)",
+              border:
+                loadMode === "hard"
+                  ? "1px solid rgba(239, 68, 68, 0.2)"
+                  : "1px solid rgba(76, 175, 80, 0.2)",
+              display: "flex",
+              gap: 2,
+              alignItems: "flex-start",
+              mb: 2,
+            }}
+          >
+            <Box
+              sx={{
+                p: 1,
+                borderRadius: "12px",
+                background:
+                  loadMode === "hard"
+                    ? "rgba(239, 68, 68, 0.1)"
+                    : "rgba(76, 175, 80, 0.1)",
+                display: "flex",
+              }}
+            >
+              <Bolt
+                sx={{
+                  color: loadMode === "hard" ? "#ef5350" : "#81c784",
+                  fontSize: 20,
+                }}
+              />
             </Box>
             <Box sx={{ flexGrow: 1 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="subtitle2" sx={{ color: loadMode === 'hard' ? '#ef5350' : '#81c784', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  {loadMode === 'hard' ? 'Parallel Burst Mode Active' : 'Sequential Safety Mode Active'}
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <Typography
+                  variant="subtitle2"
+                  sx={{
+                    color: loadMode === "hard" ? "#ef5350" : "#81c784",
+                    fontWeight: 900,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  {loadMode === "hard"
+                    ? "Parallel Burst Mode Active"
+                    : "Sequential Safety Mode Active"}
                 </Typography>
-                <Typography variant="caption" sx={{ fontWeight: 900, color: 'var(--foreground)', background: 'rgba(255,255,255,0.08)', px: 1, py: 0.2, borderRadius: '6px' }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 900,
+                    color: "var(--foreground)",
+                    background: "rgba(255,255,255,0.08)",
+                    px: 1,
+                    py: 0.2,
+                    borderRadius: "6px",
+                  }}
+                >
                   {selectedIds.length} Chapters
                 </Typography>
               </Box>
-              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)', display: 'block', mt: 0.5, lineHeight: 1.4 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "rgba(255,255,255,0.6)",
+                  display: "block",
+                  mt: 0.5,
+                  lineHeight: 1.4,
+                }}
+              >
                 Estimated total context input & output:
               </Typography>
-              <Typography variant="subtitle1" sx={{ color: 'var(--foreground)', fontWeight: 900, mt: 0.5, fontSize: '1rem', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  color: "var(--foreground)",
+                  fontWeight: 900,
+                  mt: 0.5,
+                  fontSize: "1rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
                 ~{estTokens.toLocaleString()} tokens
                 {aiExtract && (
-                  <span style={{ fontSize: '0.65rem', fontWeight: 700, opacity: 0.6, color: 'var(--primary)' }}>
+                  <span
+                    style={{
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      opacity: 0.6,
+                      color: "var(--primary)",
+                    }}
+                  >
                     (Includes Glossary Scan)
                   </span>
                 )}
               </Typography>
-              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', display: 'block', mt: 0.8, fontSize: '0.65rem' }}>
-                *Actual tokens depend on chapter lengths and LLM system context size.
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "rgba(255,255,255,0.4)",
+                  display: "block",
+                  mt: 0.8,
+                  fontSize: "0.65rem",
+                }}
+              >
+                *Actual tokens depend on chapter lengths and LLM system context
+                size.
               </Typography>
             </Box>
           </Box>
         )}
       </DialogContent>
 
-      <DialogActions sx={{ p: { xs: 2, sm: 3.5 }, pt: { xs: 1.5, sm: 2 }, borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.1)' }}>
+      <DialogActions
+        sx={{
+          p: { xs: 2, sm: 3.5 },
+          pt: { xs: 1.5, sm: 2 },
+          borderTop: "1px solid var(--border)",
+          background: "rgba(0,0,0,0.1)",
+        }}
+      >
         <Button
           fullWidth
           variant="contained"
           onClick={handleStart}
           disabled={isStarting || selectedIds.length === 0}
-          startIcon={isStarting ? <CircularProgress size={18} color="inherit" /> : <PlayArrow />}
+          startIcon={
+            isStarting ? (
+              <CircularProgress size={18} color="inherit" />
+            ) : (
+              <PlayArrow />
+            )
+          }
           sx={{
             py: { xs: 1.5, sm: 2 },
-            borderRadius: '16px',
-            background: 'var(--primary)',
-            color: 'var(--primary-foreground)',
+            borderRadius: "16px",
+            background: "var(--primary)",
+            color: "var(--primary-foreground)",
             fontWeight: 900,
-            fontSize: '1rem',
-            letterSpacing: '1px',
-            boxShadow: '0 10px 25px var(--primary)',
-            transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-            '&:hover': {
-              transform: 'translateY(-2px)',
-              boxShadow: '0 15px 35px var(--primary)',
-              opacity: 0.9
+            fontSize: "1rem",
+            letterSpacing: "1px",
+            boxShadow: "0 10px 25px var(--primary)",
+            transition: "all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)",
+            "&:hover": {
+              transform: "translateY(-2px)",
+              boxShadow: "0 15px 35px var(--primary)",
+              opacity: 0.9,
             },
-            '&:active': {
-              transform: 'translateY(1px)',
+            "&:active": {
+              transform: "translateY(1px)",
             },
-            '&.Mui-disabled': {
-              background: 'rgba(255,255,255,0.05)',
-              color: 'rgba(255,255,255,0.2)'
-            }
+            "&.Mui-disabled": {
+              background: "rgba(255,255,255,0.05)",
+              color: "rgba(255,255,255,0.2)",
+            },
           }}
         >
-          {isStarting ? 'INITIALIZING...' : `TRANSLATE ${selectedIds.length} CHAPTERS`}
+          {isStarting
+            ? "INITIALIZING..."
+            : `TRANSLATE ${selectedIds.length} CHAPTERS`}
         </Button>
       </DialogActions>
     </Dialog>

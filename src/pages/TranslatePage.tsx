@@ -150,9 +150,21 @@ export default function TranslatePage({
     return false;
   }, [inputText]);
 
-  const [selectedModel, setSelectedModel] = useState(
-    () => localStorage.getItem("lm_model") || ""
+  const [activeProvider, setActiveProvider] = useState(
+    () => localStorage.getItem("llm_provider") || "lm_studio"
   );
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const provider = localStorage.getItem("llm_provider") || "lm_studio";
+    if (provider === "gemini")
+      return localStorage.getItem("gemini_model") || "gemini-2.5-flash";
+    if (provider === "openai")
+      return localStorage.getItem("openai_model") || "gpt-4o-mini";
+    if (provider === "openrouter")
+      return (
+        localStorage.getItem("openrouter_model") || "deepseek/deepseek-chat"
+      );
+    return localStorage.getItem("lm_model") || "";
+  });
   const [selectedThreadId, setSelectedThreadId] = useState<string>("new");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,7 +174,7 @@ export default function TranslatePage({
 
   const [openModelDropdown, setOpenModelDropdown] = useState(false);
   const [openThreadDropdown, setOpenThreadDropdown] = useState(false);
-  const [providerLabel, setProviderLabel] = useState("lm_studio");
+  const [providerLabel, setProviderLabel] = useState("LM Studio");
 
   const [isTocModalOpen, setIsTocModalOpen] = useState(false);
   const [tocChapters, setTocChapters] = useState<TocChapter[]>([]);
@@ -200,10 +212,14 @@ export default function TranslatePage({
       const gs = await resGs.json();
 
       const provider = gs.llm_provider || "lm_studio";
+      setActiveProvider(provider);
+      localStorage.setItem("llm_provider", provider);
+
       const providerLabels: Record<string, string> = {
         lm_studio: "LM Studio",
         openai: "OpenAI",
         gemini: "Gemini",
+        openrouter: "OpenRouter",
       };
       setProviderLabel(providerLabels[provider] || provider);
 
@@ -218,31 +234,53 @@ export default function TranslatePage({
           const modelData = await resModels.json();
           const models = modelData.data?.map((m: { id: string }) => m.id) || [];
           setAvailableModels(models);
-          if (models.length > 0 && !selectedModel) {
-            setSelectedModel(models[0]);
+          if (models.length > 0) {
+            const currentLmModel = localStorage.getItem("lm_model") || "";
+            const nextModel = models.includes(currentLmModel)
+              ? currentLmModel
+              : models[0];
+            setSelectedModel(nextModel);
+            localStorage.setItem("lm_model", nextModel);
           }
         } catch {
           // LM Studio might not be running — show the configured model as fallback
           if (gs.lm_model) {
             setAvailableModels([gs.lm_model]);
-            if (!selectedModel) setSelectedModel(gs.lm_model);
+            setSelectedModel(gs.lm_model);
           }
         }
       } else if (provider === "openai") {
-        // For OpenAI, show the configured model
-        const model = gs.openai_model || "gpt-4o";
-        setAvailableModels([model]);
-        if (!selectedModel) setSelectedModel(model);
+        const model = gs.openai_model || "gpt-4o-mini";
+        const preset = ["gpt-4o-mini", "gpt-4o", "o3-mini"];
+        setAvailableModels(Array.from(new Set([model, ...preset])));
+        setSelectedModel(model);
+        localStorage.setItem("openai_model", model);
       } else if (provider === "gemini") {
-        // For Gemini, show the configured model
         const model = gs.gemini_model || "gemini-2.5-flash";
-        setAvailableModels([model]);
-        if (!selectedModel) setSelectedModel(model);
+        const preset = [
+          "gemini-2.5-flash",
+          "gemini-2.5-pro",
+          "gemini-2.0-flash",
+        ];
+        setAvailableModels(Array.from(new Set([model, ...preset])));
+        setSelectedModel(model);
+        localStorage.setItem("gemini_model", model);
+      } else if (provider === "openrouter") {
+        const model = gs.openrouter_model || "deepseek/deepseek-chat";
+        const preset = [
+          "deepseek/deepseek-chat",
+          "google/gemini-2.5-flash",
+          "openai/gpt-4o-mini",
+          "anthropic/claude-3.5-haiku",
+        ];
+        setAvailableModels(Array.from(new Set([model, ...preset])));
+        setSelectedModel(model);
+        localStorage.setItem("openrouter_model", model);
       }
     } catch {
       console.error("Failed to fetch data");
     }
-  }, [selectedModel]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -579,8 +617,24 @@ export default function TranslatePage({
                               key={m}
                               onClick={() => {
                                 setSelectedModel(m);
-                                localStorage.setItem("lm_model", m);
+                                const p = activeProvider;
+                                const storageKey =
+                                  p === "gemini"
+                                    ? "gemini_model"
+                                    : p === "openai"
+                                      ? "openai_model"
+                                      : p === "openrouter"
+                                        ? "openrouter_model"
+                                        : "lm_model";
+                                localStorage.setItem(storageKey, m);
                                 setOpenModelDropdown(false);
+                                fetch(getApiUrl("/api/settings"), {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                  },
+                                  body: JSON.stringify({ [storageKey]: m }),
+                                }).catch(() => {});
                               }}
                               className={cn(
                                 "w-full text-left px-3 py-2.5 text-xs flex items-center gap-3 transition-colors",

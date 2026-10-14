@@ -245,6 +245,53 @@
 
 ---
 
+## 🏛️ 3.1 Categorized Architectural Decision Records (ADR Index)
+
+Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR berdasarkan pilar arsitektur:
+
+### 1. Ingestion, Scrapers & Anti-Bot Protection
+- **ADR-002**: Web Scraping Architecture via Crawl4AI.
+- **ADR-098 & ADR-099**: Novalpie Scraper, Cloudflare Bypass & Headless Fallback.
+- **ADR-112 & ADR-114**: Novalpie Dual-Mode (Guest vs Account Cookie Authentication).
+- **ADR-113**: Media Gate & Chapter Illustration Proxy Pipeline.
+- **ADR-115 & ADR-116**: SSRF Multi-Layer Prevention (`validate_external_url`, `create_safe_async_client`) & Pure HTTP SFACG Scraper.
+- **ADR-117 (Scrapers)**: 3-Tier Scraper Hierarchy & `StealthyNovelAdapter` (`stealth_base.py`).
+
+### 2. Batch Translation, Pacing & Concurrency
+- **ADR-007 & ADR-011**: Asynchronous Batch Title Translation, 50-chunking & timeout guards.
+- **ADR-013**: Server-Side Prefetch Range (1-5 chapters) & Visual Indicators.
+- **ADR-015**: Batch Studio Workspace (Easy vs Advanced) & Status Center.
+- **ADR-025 & ADR-034**: Soft vs Hard Engine Load Modes & Honest Chapter Failure Handling.
+- **ADR-035**: Configurable Chapter Token Safety Cap (Default 22K).
+- **ADR-102**: Cross-Component State Synchronization (`settingsSync.ts`).
+- **ADR-117 & ADR-118**: Compound Key `(workspace, id)` Tenancy on In-Memory Registries.
+
+### 3. Context Engine, Lorebook & Quality Control
+- **ADR-004 & ADR-005**: Dynamic Lorebook Injection to Local LLMs.
+- **ADR-009 & ADR-010**: Automated Term Discovery & Quick Lorebook Add.
+- **ADR-036**: Automated Hallucination Pattern Detection (10x Repetition).
+- **ADR-040**: Lorebook Context Expansion (1000 terms) & Character Relationship Visualizer.
+- **ADR-071 & ADR-074**: Genre-Aware Dynamic Prompting & Centralized Prompt Templates.
+- **ADR-072 & ADR-094**: Post-Translation Fidelity Check & Fidelity Management Hub.
+- **ADR-106, ADR-107 & ADR-108**: Hybrid Glossary Hard-Locking, Idempotent Single-Pass Span Replacement.
+- **ADR-109 & ADR-110**: Gender Pronoun Consistency (`MALE/FEMALE`), Non-Human Classification.
+- **ADR-111**: Adaptive Multi-Language Source Detection (CJK, Korean, Japanese).
+
+### 4. Reader UX, Scroll Geometry & Mobile Layout
+- **ADR-019**: Dynamic Client-Side Cover Engine & Canvas Compression.
+- **ADR-038**: Lightweight Markdown Formatting for Reader & EPUB Exporter.
+- **ADR-039**: Mobile-Friendly Notification & Modal Dialog System (`sonner` + Radix UI).
+- **ADR-085**: Mobile Screen-Lock Resilience via `sessionStorage` & `visibilitychange`.
+- **ADR-096 & ADR-117**: Mobile Viewport Geometry, Pinch-to-Zoom & Safe-Area Inset Handling.
+- **ADR-105**: Safe Reader Image Component (`<SafeReaderImage>`) with Inline Retry.
+
+### 5. Multi-Tenancy & Ghost Mode Dual-Database
+- **ADR-006 & ADR-008**: Server-Side `GlobalSetting` Configuration Storage.
+- **ADR-029**: Multi-Provider Cloud LLM Swapping (Gemini, OpenAI, OpenRouter).
+- **ADR-115, ADR-117 & ADR-118**: Ghost Mode Dual-DB Isolation (`app.db` vs `ghost.db`), In-Memory Compound Key Tenancy (`make_workspace_key`), and Client-Side Storage Scoping (`getWorkspaceStorageKey`).
+
+---
+
 ## 4. Testing
 
 - **Automated Unit Tests**: Unit test suites `backend/tests/` berjalan secara otomatis untuk memvalidasi AI provider factory, settings management, dan service logic menggunakan in-memory SQLite (`conftest.py`).

@@ -44,6 +44,22 @@ Sebagai **Skill-Driven Agent**, Anda TIDAK BOLEH melakukan tebak-tebakan (*ad-ho
 - Hindari kerentanan *path traversal*: selalu kanonikalisasi path dengan `Path.resolve()` dan pastikan `candidate.is_relative_to(trusted_base)`.
 - Pertahankan isolasi basis data ganda (`app.db` dan `ghost.db`). Identitas workspace harus selalu terikat ke request/job (`X-Workspace` header atau cookie) dan tidak boleh bocor antar workspace.
 
+### Dual-Database Multi-Tenancy & `GlobalSetting` God Node Invariants (ADR-115, ADR-117, ADR-118):
+Berdasarkan pemetaan Graphify Knowledge Graph, model `GlobalSetting` (`backend/database.py`) adalah **God Node** (*betweenness centrality* tertinggi) yang mengoordinasikan 4 pilar: *Batch Translation*, *Novalpie Scraper*, *Settings/Secrets*, dan *Ghost Mode Isolation*. Patuhi aturan mutlak berikut setiap kali memodifikasi state atau storage:
+1. **Backend Compound Key Tenancy (`make_workspace_key`)**:
+   - **DILARANG KERAS** menggunakan integer ID mentah (`thread_id` atau `chapter_id`) sebagai key pada dictionary/registry in-memory (`active_batches`, `active_tasks`, `translation_queues`, `ACTIVE_IMAGE_JOBS`).
+   - **WAJIB** selalu menggunakan helper `make_workspace_key(workspace, entity_id)` dari `backend/database.py` yang menghasilkan tuple `(normalize_workspace(workspace), int(entity_id))`.
+2. **Explicit Workspace Propagation pada Service & Scraper**:
+   - Jangan pernah membiarkan background worker atau adapter (`NovalpieAdapter`, `StealthyNovelAdapter`, `BackgroundTranslator`) jatuh ke variabel proses global `ACTIVE_WORKSPACE` jika konteks `db` atau `request` tersedia.
+   - Selalu ekstrak `ws = get_db_workspace(db)` atau `ws = resolve_workspace(request)` di layer router, lalu teruskan `workspace=ws` secara eksplisit.
+3. **Frontend Client Storage & Session Isolation (`getWorkspaceStorageKey`)**:
+   - **DILARANG KERAS** menggunakan nama key `localStorage` atau `sessionStorage` statis untuk data yang berkaitan dengan buku, riwayat baca, tab sesi, atau bookmark.
+   - **WAJIB** membungkus seluruh key penyimpanan klien dengan `getWorkspaceStorageKey(baseKey, suffix)` dari `src/lib/api.ts` (yang otomatis menyertakan `getActiveWorkspace()`).
+   - Saat melakukan perpindahan workspace (`main` ↔ `ghost`), **WAJIB** memanggil `clearWorkspaceSessionCache()` sebelum `window.location.reload()`.
+4. **Graphify Knowledge Graph Awareness**:
+   - Jika direktori `graphify-out/` tersedia di lokal (`graphify-out/GRAPH_REPORT.md` atau `graphify-out/graph.json`), periksa dampak lintas-modul terlebih dahulu sebelum mengubah *God Nodes* (`GlobalSetting`, `BackgroundTranslator`, `ContextEngine`, `NovalpieAdapter`, `SessionLocal`).
+   - Jangan pernah menghapus `graphify-out/` dari `.gitignore`.
+
 ### Scraper Architecture Tiering (Mandatory Decision Rule):
 Saat memelihara atau menambahkan adapter situs web novel baru di `backend/services/scrapers/`, patuhi hierarki 3-tingkat berikut:
 1. **Tier 1 — Pure HTTP (`create_safe_async_client` / `curl_cffi`)**:

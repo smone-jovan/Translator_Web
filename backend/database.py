@@ -88,8 +88,25 @@ def resolve_workspace(request: Optional[Any] = None) -> str:
     return "main"
 
 
+def normalize_workspace(workspace: Optional[Any] = None) -> str:
+    """Normalisasi nama workspace menjadi 'main' atau 'ghost' secara aman."""
+    if isinstance(workspace, str) and workspace.strip().lower() in ("main", "ghost"):
+        return workspace.strip().lower()
+    if ACTIVE_WORKSPACE in ("main", "ghost"):
+        return ACTIVE_WORKSPACE
+    return "main"
+
+
+def make_workspace_key(workspace: Optional[Any], entity_id: int) -> tuple[str, int]:
+    """
+    Helper kanonik ADR-118 untuk membuat compound key (workspace, entity_id)
+    pada seluruh registry in-memory (active_batches, active_tasks, translation_queues, ACTIVE_IMAGE_JOBS).
+    """
+    return (normalize_workspace(workspace), int(entity_id))
+
+
 def get_db_workspace(db: Any) -> str:
-    return getattr(db, "_workspace", ACTIVE_WORKSPACE if ACTIVE_WORKSPACE in ["main", "ghost"] else "main")
+    return normalize_workspace(getattr(db, "_workspace", None))
 
 
 class Base(DeclarativeBase):
@@ -175,7 +192,7 @@ class Chapter(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"), nullable=False, index=True)
-    order: Mapped[int] = mapped_column(default=0)
+    order: Mapped[int] = mapped_column(default=0, index=True)
     title_original: Mapped[Optional[str]] = mapped_column(String(500))
     title_translated: Mapped[Optional[str]] = mapped_column(String(500))
     content_original: Mapped[Optional[str]] = mapped_column(Text)
@@ -572,7 +589,7 @@ def _migrate_engine(engine, db_label: str = "database"):
 
         # Deduplicate user_bookmarks (ensure 1 active bookmark per thread)
         conn.execute(text("""
-            DELETE FROM user_bookmarks 
+            DELETE FROM user_bookmarks
             WHERE id NOT IN (
                 SELECT ub1.id FROM user_bookmarks ub1
                 INNER JOIN (
@@ -582,6 +599,9 @@ def _migrate_engine(engine, db_label: str = "database"):
                 ) ub2 ON ub1.thread_id = ub2.thread_id AND ub1.id = ub2.max_id
             )
         """))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS idx_chapters_thread_order ON chapters (thread_id, "order")'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS idx_bookmarks_thread_id ON user_bookmarks (thread_id)'))
+        conn.execute(text('CREATE INDEX IF NOT EXISTS idx_lorebook_thread_id ON lorebook_entries (thread_id)'))
         conn.commit()
             
     print(f"[SUKSES] Inisialisasi basis data selesai - {db_label} siap digunakan.")

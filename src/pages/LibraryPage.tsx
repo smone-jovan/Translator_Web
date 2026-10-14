@@ -23,7 +23,11 @@ import {
 import React, { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { getApiUrl, getActiveWorkspace } from "@/lib/api";
+import {
+  getApiUrl,
+  getActiveWorkspace,
+  getWorkspaceStorageKey,
+} from "@/lib/api";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
 import AutoAwesome from "@mui/icons-material/AutoAwesome";
 import Menu from "@mui/material/Menu";
@@ -423,11 +427,11 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
 };
 
 function getLibraryCacheKey(): string {
-  return `readomni_library_cache_v1_${getActiveWorkspace()}`;
+  return getWorkspaceStorageKey("readomni_library_cache_v1");
 }
 
 function getLibraryScrollKey(): string {
-  return `readomni_library_scroll_v1_${getActiveWorkspace()}`;
+  return getWorkspaceStorageKey("readomni_library_scroll_v1");
 }
 
 interface LibraryCacheData {

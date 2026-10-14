@@ -50,6 +50,7 @@ class ThreadItemOut(BaseModel):
     synopsis: Optional[str] = None
     author: Optional[str] = None
     chapter_count: int
+    translations_count: Optional[int] = 0
     created_at: Optional[str]
     last_read: Optional[str] = None
     last_read_id: Optional[int] = None
@@ -170,10 +171,29 @@ def list_threads(db: Session = Depends(get_db)):
     if not threads:
         return []
     
-    # Batch fetch chapter counts (1 query)
-    ch_counts_stmt = select(Chapter.thread_id, func.count(Chapter.id)).group_by(Chapter.thread_id)
-    ch_counts = dict(db.execute(ch_counts_stmt).all())
-    
+    # Batch fetch chapter counts & translations in 1 query without loading text blobs
+    from sqlalchemy import case
+    ch_stats_stmt = (
+        select(
+            Chapter.thread_id,
+            func.count(Chapter.id),
+            func.sum(
+                case(
+                    (
+                        (Chapter.content_translated.is_not(None))
+                        & (func.length(func.trim(Chapter.content_translated)) > 0),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+        )
+        .group_by(Chapter.thread_id)
+    )
+    ch_stats_rows = db.execute(ch_stats_stmt).all()
+    ch_counts = {r[0]: r[1] for r in ch_stats_rows}
+    trans_counts = {r[0]: int(r[2] or 0) for r in ch_stats_rows}
+
     # Batch fetch bookmarks with referenced chapter metadata (1 query)
     bookmarks_stmt = (
         select(
@@ -188,17 +208,18 @@ def list_threads(db: Session = Depends(get_db)):
     )
     bookmark_rows = db.execute(bookmarks_stmt).all()
     bookmark_map = {row[0]: (row[1], row[2] or row[3], row[4], row[5]) for row in bookmark_rows}
-    
+
     result = []
     for t in threads:
         ch_count = ch_counts.get(t.id, 0)
+        tr_count = trans_counts.get(t.id, 0)
         bookmark_info = bookmark_map.get(t.id)
-        
+
         last_read_title = None
         last_read_id = None
         last_read_at = None
         progress = 0
-        
+
         if bookmark_info:
             last_read_id = bookmark_info[0]
             last_read_title = bookmark_info[1]
@@ -206,7 +227,7 @@ def list_threads(db: Session = Depends(get_db)):
             last_read_at = str(bookmark_info[3]) if bookmark_info[3] else None
             if ch_count > 0:
                 progress = int(((last_order + 1) / ch_count) * 100)
-        
+
         result.append(ThreadItemOut(
             id=t.id,
             title=t.title,
@@ -221,6 +242,7 @@ def list_threads(db: Session = Depends(get_db)):
             synopsis=t.synopsis,
             author=t.author,
             chapter_count=ch_count,
+            translations_count=tr_count,
             created_at=str(t.created_at) if t.created_at else None,
             last_read=last_read_title,
             last_read_id=last_read_id,
@@ -1111,13 +1133,39 @@ async def delete_all_translations(thread_id: int, db: Session = Depends(get_db))
 
 @router.delete("/threads/{thread_id}/chapters/{chapter_id}")
 def delete_chapter(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
-    """Delete a single chapter from a thread."""
+    """Delete a single chapter from a thread, preserving bookmarks to adjacent chapter."""
     stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
     chapter = db.execute(stmt).scalar_one_or_none()
     if not chapter:
         raise HTTPException(404, "Chapter not found")
 
     deleted_order = chapter.order
+
+    # Preserve UserBookmark by moving it to the nearest remaining chapter before deleting
+    bookmark = db.execute(
+        select(UserBookmark).where(
+            UserBookmark.thread_id == thread_id,
+            UserBookmark.chapter_id == chapter_id
+        )
+    ).scalar_one_or_none()
+    if bookmark:
+        prev_ch = db.execute(
+            select(Chapter)
+            .where(Chapter.thread_id == thread_id, Chapter.id != chapter_id, Chapter.order < deleted_order)
+            .order_by(Chapter.order.desc())
+        ).scalars().first()
+        next_ch = db.execute(
+            select(Chapter)
+            .where(Chapter.thread_id == thread_id, Chapter.id != chapter_id, Chapter.order > deleted_order)
+            .order_by(Chapter.order.asc())
+        ).scalars().first()
+        fallback_ch = prev_ch or next_ch
+        if fallback_ch:
+            bookmark.chapter_id = fallback_ch.id
+            bookmark.scroll_progress = 0.0
+        else:
+            db.delete(bookmark)
+
     db.delete(chapter)
     db.flush()
 
@@ -1132,7 +1180,7 @@ def delete_chapter(thread_id: int, chapter_id: int, db: Session = Depends(get_db
         ch.order = ch.order - 1
 
     db.commit()
-    return {"deleted": True, "chapter_id": chapter_id}
+    return {"status": "deleted", "deleted": True, "chapter_id": chapter_id, "deleted_id": chapter_id}
 
 
 @router.delete("/threads/{thread_id}")

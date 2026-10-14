@@ -31,7 +31,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, clearWorkspaceSessionCache } from "@/lib/api";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/use-confirm";
 import ApiKeyManager from "@/components/ApiKeyManager";
@@ -369,11 +369,7 @@ export default function SettingsPage() {
       if (data?.workspace) {
         localStorage.setItem("readomni_workspace", data.workspace);
       }
-      try {
-        sessionStorage.clear();
-      } catch {
-        // ignore
-      }
+      clearWorkspaceSessionCache();
       window.location.reload();
     } catch (e) {
       console.error(e);

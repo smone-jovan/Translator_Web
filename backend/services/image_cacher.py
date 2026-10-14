@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from database import Chapter
+from database import Chapter, make_workspace_key
 from services.security import validate_external_url, create_safe_async_client
 
 CACHE_DIR = (Path("uploads") / "cache" / "images").resolve()
@@ -287,7 +287,7 @@ def count_cached_images(urls: list[str]) -> int:
 
 async def run_thread_image_caching_job(thread_id: int, urls: list[str], workspace: str = "main"):
     """Background task to fetch and cache all images for a thread."""
-    job_key = (str(workspace).lower(), thread_id)
+    job_key = make_workspace_key(workspace, thread_id)
     if not urls:
         entry = {
             "status": "completed",

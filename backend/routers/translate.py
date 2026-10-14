@@ -12,7 +12,7 @@ import json
 import asyncio
 
 from sqlalchemy import select, func
-from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting, get_db_workspace
+from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting, get_db_workspace, make_workspace_key
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -71,7 +71,7 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
 
     async def sse_wrapper():
         q = asyncio.Queue()
-        queue_key = (str(ws).lower(), req.chapter_id)
+        queue_key = make_workspace_key(ws, req.chapter_id)
         if queue_key not in translation_queues:
             translation_queues[queue_key] = []
         translation_queues[queue_key].append(q)
@@ -81,7 +81,13 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
                 content = await q.get()
                 if content == "[DONE]":
                     break
-                yield f"data: {json.dumps({'content': content})}\n\n"
+                if isinstance(content, dict) and "final_text" in content:
+                    yield f"data: {json.dumps(content)}\n\n"
+                elif isinstance(content, str) and content.startswith("FINAL_TEXT:"):
+                    clean_text = content[len("FINAL_TEXT:"):]
+                    yield f"data: {json.dumps({'final_text': clean_text})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'content': content})}\n\n"
         finally:
             if queue_key in translation_queues and q in translation_queues[queue_key]:
                 translation_queues[queue_key].remove(q)
