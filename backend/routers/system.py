@@ -32,9 +32,6 @@ async def switch_workspace_endpoint(req: WorkspaceSwitchRequest, response: Respo
             current_ws = database.resolve_workspace(request)
             target = "main" if current_ws == "ghost" else "ghost"
 
-        # Cancel all background tasks before switching to prevent data leakage or DB crashes
-        await BackgroundTranslator.stop_all_batches()
-
         switch_workspace(target)
         response.set_cookie(key="readomni_workspace", value=target, httponly=False, samesite="lax", path="/", max_age=2592000)
         return {"status": "ok", "workspace": target}

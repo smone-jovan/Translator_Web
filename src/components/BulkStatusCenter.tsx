@@ -246,7 +246,10 @@ export default function BulkStatusCenter() {
     <Box
       sx={{
         position: "fixed",
-        bottom: { xs: 72, md: 24 },
+        bottom: {
+          xs: "calc(5.5rem + env(safe-area-inset-bottom, 0px))",
+          md: 24,
+        },
         right: { xs: 8, md: 24 },
         left: { xs: 8, md: "auto" },
         zIndex: 2000,

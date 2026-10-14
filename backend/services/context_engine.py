@@ -133,6 +133,12 @@ class ContextEngine:
             return True
 
         # Pola deskripsi/notes yang mendefinisikan benda/tempat/sekte
+        # 1. Frasa pembuka definitif yang langsung mengidentifikasi benda/jurus/tempat di notes
+        # (meskipun kalimat lanjutannya menyebut 'master' atau 'protagonist', e.g. "A sacred sword forged by the sect master")
+        strong_opening_non_human = r"^(?:a|an|the|sebuah|suatu|nama)\s+(?:ancient\s+|sacred\s+|secret\s+|supreme\s+|rare\s+|legendary\s+|signature\s+)?(?:city|town|village|realm|continent|sect|clan|sword|blade|weapon|artifact|treasure|technique|skill|art|manual|formation|array|pill|elixir|herb|potion|pedang|senjata|pusaka|teknik|jurus|kitab|formasi|pil|sekte|klan|kota)\b"
+        if re.search(strong_opening_non_human, note, re.IGNORECASE) and not is_trans_person:
+            return True
+
         non_human_notes_patterns = [
             r"\b(?:a|an|the|ancient|imperial|remote|large|small|major|minor)?\s*(?:capital\s+)?(?:city|town|village|province|region|territory|realm|continent|mountain|river|lake|valley|forest|sect|clan|guild|alliance|faction|sword|blade|weapon|artifact|treasure|technique|skill|art|manual|formation|array|pill|herb|medicine|location|place|building)\b",
             r"\b(?:located in|situated in|capital of|capital city|headquarters of|territory of)\b",
@@ -222,7 +228,7 @@ class ContextEngine:
             entries_stmt = (
                 select(LorebookEntry)
                 .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
-                .order_by(desc(LorebookEntry.usage_count), desc(LorebookEntry.last_used_at))
+                .order_by(desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count), desc(LorebookEntry.last_used_at))
                 .limit(limit)
             )
             entries = db.execute(entries_stmt).scalars().all()

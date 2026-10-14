@@ -205,7 +205,7 @@ class SFACGAdapter(BaseScraperAdapter):
 
         try:
             async with AsyncSession() as client:
-                resp = await client.get(target_url, headers=self.headers, impersonate="chrome110", timeout=15.0, verify=False)
+                resp = await client.get(target_url, headers=self.headers, impersonate="chrome110", timeout=15.0)
                 if resp.status_code != 200:
                     return ScrapedNovelMetadata(
                         success=False,

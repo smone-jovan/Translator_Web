@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getApiUrl } from '@/lib/api';
-import { Star, BookOpen, LibraryBig } from 'lucide-react';
+import { useEffect, useState } from "react";
+import { getApiUrl } from "@/lib/api";
+import { Star, BookOpen, LibraryBig } from "lucide-react";
 
 interface BookmarkedChapter {
   id: number;
@@ -16,23 +16,40 @@ interface BookmarksPageProps {
   onOpenLibrary: () => void;
 }
 
-let memoryBookmarksCache: BookmarkedChapter[] | null = null;
+const bookmarksCacheStore = {
+  data: null as BookmarkedChapter[] | null,
+};
 
-export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: BookmarksPageProps) {
-  const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>(() => memoryBookmarksCache ?? []);
-  const [loading, setLoading] = useState(() => memoryBookmarksCache === null);
+function removeChapterFromBookmarksCache(chapterId: number) {
+  if (bookmarksCacheStore.data) {
+    bookmarksCacheStore.data = bookmarksCacheStore.data.filter(
+      (b) => b.id !== chapterId
+    );
+  }
+}
+
+export default function BookmarksPage({
+  onOpenChapter,
+  onOpenLibrary,
+}: BookmarksPageProps) {
+  const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>(
+    () => bookmarksCacheStore.data ?? []
+  );
+  const [loading, setLoading] = useState(
+    () => bookmarksCacheStore.data === null
+  );
 
   const fetchBookmarks = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch(getApiUrl('/api/bookmarks'));
+      const res = await fetch(getApiUrl("/api/bookmarks"));
       const data = await res.json();
       if (Array.isArray(data)) {
         setBookmarks(data);
-        memoryBookmarksCache = data;
+        bookmarksCacheStore.data = data;
       }
     } catch (err) {
-      console.error('Failed to fetch bookmarks:', err);
+      console.error("Failed to fetch bookmarks:", err);
     } finally {
       setLoading(false);
     }
@@ -43,7 +60,7 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
     const load = async () => {
       await Promise.resolve();
       if (!active) return;
-      fetchBookmarks(memoryBookmarksCache !== null);
+      fetchBookmarks(bookmarksCacheStore.data !== null);
     };
     load();
     return () => {
@@ -51,28 +68,39 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
     };
   }, []);
 
-  const removeBookmark = async (threadId: number, chapterId: number, e: React.MouseEvent) => {
+  const removeBookmark = async (
+    threadId: number,
+    chapterId: number,
+    e: React.MouseEvent
+  ) => {
     e.stopPropagation();
     try {
-      const res = await fetch(getApiUrl(`/api/threads/${threadId}/chapters/${chapterId}/bookmark`), {
-        method: 'PUT',
-      });
+      const res = await fetch(
+        getApiUrl(`/api/threads/${threadId}/chapters/${chapterId}/bookmark`),
+        {
+          method: "PUT",
+        }
+      );
       if (res.ok) {
-        setBookmarks(prev => prev.filter(b => b.id !== chapterId));
+        setBookmarks((prev) => prev.filter((b) => b.id !== chapterId));
+        removeChapterFromBookmarksCache(chapterId);
       }
     } catch (err) {
-      console.error('Failed to remove bookmark:', err);
+      console.error("Failed to remove bookmark:", err);
     }
   };
 
   // Group by thread
-  const groupedBookmarks = bookmarks.reduce((acc, curr) => {
-    if (!acc[curr.thread_id]) {
-      acc[curr.thread_id] = { title: curr.thread_title, chapters: [] };
-    }
-    acc[curr.thread_id].chapters.push(curr);
-    return acc;
-  }, {} as Record<number, { title: string, chapters: BookmarkedChapter[] }>);
+  const groupedBookmarks = bookmarks.reduce(
+    (acc, curr) => {
+      if (!acc[curr.thread_id]) {
+        acc[curr.thread_id] = { title: curr.thread_title, chapters: [] };
+      }
+      acc[curr.thread_id].chapters.push(curr);
+      return acc;
+    },
+    {} as Record<number, { title: string; chapters: BookmarkedChapter[] }>
+  );
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -81,19 +109,27 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
           <Star size={24} className="fill-[var(--primary)]" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Favorite Chapters</h1>
-          <p className="text-[var(--muted-foreground)]">Your bookmarked and starred chapters</p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Favorite Chapters
+          </h1>
+          <p className="text-[var(--muted-foreground)]">
+            Your bookmarked and starred chapters
+          </p>
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-[var(--muted-foreground)]">Loading bookmarks...</div>
+        <div className="text-center py-12 text-[var(--muted-foreground)]">
+          Loading bookmarks...
+        </div>
       ) : bookmarks.length === 0 ? (
         <div className="text-center py-20 bg-[var(--card)] rounded-3xl border border-[var(--border)] shadow-sm">
           <Star size={48} className="mx-auto text-[var(--muted)] mb-4" />
           <h2 className="text-xl font-medium mb-2">No bookmarks yet</h2>
-          <p className="text-[var(--muted-foreground)] mb-6">Star your favorite chapters while reading to save them here.</p>
-          <button 
+          <p className="text-[var(--muted-foreground)] mb-6">
+            Star your favorite chapters while reading to save them here.
+          </p>
+          <button
             onClick={onOpenLibrary}
             className="px-6 py-2.5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] font-medium hover:opacity-90 transition-opacity inline-flex items-center gap-2"
           >
@@ -104,17 +140,25 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
       ) : (
         <div className="space-y-6 sm:space-y-8">
           {Object.entries(groupedBookmarks).map(([threadId, group]) => (
-            <div key={threadId} className="bg-[var(--card)] rounded-2xl sm:rounded-3xl border border-[var(--border)] shadow-sm overflow-hidden">
+            <div
+              key={threadId}
+              className="bg-[var(--card)] rounded-2xl sm:rounded-3xl border border-[var(--border)] shadow-sm overflow-hidden"
+            >
               <div className="bg-[var(--muted)]/30 px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--border)] flex items-center justify-between">
-                <h2 className="font-bold text-base sm:text-lg truncate text-[var(--foreground)]" title={group.title}>{group.title}</h2>
+                <h2
+                  className="font-bold text-base sm:text-lg truncate text-[var(--foreground)]"
+                  title={group.title}
+                >
+                  {group.title}
+                </h2>
                 <span className="text-xs text-[var(--muted-foreground)] font-semibold shrink-0 ml-2">
                   {group.chapters.length} bab
                 </span>
               </div>
               <div className="divide-y divide-[var(--border)]">
-                {group.chapters.map(ch => (
-                  <div 
-                    key={ch.id} 
+                {group.chapters.map((ch) => (
+                  <div
+                    key={ch.id}
                     className="flex items-center justify-between p-3 sm:p-4 px-4 sm:px-6 hover:bg-[var(--accent)]/50 transition-colors cursor-pointer group gap-2"
                     onClick={() => onOpenChapter(ch.thread_id, ch.id)}
                   >
@@ -124,7 +168,9 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
                           Bab {ch.order}
                         </span>
                         <h3 className="font-semibold text-xs sm:text-sm truncate group-hover:text-[var(--primary)] transition-colors text-[var(--foreground)]">
-                          {ch.title_translated || ch.title_original || `Chapter ${ch.order}`}
+                          {ch.title_translated ||
+                            ch.title_original ||
+                            `Chapter ${ch.order}`}
                         </h3>
                       </div>
                       {ch.title_original && (
@@ -144,7 +190,7 @@ export default function BookmarksPage({ onOpenChapter, onOpenLibrary }: Bookmark
                       </button>
                       <button
                         type="button"
-                        className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] active:scale-95 transition-all opacity-80 sm:opacity-0 group-hover:opacity-100"
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] active:scale-95 transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
                         title="Baca Bab Ini"
                       >
                         <BookOpen size={18} />

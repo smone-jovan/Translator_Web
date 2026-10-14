@@ -119,7 +119,7 @@ async def start_thread_image_cache(thread_id: int, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Thread not found")
 
     ws = getattr(db, "_workspace", "main")
-    job = ACTIVE_IMAGE_JOBS.get((ws, thread_id)) or ACTIVE_IMAGE_JOBS.get(thread_id)
+    job = ACTIVE_IMAGE_JOBS.get((ws, thread_id))
     if job and job.get("status") == "running":
         return {
             "status": "already_running",
@@ -150,7 +150,6 @@ async def start_thread_image_cache(thread_id: int, db: Session = Depends(get_db)
             "error": None
         }
         ACTIVE_IMAGE_JOBS[(ws, thread_id)] = completed_entry
-        ACTIVE_IMAGE_JOBS[thread_id] = completed_entry
         return {
             "status": "completed",
             "total": len(urls),
@@ -179,7 +178,8 @@ async def get_thread_image_cache_status(thread_id: int, db: Session = Depends(ge
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    job = ACTIVE_IMAGE_JOBS.get(thread_id)
+    ws = getattr(db, "_workspace", "main")
+    job = ACTIVE_IMAGE_JOBS.get((ws, thread_id))
     if job:
         total = job.get("total", 0)
         cached = job.get("cached", 0)

@@ -1,17 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Toaster } from 'sonner';
-import { ConfirmProvider } from './hooks/use-confirm';
-import Layout from './components/Layout';
-import TranslatePage from './pages/TranslatePage';
-import LibraryPage from './pages/LibraryPage';
-import ContextLibraryPage from './pages/ContextLibraryPage';
-import SettingsPage from './pages/SettingsPage';
-import ReaderPage from './pages/ReaderPage';
-import BookmarksPage from './pages/BookmarksPage';
-import BulkStatusCenter from './components/BulkStatusCenter';
-import type { TabId } from './components/Sidebar';
+import { useEffect, useState } from "react";
+import { Toaster } from "sonner";
+import { ConfirmProvider } from "./hooks/use-confirm";
+import Layout from "./components/Layout";
+import TranslatePage from "./pages/TranslatePage";
+import LibraryPage from "./pages/LibraryPage";
+import ContextLibraryPage from "./pages/ContextLibraryPage";
+import SettingsPage from "./pages/SettingsPage";
+import ReaderPage from "./pages/ReaderPage";
+import BookmarksPage from "./pages/BookmarksPage";
+import BulkStatusCenter from "./components/BulkStatusCenter";
+import type { TabId } from "./components/Sidebar";
 
-const APP_SESSION_KEY = 'readomni_app_session_v1';
+const APP_SESSION_KEY = "readomni_app_session_v1";
 const APP_SESSION_MAX_IDLE_MS = 6 * 60 * 60 * 1000;
 
 interface AppSessionState {
@@ -27,9 +27,11 @@ function readAppSession(): AppSessionState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<AppSessionState>;
     if (
-      typeof parsed.activeTab !== 'string' ||
-      typeof parsed.lastActiveAt !== 'number' ||
-      !['translate', 'library', 'context', 'settings', 'bookmarks'].includes(parsed.activeTab)
+      typeof parsed.activeTab !== "string" ||
+      typeof parsed.lastActiveAt !== "number" ||
+      !["translate", "library", "context", "settings", "bookmarks"].includes(
+        parsed.activeTab
+      )
     ) {
       localStorage.removeItem(APP_SESSION_KEY);
       return null;
@@ -40,8 +42,10 @@ function readAppSession(): AppSessionState | null {
     }
     return {
       activeTab: parsed.activeTab as TabId,
-      openThreadId: typeof parsed.openThreadId === 'number' ? parsed.openThreadId : null,
-      openChapterId: typeof parsed.openChapterId === 'number' ? parsed.openChapterId : null,
+      openThreadId:
+        typeof parsed.openThreadId === "number" ? parsed.openThreadId : null,
+      openChapterId:
+        typeof parsed.openChapterId === "number" ? parsed.openChapterId : null,
       lastActiveAt: parsed.lastActiveAt,
     };
   } catch {
@@ -52,10 +56,16 @@ function readAppSession(): AppSessionState | null {
 
 export default function App() {
   const initialSession = readAppSession();
-  const [openThreadId, setOpenThreadId] = useState<number | null>(initialSession?.openThreadId ?? null);
-  const [openChapterId, setOpenChapterId] = useState<number | null>(initialSession?.openChapterId ?? null);
+  const [openThreadId, setOpenThreadId] = useState<number | null>(
+    initialSession?.openThreadId ?? null
+  );
+  const [openChapterId, setOpenChapterId] = useState<number | null>(
+    initialSession?.openChapterId ?? null
+  );
   const [isReadingChapter, setIsReadingChapter] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>(initialSession?.activeTab ?? 'translate');
+  const [activeTab, setActiveTab] = useState<TabId>(
+    initialSession?.activeTab ?? "translate"
+  );
 
   useEffect(() => {
     const persistSession = () => {
@@ -69,14 +79,37 @@ export default function App() {
     };
 
     persistSession();
-    window.addEventListener('pagehide', persistSession);
-    document.addEventListener('visibilitychange', persistSession);
+    window.addEventListener("pagehide", persistSession);
+    document.addEventListener("visibilitychange", persistSession);
 
     return () => {
-      window.removeEventListener('pagehide', persistSession);
-      document.removeEventListener('visibilitychange', persistSession);
+      window.removeEventListener("pagehide", persistSession);
+      document.removeEventListener("visibilitychange", persistSession);
     };
   }, [activeTab, openThreadId, openChapterId]);
+
+  useEffect(() => {
+    const handleHash = () => {
+      const raw = window.location.hash.replace("#", "").toLowerCase();
+      const validTabs: TabId[] = [
+        "translate",
+        "library",
+        "context",
+        "settings",
+        "bookmarks",
+      ];
+      if (validTabs.includes(raw as TabId)) {
+        setActiveTab(raw as TabId);
+        setIsReadingChapter(false);
+        setOpenThreadId(null);
+      }
+    };
+    window.addEventListener("hashchange", handleHash);
+    if (window.location.hash) {
+      handleHash();
+    }
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   const openReader = (threadId: number, chapterId?: number) => {
     setOpenThreadId(threadId);
@@ -102,7 +135,12 @@ export default function App() {
           onActiveChapterChange={setOpenChapterId}
         />
         {!isReadingChapter && <BulkStatusCenter />}
-        <Toaster theme="system" position="bottom-center" richColors closeButton />
+        <Toaster
+          theme="system"
+          position="bottom-center"
+          richColors
+          closeButton
+        />
       </ConfirmProvider>
     );
   }
@@ -120,23 +158,35 @@ export default function App() {
       >
         {(activeTab) => {
           switch (activeTab) {
-            case 'translate': return <TranslatePage
-              onOpenThread={openReader}
-              onNavigateToSettings={() => {
-                setActiveTab('settings');
-                setIsReadingChapter(false);
-                setOpenThreadId(null);
-              }}
-              onNavigateToLibrary={() => {
-                setActiveTab('library');
-                setIsReadingChapter(false);
-                setOpenThreadId(null);
-              }}
-            />;
-            case 'library': return <LibraryPage onOpenThread={openReader} />;
-            case 'context': return <ContextLibraryPage />;
-            case 'settings': return <SettingsPage />;
-            case 'bookmarks': return <BookmarksPage onOpenChapter={(tid, cid) => openReader(tid, cid)} onOpenLibrary={() => setActiveTab('library')} />;
+            case "translate":
+              return (
+                <TranslatePage
+                  onOpenThread={openReader}
+                  onNavigateToSettings={() => {
+                    setActiveTab("settings");
+                    setIsReadingChapter(false);
+                    setOpenThreadId(null);
+                  }}
+                  onNavigateToLibrary={() => {
+                    setActiveTab("library");
+                    setIsReadingChapter(false);
+                    setOpenThreadId(null);
+                  }}
+                />
+              );
+            case "library":
+              return <LibraryPage onOpenThread={openReader} />;
+            case "context":
+              return <ContextLibraryPage />;
+            case "settings":
+              return <SettingsPage />;
+            case "bookmarks":
+              return (
+                <BookmarksPage
+                  onOpenChapter={(tid, cid) => openReader(tid, cid)}
+                  onOpenLibrary={() => setActiveTab("library")}
+                />
+              );
           }
         }}
       </Layout>
@@ -145,4 +195,3 @@ export default function App() {
     </ConfirmProvider>
   );
 }
-

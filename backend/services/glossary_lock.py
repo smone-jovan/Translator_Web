@@ -12,15 +12,16 @@ except ImportError:
 CHINESE_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]")
 EAST_ASIAN_CHAR_PATTERN = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f\u3040-\u309f\u30a0-\u30ff]")
 
-# Stopword rentan yang sering bertabrakan dengan pinyin pendek (<= 3 huruf)
+# Stopword rentan yang sering bertabrakan dengan pinyin pendek (<= 3 huruf) atau pinyin 1 suku kata
 COMMON_COLLISION_STOPWORDS = {
     # Indonesian
     "dan", "di", "ke", "ia", "si", "itu", "ini", "ada", "tak", "ya", "ha",
     "ah", "eh", "oh", "apa", "dia", "mau", "kan", "gua", "lu", "luo", "ba",
-    "ma", "ta", "na", "ga", "dong", "sih",
+    "ma", "ta", "na", "ga", "dong", "sih", "yang", "uang", "tiang", "siang", "liar",
     # English
     "he", "an", "at", "in", "on", "to", "or", "no", "is", "it", "so", "by",
-    "as", "if", "be", "we", "us", "am", "do", "go", "me", "my"
+    "as", "if", "be", "we", "us", "am", "do", "go", "me", "my",
+    "song", "fang", "long", "wang", "tang", "gang", "ring", "king", "wing", "hang", "bang"
 }
 
 @dataclass
@@ -139,12 +140,9 @@ def build_glossary_lock_rules(entries: List[Any]) -> List[GlossaryLockRule]:
                             ))
                         elif len(syllables) == 1:
                             syl = syllables[0]
-                            if len(syl) <= 3 or syl.lower() in COMMON_COLLISION_STOPWORDS:
-                                pat = re.compile(rf"\b{re.escape(syl.capitalize())}\b")
-                                is_cs = True
-                            else:
-                                pat = re.compile(rf"\b{re.escape(syl)}\b", re.IGNORECASE)
-                                is_cs = False
+                            # Semua pinyin 1 suku kata wajib case-sensitive untuk mencegah menimpa kata umum (e.g. song, long, fang)
+                            pat = re.compile(rf"\b{re.escape(syl.capitalize())}\b")
+                            is_cs = True
                             raw_rules.append(GlossaryLockRule(
                                 pattern=pat,
                                 replacement=trans,
@@ -172,9 +170,9 @@ def build_glossary_lock_rules(entries: List[Any]) -> List[GlossaryLockRule]:
             alias_lower = alias.lower()
             is_multiword = (" " in alias) or (len(alias) >= 4 and any(c.isupper() for c in alias[1:]))
 
-            # Guardrail kata pendek & stopword
-            if not is_multiword and (len(alias) <= 3 or alias_lower in COMMON_COLLISION_STOPWORDS):
-                # Strict case-sensitive match (hanya tangkap Kapital, e.g. \bDan\b bukan \bdan\b)
+            # Guardrail kata pendek, pinyin 1 suku kata, & stopword (selalu case-sensitive)
+            if not is_multiword or alias_lower in COMMON_COLLISION_STOPWORDS:
+                # Strict case-sensitive match (hanya tangkap Kapital, e.g. \bSong\b bukan \bsong\b)
                 escaped = re.escape(alias.capitalize())
                 pattern = re.compile(rf"\b{escaped}\b")
                 is_case_sensitive = True

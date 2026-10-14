@@ -53,6 +53,7 @@ opencode.json
 # Playwright profiles
 backend/.pw_nu_profile/
 backend/cf_blocked.png
+uploads/
 
 # Imported Agent Skills
 .agent/skills/*

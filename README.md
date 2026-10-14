@@ -160,7 +160,7 @@ Translator_Web/
 │   ├── components/             # Reusable UI components
 │   └── hooks/                  # Custom React hooks
 └── docs/
-    ├── decisions/              # 108 Architectural Decision Records (ADR-004 to ADR-111)
+    ├── decisions/              # 114 Architectural Decision Records (ADR-004 to ADR-117)
     ├── Handoff.md              # Developer onboarding guide
     └── SDLC.md                 # Development lifecycle docs
 ```
@@ -173,7 +173,7 @@ Translator_Web/
 |----------|-------------|
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
 | [SDLC](docs/SDLC.md) | Software development lifecycle |
-| [ADRs](docs/decisions/) | 108 architectural decision records (ADR-004 to ADR-111) |
+| [ADRs](docs/decisions/) | 114 architectural decision records (ADR-004 to ADR-117) |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
 ---

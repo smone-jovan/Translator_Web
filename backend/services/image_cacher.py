@@ -298,7 +298,6 @@ async def run_thread_image_caching_job(thread_id: int, urls: list[str], workspac
             "error": None
         }
         ACTIVE_IMAGE_JOBS[job_key] = entry
-        ACTIVE_IMAGE_JOBS[thread_id] = entry
         return
 
     already_count = count_cached_images(urls)
@@ -311,7 +310,6 @@ async def run_thread_image_caching_job(thread_id: int, urls: list[str], workspac
         "error": None
     }
     ACTIVE_IMAGE_JOBS[job_key] = entry
-    ACTIVE_IMAGE_JOBS[thread_id] = entry
 
     def on_progress(done: int, total: int):
         current_cached = count_cached_images(urls)
@@ -331,7 +329,6 @@ async def run_thread_image_caching_job(thread_id: int, urls: list[str], workspac
             "error": None
         }
         ACTIVE_IMAGE_JOBS[job_key] = completed_entry
-        ACTIVE_IMAGE_JOBS[thread_id] = completed_entry
     except Exception as e:
         error_entry = {
             "status": "error",
@@ -342,4 +339,3 @@ async def run_thread_image_caching_job(thread_id: int, urls: list[str], workspac
             "error": str(e)
         }
         ACTIVE_IMAGE_JOBS[job_key] = error_entry
-        ACTIVE_IMAGE_JOBS[thread_id] = error_entry

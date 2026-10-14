@@ -29,7 +29,7 @@ The `scrape_toc()` method consumes both the `/detail` endpoint (for novel title)
 ## Decision
 We implemented a dedicated `NovalpieAdapter` adhering to the `BaseScraperAdapter` port architecture (established in [ADR-029](./ADR-029-Swappable-Scrapers-and-LLM-Adapters.md)):
 
-### 1. [`NovalpieAdapter`](file:///d:/code_xI/Translator_Web/backend/services/scrapers/novalpie.py) — `backend/services/scrapers/novalpie.py`
+### 1. `NovalpieAdapter` — `backend/services/scrapers/novalpie.py`
 - **URL & ID extraction** — supports `https://novalpie.cc/book/{id}`, `/novel/{id}`, `/read/{id}/{chapter_id}`, direct numeric IDs, and a fallback `re.search(r'(\d+)')` heuristic.
 - **`scrape_metadata(query)`** — Direct JSON ingestion via `/api/novels/{id}/detail`. Key field mappings confirmed via live API inspection:
   - `title` → Chinese/translated title (e.g. `成为赛博朋克中的龙`)
@@ -42,19 +42,19 @@ We implemented a dedicated `NovalpieAdapter` adhering to the `BaseScraperAdapter
 - **`scrape_chapter_content(url)`** — Attempts `GET /api/novels/{id}/chapters/{chapter_id}` first. **This endpoint currently returns `404 "API endpoint not implemented in Laravel yet."` for all chapters.** Therefore chapter content fetch **always falls through to the Playwright headless browser fallback** defined in [ADR-099](./ADR-099-Novalpie-Headless-Fallback-and-Cloudflare-Bypass.md). The API-first code path is retained as future-proofing for when novalpie.cc implements this endpoint.
 
 ### 2. Integration into Core Scraper Engine & Routers
-- **[`engine.py`](file:///d:/code_xI/Translator_Web/backend/services/scrapers/engine.py)**: Registered `"novalpie"` in adapter map and added auto-routing when URLs match `novalpie.cc`.
-- **[`toc.py`](file:///d:/code_xI/Translator_Web/backend/routers/toc.py)**: `/api/threads/scrape-toc` routes `novalpie.cc` URLs directly to `NovalpieAdapter.scrape_toc`, bypassing empty HTML DOM parsing. `/api/threads/bulk-import-toc` auto-populates metadata upon thread creation.
-- **[`scrape.py`](file:///d:/code_xI/Translator_Web/backend/routers/scrape.py)** & **[`threads.py`](file:///d:/code_xI/Translator_Web/backend/routers/threads.py)**: `/api/scrape`, `/api/threads/import-url`, and on-demand reader fetching utilize `NovalpieAdapter.scrape_chapter_content`.
+- **`engine.py`**: Registered `"novalpie"` in adapter map and added auto-routing when URLs match `novalpie.cc`.
+- **`toc.py`**: `/api/threads/scrape-toc` routes `novalpie.cc` URLs directly to `NovalpieAdapter.scrape_toc`, bypassing empty HTML DOM parsing. `/api/threads/bulk-import-toc` auto-populates metadata upon thread creation.
+- **`scrape.py`** & **`threads.py`**: `/api/scrape`, `/api/threads/import-url`, and on-demand reader fetching utilize `NovalpieAdapter.scrape_chapter_content`.
 
 ### 3. Frontend UI Enhancements
-- **[`ScrapeNUModal.tsx`](file:///d:/code_xI/Translator_Web/src/components/ScrapeNUModal.tsx)**: Added Novalpie (`novalpie`) as a 3rd source tab alongside Novel Updates and SFACG, with auto-detection from thread URL/title.
+- **`ScrapeNUModal.tsx`**: Added Novalpie (`novalpie`) as a 3rd source tab alongside Novel Updates and SFACG, with auto-detection from thread URL/title.
 
 ## Consequences
 
 ### Positive
 - 1-click importing of novels from `novalpie.cc` now works reliably, extracting high-resolution covers, accurate TOCs, and clean markdown chapters.
 - Zero performance overhead on server-side DOM parsing since data is ingested directly via lightweight JSON responses.
-- Full test suite coverage in [`test_novalpie_scraper.py`](file:///d:/code_xI/Translator_Web/backend/tests/test_services/test_novalpie_scraper.py) (132/132 tests passing).
+- Full test suite coverage in `backend/tests/test_services/test_novalpie_scraper.py` (132/132 tests passing).
 
 ### Negative / Trade-offs
 - **Undocumented API dependency** — The `/api/novels/` endpoints are internal and undocumented. A Nuxt bundle update or backend restructure at novalpie.cc could silently break all scraping without any public deprecation notice.

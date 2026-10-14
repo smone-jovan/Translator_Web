@@ -2494,7 +2494,8 @@ export default function SettingsPage() {
               </div>
               {/* Profile Logo for Mobile (Ghost Mode Trigger) */}
               <div
-                className="flex md:hidden items-center gap-4 cursor-pointer"
+                className="flex md:hidden items-center gap-4 cursor-pointer select-none"
+                onContextMenu={(e) => e.preventDefault()}
                 onMouseDown={startPress}
                 onMouseUp={endPress}
                 onMouseLeave={endPress}
@@ -2536,14 +2537,18 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <input
                 type="password"
-                maxLength={5}
                 value={pinInput}
                 onChange={(e) => {
-                  setPinInput(e.target.value.replace(/\D/g, ""));
+                  setPinInput(e.target.value);
                   setPinError(false);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && pinInput.trim()) {
+                    handlePinSubmit();
+                  }
+                }}
                 className={cn(
-                  "w-full bg-[var(--background)] border rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none transition-all",
+                  "w-full bg-[var(--background)] border rounded-xl px-4 py-3 text-center text-2xl tracking-[0.2em] focus:outline-none transition-all",
                   pinError
                     ? "border-red-500 text-red-500"
                     : "border-[var(--border)] focus:border-[var(--primary)]"
@@ -2558,7 +2563,7 @@ export default function SettingsPage() {
               <Button
                 onClick={handlePinSubmit}
                 className="w-full rounded-xl py-6 font-bold text-lg"
-                disabled={pinInput.length < 5}
+                disabled={!pinInput.trim()}
               >
                 Unlock
               </Button>

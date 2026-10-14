@@ -1282,7 +1282,7 @@ export default function ReaderPage({
 
       {/* Header Bar */}
       <div
-        className={`flex items-center gap-4 px-6 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md z-30 transition-all duration-300 ease-in-out ${
+        className={`flex items-center gap-2 sm:gap-4 px-3 sm:px-6 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md z-30 transition-all duration-300 ease-in-out ${
           showChapterList || controlsVisible
             ? "h-16 py-4 border-b opacity-100"
             : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
@@ -1290,7 +1290,7 @@ export default function ReaderPage({
       >
         <button
           onClick={onBack}
-          className="p-2 hover:bg-[var(--secondary)] rounded-full transition-all active:scale-95 border-none bg-transparent cursor-pointer"
+          className="p-1.5 sm:p-2 hover:bg-[var(--secondary)] rounded-full transition-all active:scale-95 border-none bg-transparent cursor-pointer shrink-0"
         >
           <ArrowLeft className="w-5 h-5 text-[var(--foreground)]" />
         </button>
@@ -1298,7 +1298,7 @@ export default function ReaderPage({
           <h1 className="text-sm md:text-lg font-bold truncate tracking-tight">
             {thread.title}
           </h1>
-          <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-widest flex items-center gap-2">
+          <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-widest flex items-center gap-2 truncate">
             {thread.chapter_count} chapters • {thread.source_type}
             {isTranslatingTitles && (
               <span className="flex items-center gap-1 text-[var(--accent)] animate-pulse">
@@ -1308,14 +1308,14 @@ export default function ReaderPage({
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {showChapterList && (
             <>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => runCleanerTool("txt-cleaner")}
-                className="rounded-xl border-[var(--border)]"
+                className="rounded-xl border-[var(--border)] hidden sm:inline-flex"
                 title="TXT Cleaner"
               >
                 <Eraser className="w-4 h-4" />
@@ -1324,7 +1324,7 @@ export default function ReaderPage({
                 variant="outline"
                 size="sm"
                 onClick={() => runCleanerTool("epub-cleaner")}
-                className="rounded-xl border-[var(--border)]"
+                className="rounded-xl border-[var(--border)] hidden sm:inline-flex"
                 title="EPUB Cleaner"
               >
                 <Wand2 className="w-4 h-4" />
@@ -1492,7 +1492,7 @@ export default function ReaderPage({
       {/* Mobile Floating Bottom Toolbar (Only visible when reading a chapter) */}
       {!showChapterList && (
         <div
-          className={`fixed bottom-0 left-0 right-0 z-40 md:hidden px-4 pb-4 pt-2 transition-all duration-300 ease-in-out ${
+          className={`fixed bottom-0 left-0 right-0 z-40 md:hidden px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 transition-all duration-300 ease-in-out ${
             mobileToolbarVisible
               ? "translate-y-0 opacity-100"
               : "translate-y-28 opacity-0 pointer-events-none"

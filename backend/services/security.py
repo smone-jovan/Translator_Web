@@ -80,6 +80,7 @@ def create_safe_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """
     Create an httpx.AsyncClient configured to prevent SSRF bypass via HTTP 30x redirects.
     """
+    kwargs.setdefault("follow_redirects", True)
     event_hooks = dict(kwargs.pop("event_hooks", None) or {})
     res_hooks = list(event_hooks.get("response", []))
     if validate_redirect_response not in res_hooks:

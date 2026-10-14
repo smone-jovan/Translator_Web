@@ -157,7 +157,8 @@ export default function Sidebar({
             </div>
           </button>
           <div
-            className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center mx-auto cursor-pointer hover:border-[var(--primary)] transition-all"
+            className="w-10 h-10 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center mx-auto cursor-pointer hover:border-[var(--primary)] transition-all select-none"
+            onContextMenu={(e) => e.preventDefault()}
             onMouseDown={startPress}
             onMouseUp={endPress}
             onMouseLeave={endPress}
@@ -171,7 +172,7 @@ export default function Sidebar({
 
       {/* PIN Modal */}
       {showPinModal && (
-        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[var(--card)] w-full max-w-sm p-6 rounded-2xl shadow-xl border border-[var(--border)] relative">
             <button
               onClick={() => {

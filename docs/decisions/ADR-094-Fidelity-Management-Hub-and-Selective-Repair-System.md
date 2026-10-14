@@ -7,7 +7,7 @@ Accepted
 2026-08-25
 
 ## Context
-Following the implementation of [ADR-072](file:///d:/code_xI/Translator_Web/docs/decisions/ADR-072-Post-Translation-Fidelity-Verification.md) (Post-Translation Fidelity Verification) and [ADR-080](file:///d:/code_xI/Translator_Web/docs/decisions/ADR-080-Unified-Fidelity-And-Truncation-Detection.md) (Unified Fidelity & Truncation Detection), the system successfully flagged chapters with structural and truncation warnings in the SQLite database (`chapters.fidelity_warning`).
+Following the implementation of [ADR-072](ADR-072-Post-Translation-Fidelity-Verification.md) (Post-Translation Fidelity Verification) and [ADR-080](ADR-080-Unified-Fidelity-And-Truncation-Detection.md) (Unified Fidelity & Truncation Detection), the system successfully flagged chapters with structural and truncation warnings in the SQLite database (`chapters.fidelity_warning`).
 
 However, managing flagged chapters presented several UX and operational friction points:
 1. **Lack of Centralized Visibility**: Users had to browse through hundreds of chapters across the grid to spot amber warning badges.

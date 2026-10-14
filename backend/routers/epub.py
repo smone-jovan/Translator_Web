@@ -4,6 +4,8 @@ POST /api/upload-epub — Parse EPUB file, split into chapters, save to DB.
 
 import io
 import os
+import re
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -135,15 +137,29 @@ async def upload_epub(
         if creator_val:
             author_name = creator_val
 
+    # Get synopsis / description metadata (DC description)
+    synopsis = None
+    dc_desc = book.get_metadata("DC", "description")
+    if dc_desc and dc_desc[0] and dc_desc[0][0]:
+        synopsis_val = str(dc_desc[0][0]).strip()
+        if synopsis_val:
+            synopsis = synopsis_val
+
     # Create thread
-    thread = Thread(title=book_title, original_title=book_title, author=author_name, source_type="epub")
+    thread = Thread(
+        title=book_title,
+        original_title=book_title,
+        author=author_name,
+        synopsis=synopsis,
+        source_type="epub"
+    )
     db.add(thread)
     db.flush()
 
     # Extract chapters following the Spine (proper reading order)
     chapters_info = []
     order = 0
-    
+
     # Get spine items
     spine_items = []
     for item_id, _ in book.spine:
@@ -154,26 +170,45 @@ async def upload_epub(
     # Extract images and store them
     image_map = {}
     thread_img_dir = os.path.join("uploads", "images", f"thread_{thread.id}")
-    
+
     # Only create the directory if there are images
-    image_items = list(book.get_items_of_type(ebooklib.ITEM_IMAGE)) + list(book.get_items_of_type(ebooklib.ITEM_COVER))
-    
+    image_items = []
+    for it in list(book.get_items_of_type(ebooklib.ITEM_IMAGE)) + list(book.get_items_of_type(ebooklib.ITEM_COVER)):
+        if it and hasattr(it, "get_name") and it.get_name():
+            image_items.append(it)
+
     if image_items:
         os.makedirs(thread_img_dir, exist_ok=True)
+        base_img_dir = Path(thread_img_dir).resolve()
         for img_item in image_items:
-            img_name = os.path.basename(img_item.get_name())
-            if not img_name:
+            raw_name = img_item.get_name() or ""
+            # Preserve path structure safely by replacing separators with underscores
+            clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name.lstrip("/\\"))
+            clean_name = clean_name.lstrip("._")
+            if not clean_name:
                 continue
-                
-            img_path = os.path.join(thread_img_dir, img_name)
+
+            candidate_path = (base_img_dir / clean_name).resolve()
+            if not candidate_path.is_relative_to(base_img_dir) or candidate_path == base_img_dir:
+                continue
+
             try:
-                with open(img_path, "wb") as f:
+                with open(candidate_path, "wb") as f:
                     f.write(img_item.get_content())
-                # Add to map (public url)
-                image_map[img_name] = f"/images/thread_{thread.id}/{img_name}"
-                print(f"🖼️ Extracted image: {img_name}")
+                # Add to map (public url) for both raw path and basename
+                img_url = f"/images/thread_{thread.id}/{clean_name}"
+                image_map[raw_name] = img_url
+                base_name = os.path.basename(raw_name)
+                if base_name and base_name not in image_map:
+                    image_map[base_name] = img_url
+
+                # Check if this is cover image
+                if (img_item.get_type() == ebooklib.ITEM_COVER or "cover" in clean_name.lower()) and not thread.cover_image:
+                    thread.cover_image = img_url
+
+                print(f"🖼️ Extracted image: {clean_name} (from {raw_name})")
             except Exception as e:
-                print(f"⚠️ Failed to save image {img_name}: {e}")
+                print(f"⚠️ Failed to save image {clean_name}: {e}")
 
     for item in spine_items:
         try:

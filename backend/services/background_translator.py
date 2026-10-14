@@ -147,7 +147,7 @@ class BackgroundTranslator:
     ) -> bool:
         """Start background chapter translation task."""
         task_key = (str(workspace).lower(), chapter_id)
-        if task_key in active_tasks or chapter_id in active_tasks:
+        if task_key in active_tasks:
             print(f"[WARN] Chapter {chapter_id} ({workspace}) is already being translated. Ignoring duplicate request.")
             return
 
@@ -158,7 +158,6 @@ class BackgroundTranslator:
             )
         )
         active_tasks[task_key] = task
-        active_tasks[chapter_id] = task
         try:
             await task
             return True
@@ -179,7 +178,6 @@ class BackgroundTranslator:
             return False
         finally:
             active_tasks.pop(task_key, None)
-            active_tasks.pop(chapter_id, None)
 
     @staticmethod
     async def _do_translate(

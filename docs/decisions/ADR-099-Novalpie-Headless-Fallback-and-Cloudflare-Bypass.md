@@ -27,7 +27,7 @@ Additionally, large bulk fetches via the background worker **bypassed the Playwr
 ## Decision
 
 ### 1. API First, Playwright Fallback
-We attempt to hit the fast undocumented JSON API (`/api/novels/{id}/chapters/{chapter_id}` in [`novalpie.py`](file:///d:/code_xI/Translator_Web/backend/services/scrapers/novalpie.py#L208-L224)). If this fails (non-200 status, `JSONDecodeError`, or HTML body instead of JSON — which indicates a Cloudflare intercept), we seamlessly fall back to a headless Playwright browser.
+We attempt to hit the fast undocumented JSON API (`/api/novels/{id}/chapters/{chapter_id}` in `novalpie.py`). If this fails (non-200 status, `JSONDecodeError`, or HTML body instead of JSON — which indicates a Cloudflare intercept), we seamlessly fall back to a headless Playwright browser.
 
 ### 2. Synchronous Playwright via `asyncio.to_thread()` with Semaphore
 Since Playwright's async API conflicts with Uvicorn/AnyIO's eventloop on Windows, we use `sync_playwright` executed via `asyncio.to_thread()`. To prevent 15 concurrent batch worker tasks from opening 15 Chromium windows simultaneously (causing a CPU/RAM spike and an instant Cloudflare IP ban), Playwright execution is gated by a **class-level `asyncio.Semaphore(2)`** on `NovalpieAdapter._playwright_sem`.
@@ -45,7 +45,7 @@ async with NovalpieAdapter._playwright_sem:
 The `len(markdown) < 50` VIP heuristic is explicitly **disabled** for `novalpie.cc` URLs. Because Novalpie has no paywalled VIP system, any short content extraction is fundamentally an extraction error (Turnstile challenge or blank page), not a locked chapter. By bypassing the VIP flag, failed chapters are correctly marked as `error` in the database, allowing the user's `fetch_only=True` batch worker to retry them on the next pass via "Fill Missing Content".
 
 ### 4. Vue Placeholder Pruning
-Novalpie's DOM contains `<img>` elements initialized with Vue's lazy-load failure placeholder text (`图片加载失败`). The `_clean_content()` method in [`novalpie.py`](file:///d:/code_xI/Translator_Web/backend/services/scrapers/novalpie.py#L310-L323) strips these via BeautifulSoup tag decomposition before the final markdown pass, preventing artifact text from bleeding into translated output.
+Novalpie's DOM contains `<img>` elements initialized with Vue's lazy-load failure placeholder text (`图片加载失败`). The `_clean_content()` method in `novalpie.py` strips these via BeautifulSoup tag decomposition before the final markdown pass, preventing artifact text from bleeding into translated output.
 
 ## Consequences
 

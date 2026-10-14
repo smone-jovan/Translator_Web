@@ -197,6 +197,17 @@ def update_lorebook_entry(
     if not entry:
         raise HTTPException(404, "Entry not found")
 
+    # Check if new original_term collides with another entry in the same thread
+    if body.original_term != entry.original_term:
+        conflict_stmt = select(LorebookEntry).where(
+            LorebookEntry.thread_id == entry.thread_id,
+            LorebookEntry.id != entry_id,
+            LorebookEntry.original_term == body.original_term
+        )
+        conflict = db.execute(conflict_stmt).scalar_one_or_none()
+        if conflict:
+            raise HTTPException(409, f"An entry with original_term '{body.original_term}' already exists in this thread.")
+
     entry.original_term = body.original_term
     entry.translated_term = body.translated_term
     entry.notes = body.notes

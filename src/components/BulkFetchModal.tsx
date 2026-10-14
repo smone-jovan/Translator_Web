@@ -361,7 +361,9 @@ export default function BulkFetchModal({
           backgroundImage:
             "radial-gradient(circle at top left, rgba(59, 130, 246, 0.15), transparent)",
           border: "1px solid var(--border)",
-          borderRadius: "28px",
+          borderRadius: { xs: 0, sm: "28px" },
+          m: { xs: 0, sm: 2 },
+          maxHeight: { xs: "100dvh", sm: "90vh" },
           color: "var(--foreground)",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           overflow: "hidden",
@@ -371,7 +373,7 @@ export default function BulkFetchModal({
       <DialogTitle
         sx={{
           m: 0,
-          p: 3,
+          p: { xs: 2, sm: 3 },
           pb: 1,
           display: "flex",
           alignItems: "center",
@@ -437,7 +439,7 @@ export default function BulkFetchModal({
       </DialogTitle>
 
       {/* Mode Navigation Tabs */}
-      <Box sx={{ px: 3, pt: 1, pb: 0 }}>
+      <Box sx={{ px: { xs: 2, sm: 3 }, pt: 1, pb: 0 }}>
         <Box
           sx={{
             display: "flex",
@@ -507,7 +509,7 @@ export default function BulkFetchModal({
         </Box>
       </Box>
 
-      <DialogContent sx={{ px: 3, pt: 2, pb: 1 }}>
+      <DialogContent sx={{ px: { xs: 2, sm: 3 }, pt: 2, pb: 1 }}>
         {activeTab === "missing" ? (
           /* TAB 1: Fill Missing Content */
           <>
@@ -1208,7 +1210,7 @@ export default function BulkFetchModal({
 
       <DialogActions
         sx={{
-          p: 3,
+          p: { xs: 2, sm: 3 },
           pt: 1,
           borderTop: "1px solid rgba(255,255,255,0.05)",
           display: "flex",

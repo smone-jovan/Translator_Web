@@ -229,11 +229,13 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
+    validate_external_url(req.url)
+
     source_url = req.url
     if re.match(r'^https?://(?:www\.)?novalpie\.cc/(?:book|novel)/\d+/?$', req.url):
         raise HTTPException(400, "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.")
 
-    if "novalpie.cc" in req.url:
+    if is_domain(req.url, "novalpie.cc"):
         try:
             from services.scrapers.novalpie import NovalpieAdapter
             novalpie = NovalpieAdapter()
@@ -244,26 +246,38 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             raise
         except Exception as e:
             raise HTTPException(502, f"Failed to scrape novalpie chapter: {e}")
+    elif is_domain(req.url, "sfacg.com"):
+        try:
+            from services.scrapers.sfacg import SFACGAdapter
+            sfacg = SFACGAdapter()
+            title, markdown = await sfacg.scrape_chapter_content(req.url)
+            if not markdown:
+                raise HTTPException(422, "No content extracted from sfacg URL.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Failed to scrape sfacg chapter: {e}")
     else:
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with create_safe_async_client(
                 timeout=30.0,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
             ) as client:
                 resp = await client.get(req.url)
                 resp.raise_for_status()
                 title, markdown = html_to_markdown(resp.text)
+        except HTTPException:
+            raise
         except httpx.HTTPError as e:
             raise HTTPException(502, f"Failed to fetch URL: {e}")
-    
+
     is_vip = False
     if "/vip/" in req.url.lower():
         is_vip = True
     elif title and "VIP章节" in title:
         is_vip = True
     elif not markdown or len(markdown) < 50:
-        if "novalpie.cc" not in req.url:
+        if not (is_domain(req.url, "novalpie.cc") or is_domain(req.url, "sfacg.com")):
             is_vip = True
 
     if is_vip:
@@ -555,13 +569,14 @@ async def fetch_next_chapter(
             print(f"⚠️ [SFACG] Error resolving next chapter: {e}")
     else:
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with create_safe_async_client(
                 timeout=30.0,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
             ) as client:
                 resp = await client.get(chapter.source_url)
                 resp.raise_for_status()
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
 
@@ -580,6 +595,8 @@ async def fetch_next_chapter(
     if not next_url:
         raise HTTPException(404, "Could not find a 'Next Chapter' link on the page.")
 
+    validate_external_url(next_url)
+
     # Check if next_url is already in the thread
     existing = db.execute(select(Chapter).where(Chapter.thread_id == thread_id, Chapter.source_url == next_url)).scalar_one_or_none()
     if existing:
@@ -596,25 +613,26 @@ async def fetch_next_chapter(
         parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
     else:
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
+            async with create_safe_async_client(
                 timeout=30.0,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
             ) as client:
                 next_resp = await client.get(next_url)
                 next_resp.raise_for_status()
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
         parsed_title, markdown = html_to_markdown(next_resp.text)
-    
+
     is_vip = False
     if "/vip/" in next_url.lower():
         is_vip = True
     elif parsed_title and "VIP章节" in parsed_title:
         is_vip = True
     elif not markdown or len(markdown) < 50:
-        if "novalpie.cc" not in next_url:
+        if not (is_domain(next_url, "novalpie.cc") or is_domain(next_url, "sfacg.com")):
             is_vip = True
 
     if is_vip:
@@ -735,8 +753,8 @@ async def crawl_next_chapters(
                         print(f"⚠️ [SFACG] Error resolving next chapter in crawl stream: {e}")
                 else:
                     try:
-                        async with httpx.AsyncClient(
-                            follow_redirects=True,
+                        validate_external_url(current_url)
+                        async with create_safe_async_client(
                             timeout=30.0,
                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
                         ) as client:

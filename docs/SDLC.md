@@ -212,6 +212,27 @@
   - Dokumentasi resmi keputusan di ADR-111.
 - **Status**: Finished.
 
+## Phase 27: Authenticated Scrapers, Media Pipeline, & Security Hardening (COMPLETE)
+- **Goal**: Integrasi scraper novel canggih (Novalpie & SFACG), proteksi SSRF berlapis (Defense-in-Depth), isolasi total basis data ganda (*Dual-DB*), serta sistem caching ilustrasi bab otomatis.
+- **Implementation**:
+  - Scraper Novalpie Mode Ganda (Akun & Tamu) dengan integrasi sesi Playwright dan token parsing (ADR-112, ADR-114).
+  - Media Gate & Illustration Pipeline server-side untuk parsing dan proxy gambar bab terenkripsi (ADR-113).
+  - Proteksi SSRF berlapis dengan hook validasi redirect HTTP asinkron, pemblokiran IP non-global, isolasi memori Dual-DB `(workspace, id)`, dan rekonsiliasi masking secret multi-kunci (ADR-115, ADR-116).
+  - Scraper murni HTTP performa tinggi untuk SFACG TOC & Chapters (<0.5s/bab) tanpa overhead Playwright (ADR-116).
+- **Status**: Finished.
+
+## Phase 28: Full-Stack Remediation, Glossary Collision Mitigation, & Mobile Geometry Hardening (COMPLETE)
+- **Goal**: Memperbaiki secara komprehensif 6 issue terbuka di GitHub (#2, #3, #4, #5, #6, #7): crash asyncio semaphore, celah SSRF redirect, isolasi Dual-DB, overwrite gambar EPUB, collision pinyin 1 suku kata, prioritas istilah terkunci, dan geometri viewport mobile serta navigasi hash.
+- **Implementation**:
+  - Konversi asinkron endpoint `get_chapter` dan semaphore sadar event loop (ADR-117).
+  - Validasi SSRF `validate_external_url` dan `create_safe_async_client` pada seluruh endpoint scraping (ADR-117).
+  - Isolasi total registry in-memory dengan compound key `(workspace, id)` dan penghapusan penghentian batch global (ADR-117).
+  - Penormalan path gambar EPUB unik dan ekstraksi metadata sinopsis (ADR-117).
+  - Wajib case-sensitive untuk pinyin 1 suku kata dan ekspansi stopwords collision (ADR-117).
+  - Perbaikan klasifikasi non-human untuk deskripsi yang memuat kata peran dan prioritas pengurutan `is_locked` (ADR-117).
+  - Pengaktifan kembali pinch-to-zoom di `index.html`, kompensasi safe-area `BottomNav.tsx`, penanganan PIN fleksibel di `SettingsPage.tsx`, popover responsif di `ChapterListControls.tsx`, kartu relasi karakter interaktif di `RelationshipGraph.tsx`, dan navigasi hash di `App.tsx` (ADR-117).
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing

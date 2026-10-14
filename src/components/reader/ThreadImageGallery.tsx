@@ -1,11 +1,20 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  Loader2, Image as ImageIcon, ChevronLeft, ChevronRight, X, 
-  BookOpen, ZoomIn, ZoomOut, Download, ImageOff, RefreshCw
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { getApiUrl, API_BASE } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Loader2,
+  Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  BookOpen,
+  ZoomIn,
+  ZoomOut,
+  Download,
+  ImageOff,
+  RefreshCw,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { getApiUrl, API_BASE } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export interface ThreadImageItem {
   url: string;
@@ -25,7 +34,7 @@ interface ThreadImageGalleryProps {
 
 export default function ThreadImageGallery({
   threadId,
-  chapterSearch = '',
+  chapterSearch = "",
   onSelectChapter,
 }: ThreadImageGalleryProps) {
   const [images, setImages] = useState<ThreadImageItem[]>([]);
@@ -48,7 +57,7 @@ export default function ThreadImageGallery({
         setImages(data.images || []);
       }
     } catch (err) {
-      console.error('Failed to load thread images', err);
+      console.error("Failed to load thread images", err);
     } finally {
       setLoading(false);
     }
@@ -61,14 +70,14 @@ export default function ThreadImageGallery({
 
   const getProxiedUrl = (url: string) => {
     let base = url;
-    if (url.startsWith('/images/')) {
+    if (url.startsWith("/images/")) {
       base = `${API_BASE}${url}`;
-    } else if (url.startsWith('http://') || url.startsWith('https://')) {
+    } else if (url.startsWith("http://") || url.startsWith("https://")) {
       base = `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
     }
     const key = retryKeys[url];
     if (key) {
-      const sep = base.includes('?') ? '&' : '?';
+      const sep = base.includes("?") ? "&" : "?";
       return `${base}${sep}force=true&t=${key}`;
     }
     return base;
@@ -76,9 +85,9 @@ export default function ThreadImageGallery({
 
   const handleRefreshSingleImage = (url: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setRetryingUrls(prev => ({ ...prev, [url]: true }));
-    setFailedUrls(prev => ({ ...prev, [url]: false }));
-    setRetryKeys(prev => ({ ...prev, [url]: Date.now() }));
+    setRetryingUrls((prev) => ({ ...prev, [url]: true }));
+    setFailedUrls((prev) => ({ ...prev, [url]: false }));
+    setRetryKeys((prev) => ({ ...prev, [url]: Date.now() }));
   };
 
   const handleRefreshAllFailed = () => {
@@ -93,7 +102,7 @@ export default function ThreadImageGallery({
     const nextFailed = { ...failedUrls };
     const nextKeys = { ...retryKeys };
 
-    failedList.forEach(u => {
+    failedList.forEach((u) => {
       nextRetrying[u] = true;
       nextFailed[u] = false;
       nextKeys[u] = now;
@@ -107,14 +116,16 @@ export default function ThreadImageGallery({
   const filteredImages = useMemo(() => {
     if (!chapterSearch.trim()) return images;
     const q = chapterSearch.toLowerCase();
-    return images.filter(img => 
-      img.chapter_title.toLowerCase().includes(q) ||
-      img.chapter_order.toString().includes(q) ||
-      (img.alt && img.alt.toLowerCase().includes(q))
+    return images.filter(
+      (img) =>
+        img.chapter_title.toLowerCase().includes(q) ||
+        img.chapter_order.toString().includes(q) ||
+        (img.alt && img.alt.toLowerCase().includes(q))
     );
   }, [images, chapterSearch]);
 
-  const currentLightboxImage = lightboxIndex !== null ? filteredImages[lightboxIndex] : null;
+  const currentLightboxImage =
+    lightboxIndex !== null ? filteredImages[lightboxIndex] : null;
 
   const handleNext = useCallback(() => {
     if (lightboxIndex !== null && lightboxIndex < filteredImages.length - 1) {
@@ -155,17 +166,17 @@ export default function ThreadImageGallery({
     if (lightboxIndex === null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleCloseLightbox();
-      if (e.key === 'ArrowRight') handleNext();
-      if (e.key === 'ArrowLeft') handlePrev();
+      if (e.key === "Escape") handleCloseLightbox();
+      if (e.key === "ArrowRight") handleNext();
+      if (e.key === "ArrowLeft") handlePrev();
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [lightboxIndex, handleCloseLightbox, handleNext, handlePrev]);
 
   const totalFailedCount = useMemo(() => {
-    return filteredImages.filter(img => failedUrls[img.url]).length;
+    return filteredImages.filter((img) => failedUrls[img.url]).length;
   }, [filteredImages, failedUrls]);
 
   if (loading) {
@@ -185,9 +196,12 @@ export default function ThreadImageGallery({
         <div className="w-14 h-14 rounded-2xl bg-[var(--secondary)] flex items-center justify-center text-[var(--muted-foreground)]">
           <ImageIcon className="w-7 h-7 opacity-60" />
         </div>
-        <h3 className="text-base font-bold text-[var(--foreground)]">No Illustrations Found</h3>
+        <h3 className="text-base font-bold text-[var(--foreground)]">
+          No Illustrations Found
+        </h3>
         <p className="text-xs text-[var(--muted-foreground)] max-w-sm">
-          Chapters in this thread do not contain embedded image tags or illustration covers.
+          Chapters in this thread do not contain embedded image tags or
+          illustration covers.
         </p>
       </div>
     );
@@ -198,7 +212,11 @@ export default function ThreadImageGallery({
       {/* Header bar info */}
       <div className="flex items-center justify-between py-4 mb-4 border-b border-[var(--border)]/60 text-xs text-[var(--muted-foreground)] font-semibold flex-wrap gap-2">
         <span>
-          Showing <strong className="text-[var(--foreground)]">{filteredImages.length}</strong> {filteredImages.length === 1 ? 'illustration' : 'illustrations'}
+          Showing{" "}
+          <strong className="text-[var(--foreground)]">
+            {filteredImages.length}
+          </strong>{" "}
+          {filteredImages.length === 1 ? "illustration" : "illustrations"}
           {chapterSearch && ` matching "${chapterSearch}"`}
         </span>
         <div className="flex items-center gap-3">
@@ -213,7 +231,9 @@ export default function ThreadImageGallery({
               <span>Retry Failed ({totalFailedCount})</span>
             </Button>
           )}
-          <span className="text-[11px] opacity-70 hidden sm:inline">Click any image to view full-size</span>
+          <span className="text-[11px] opacity-70 hidden sm:inline">
+            Click any image to view full-size
+          </span>
         </div>
       </div>
 
@@ -228,14 +248,16 @@ export default function ThreadImageGallery({
             {/* Image container with fixed aspect ratio */}
             <div className="relative aspect-[3/4] bg-[var(--secondary)]/40 overflow-hidden">
               {failedUrls[item.url] ? (
-                <div 
+                <div
                   className="w-full h-full flex flex-col items-center justify-center p-3 text-center bg-rose-500/5 space-y-2 cursor-default"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-400 flex items-center justify-center">
                     <ImageOff className="w-4 h-4" />
                   </div>
-                  <p className="text-[10px] font-bold text-rose-400">Failed to load</p>
+                  <p className="text-[10px] font-bold text-rose-400">
+                    Failed to load
+                  </p>
                   <Button
                     size="sm"
                     variant="outline"
@@ -243,8 +265,15 @@ export default function ThreadImageGallery({
                     disabled={retryingUrls[item.url]}
                     className="rounded-xl h-7 px-2 text-[10px] font-bold gap-1 border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
                   >
-                    <RefreshCw className={cn("w-3 h-3", retryingUrls[item.url] && "animate-spin")} />
-                    <span>{retryingUrls[item.url] ? "Retrying..." : "Refresh"}</span>
+                    <RefreshCw
+                      className={cn(
+                        "w-3 h-3",
+                        retryingUrls[item.url] && "animate-spin"
+                      )}
+                    />
+                    <span>
+                      {retryingUrls[item.url] ? "Retrying..." : "Refresh"}
+                    </span>
                   </Button>
                 </div>
               ) : (
@@ -254,17 +283,20 @@ export default function ThreadImageGallery({
                   loading="lazy"
                   onLoad={() => {
                     if (retryingUrls[item.url]) {
-                      setRetryingUrls(prev => ({ ...prev, [item.url]: false }));
+                      setRetryingUrls((prev) => ({
+                        ...prev,
+                        [item.url]: false,
+                      }));
                     }
                   }}
                   onError={() => {
-                    setFailedUrls(prev => ({ ...prev, [item.url]: true }));
-                    setRetryingUrls(prev => ({ ...prev, [item.url]: false }));
+                    setFailedUrls((prev) => ({ ...prev, [item.url]: true }));
+                    setRetryingUrls((prev) => ({ ...prev, [item.url]: false }));
                   }}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
               )}
-              
+
               {/* Badge top-left */}
               <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[10px] font-mono font-bold text-white shadow-sm flex items-center gap-1">
                 <span>Ch. {item.chapter_order}</span>
@@ -277,7 +309,7 @@ export default function ThreadImageGallery({
 
               {/* Hover actions overlay (if not failed) */}
               {!failedUrls[item.url] && (
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2 p-2">
+                <div className="absolute inset-0 bg-black/40 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2 p-2">
                   <Button
                     size="sm"
                     variant="secondary"
@@ -299,7 +331,12 @@ export default function ThreadImageGallery({
                     className="rounded-xl h-8 w-8 p-0 text-xs font-bold shadow-md hover:bg-white hover:text-black"
                     title="Refresh this image"
                   >
-                    <RefreshCw className={cn("w-3.5 h-3.5", retryingUrls[item.url] && "animate-spin")} />
+                    <RefreshCw
+                      className={cn(
+                        "w-3.5 h-3.5",
+                        retryingUrls[item.url] && "animate-spin"
+                      )}
+                    />
                   </Button>
                 </div>
               )}
@@ -307,11 +344,17 @@ export default function ThreadImageGallery({
 
             {/* Bottom info */}
             <div className="p-2.5 text-left border-t border-[var(--border)]/40">
-              <p className="text-[11px] font-bold text-[var(--foreground)] truncate" title={item.chapter_title}>
+              <p
+                className="text-[11px] font-bold text-[var(--foreground)] truncate"
+                title={item.chapter_title}
+              >
                 {item.chapter_title}
               </p>
               {item.alt && (
-                <p className="text-[10px] text-[var(--muted-foreground)] truncate mt-0.5" title={item.alt}>
+                <p
+                  className="text-[10px] text-[var(--muted-foreground)] truncate mt-0.5"
+                  title={item.alt}
+                >
                   {item.alt}
                 </p>
               )}
@@ -322,51 +365,72 @@ export default function ThreadImageGallery({
 
       {/* Full-Screen Lightbox */}
       {currentLightboxImage && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 md:p-6 animate-in fade-in duration-200 select-none touch-none"
           onClick={handleCloseLightbox}
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
           {/* Top toolbar */}
-          <div 
-            className="flex items-center justify-between text-white z-10"
+          <div
+            className="flex items-center justify-between text-white z-10 flex-wrap gap-2"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-left">
-              <span className="text-xs font-mono font-bold px-2 py-0.5 bg-white/20 rounded-md mr-2">
+            <div className="text-left min-w-0 flex-1 mr-2">
+              <span className="text-xs font-mono font-bold px-2 py-0.5 bg-white/20 rounded-md mr-2 inline-block">
                 Ch. {currentLightboxImage.chapter_order}
-                {currentLightboxImage.total_in_chapter && currentLightboxImage.total_in_chapter > 1 && (
-                  ` (${currentLightboxImage.image_index}/${currentLightboxImage.total_in_chapter})`
-                )}
+                {currentLightboxImage.total_in_chapter &&
+                  currentLightboxImage.total_in_chapter > 1 &&
+                  ` (${currentLightboxImage.image_index}/${currentLightboxImage.total_in_chapter})`}
               </span>
-              <span className="text-sm font-bold">{currentLightboxImage.chapter_title}</span>
+              <span className="text-sm font-bold truncate block sm:inline">
+                {currentLightboxImage.chapter_title}
+              </span>
               {currentLightboxImage.alt && (
-                <p className="text-xs text-zinc-400 mt-0.5">{currentLightboxImage.alt}</p>
+                <p className="text-xs text-zinc-400 mt-0.5 truncate">
+                  {currentLightboxImage.alt}
+                </p>
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => handleRefreshSingleImage(currentLightboxImage.url)}
+                onClick={() =>
+                  handleRefreshSingleImage(currentLightboxImage.url)
+                }
                 disabled={retryingUrls[currentLightboxImage.url]}
                 className="rounded-xl h-8 px-2.5 bg-white/10 text-white border-white/20 hover:bg-white/20 text-xs font-bold gap-1"
                 title="Refresh / Redownload this illustration"
               >
-                <RefreshCw className={cn("w-3.5 h-3.5", retryingUrls[currentLightboxImage.url] && "animate-spin")} />
-                <span className="hidden sm:inline">{retryingUrls[currentLightboxImage.url] ? "Retrying..." : "Refresh"}</span>
+                <RefreshCw
+                  className={cn(
+                    "w-3.5 h-3.5",
+                    retryingUrls[currentLightboxImage.url] && "animate-spin"
+                  )}
+                />
+                <span className="hidden sm:inline">
+                  {retryingUrls[currentLightboxImage.url]
+                    ? "Retrying..."
+                    : "Refresh"}
+                </span>
               </Button>
 
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setLightboxZoom(prev => prev === 1 ? 1.5 : 1)}
+                onClick={() =>
+                  setLightboxZoom((prev) => (prev === 1 ? 1.5 : 1))
+                }
                 className="rounded-xl h-8 px-2.5 bg-white/10 text-white border-white/20 hover:bg-white/20"
                 title={lightboxZoom === 1 ? "Zoom In" : "Reset Zoom"}
               >
-                {lightboxZoom === 1 ? <ZoomIn className="w-4 h-4" /> : <ZoomOut className="w-4 h-4" />}
+                {lightboxZoom === 1 ? (
+                  <ZoomIn className="w-4 h-4" />
+                ) : (
+                  <ZoomOut className="w-4 h-4" />
+                )}
               </Button>
 
               <a
@@ -405,7 +469,7 @@ export default function ThreadImageGallery({
           </div>
 
           {/* Center Image with navigation */}
-          <div 
+          <div
             className="relative flex-1 flex items-center justify-center overflow-hidden my-4"
             onClick={(e) => e.stopPropagation()}
           >
@@ -420,7 +484,7 @@ export default function ThreadImageGallery({
             )}
 
             {failedUrls[currentLightboxImage.url] ? (
-              <div 
+              <div
                 className="flex flex-col items-center justify-center p-8 bg-zinc-900/90 rounded-2xl border border-rose-500/30 text-center space-y-4 max-w-sm"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -428,52 +492,82 @@ export default function ThreadImageGallery({
                   <ImageOff className="w-6 h-6" />
                 </div>
                 <div className="space-y-1">
-                  <h4 className="text-sm font-bold text-white">Illustration Failed to Load</h4>
+                  <h4 className="text-sm font-bold text-white">
+                    Illustration Failed to Load
+                  </h4>
                   <p className="text-xs text-zinc-400">
                     The image could not be loaded from the source host.
                   </p>
                 </div>
                 <Button
-                  onClick={() => handleRefreshSingleImage(currentLightboxImage.url)}
+                  onClick={() =>
+                    handleRefreshSingleImage(currentLightboxImage.url)
+                  }
                   disabled={retryingUrls[currentLightboxImage.url]}
                   className="rounded-xl h-9 px-4 gap-2 bg-[var(--primary)] text-white font-bold text-xs hover:bg-[var(--primary)]/90"
                 >
-                  <RefreshCw className={cn("w-3.5 h-3.5", retryingUrls[currentLightboxImage.url] && "animate-spin")} />
-                  <span>{retryingUrls[currentLightboxImage.url] ? "Retrying..." : "Refresh Illustration"}</span>
+                  <RefreshCw
+                    className={cn(
+                      "w-3.5 h-3.5",
+                      retryingUrls[currentLightboxImage.url] && "animate-spin"
+                    )}
+                  />
+                  <span>
+                    {retryingUrls[currentLightboxImage.url]
+                      ? "Retrying..."
+                      : "Refresh Illustration"}
+                  </span>
                 </Button>
               </div>
             ) : (
               <img
                 src={getProxiedUrl(currentLightboxImage.url)}
-                alt={currentLightboxImage.alt || currentLightboxImage.chapter_title}
-                style={{ transform: `scale(${lightboxZoom})`, transition: 'transform 0.2s ease-out' }}
+                alt={
+                  currentLightboxImage.alt || currentLightboxImage.chapter_title
+                }
+                style={{
+                  transform: `scale(${lightboxZoom})`,
+                  transition: "transform 0.2s ease-out",
+                }}
                 onLoad={() => {
                   if (retryingUrls[currentLightboxImage.url]) {
-                    setRetryingUrls(prev => ({ ...prev, [currentLightboxImage.url]: false }));
+                    setRetryingUrls((prev) => ({
+                      ...prev,
+                      [currentLightboxImage.url]: false,
+                    }));
                   }
                 }}
                 onError={() => {
-                  setFailedUrls(prev => ({ ...prev, [currentLightboxImage.url]: true }));
-                  setRetryingUrls(prev => ({ ...prev, [currentLightboxImage.url]: false }));
+                  setFailedUrls((prev) => ({
+                    ...prev,
+                    [currentLightboxImage.url]: true,
+                  }));
+                  setRetryingUrls((prev) => ({
+                    ...prev,
+                    [currentLightboxImage.url]: false,
+                  }));
                 }}
                 className="max-h-[78vh] max-w-[85vw] object-contain rounded-xl shadow-2xl"
               />
             )}
 
-            {lightboxIndex !== null && lightboxIndex < filteredImages.length - 1 && (
-              <button
-                onClick={handleNext}
-                className="absolute right-2 md:right-6 z-20 p-2.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-all cursor-pointer border-none"
-                title="Next Image (Right Arrow)"
-              >
-                <ChevronRight className="w-6 h-6" />
-              </button>
-            )}
+            {lightboxIndex !== null &&
+              lightboxIndex < filteredImages.length - 1 && (
+                <button
+                  onClick={handleNext}
+                  className="absolute right-2 md:right-6 z-20 p-2.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-all cursor-pointer border-none"
+                  title="Next Image (Right Arrow)"
+                >
+                  <ChevronRight className="w-6 h-6" />
+                </button>
+              )}
           </div>
 
           {/* Bottom counter */}
           <div className="text-center text-xs font-mono text-zinc-400">
-            {lightboxIndex !== null ? `${lightboxIndex + 1} / ${filteredImages.length}` : ''}
+            {lightboxIndex !== null
+              ? `${lightboxIndex + 1} / ${filteredImages.length}`
+              : ""}
           </div>
         </div>
       )}

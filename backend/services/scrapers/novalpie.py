@@ -35,11 +35,11 @@ def _cleanup_all_browsers():
 atexit.register(_cleanup_all_browsers)
 
 
-def get_scraper_concurrency() -> int:
+def get_scraper_concurrency(workspace: str = None) -> int:
     try:
         from database import SessionLocal, GlobalSetting
         from sqlalchemy import select
-        with SessionLocal() as db:
+        with SessionLocal(workspace=workspace) as db:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             if gs and hasattr(gs, 'scraper_concurrency') and gs.scraper_concurrency:
                 return max(1, min(5, int(gs.scraper_concurrency)))
@@ -48,7 +48,7 @@ def get_scraper_concurrency() -> int:
     return 2
 
 
-def get_novalpie_auth_config() -> Tuple[bool, str, str, List[dict]]:
+def get_novalpie_auth_config(workspace: str = None) -> Tuple[bool, str, str, List[dict]]:
     """
     Returns (auth_enabled: bool, raw_cookie: str, auth_token: str, playwright_cookies: List[dict]).
     Reads novalpie_auth_enabled and novalpie_cookie from GlobalSetting.
@@ -61,7 +61,7 @@ def get_novalpie_auth_config() -> Tuple[bool, str, str, List[dict]]:
     try:
         from database import SessionLocal, GlobalSetting
         from sqlalchemy import select
-        with SessionLocal() as db:
+        with SessionLocal(workspace=workspace) as db:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             if gs and getattr(gs, 'novalpie_auth_enabled', 0):
                 from services.ai.secrets import load_secrets
@@ -183,14 +183,24 @@ class NovalpieAdapter(BaseScraperAdapter):
 
     @classmethod
     def get_semaphore(cls):
-        """Returns or updates the dynamic concurrency semaphore based on GlobalSetting safely."""
+        """Returns or updates the dynamic concurrency semaphore based on GlobalSetting safely and event-loop aware."""
         concurrency = get_scraper_concurrency()
-        if not hasattr(cls, "_playwright_sem"):
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        sem = getattr(cls, "_playwright_sem", None)
+        sem_loop = getattr(cls, "_playwright_sem_loop", None)
+
+        if sem is None or sem_loop is not current_loop:
             cls._playwright_sem = asyncio.Semaphore(concurrency)
+            cls._playwright_sem_loop = current_loop
             cls._current_concurrency = concurrency
         elif getattr(cls, "_current_concurrency", 2) != concurrency:
             if not cls._playwright_sem.locked():
                 cls._playwright_sem = asyncio.Semaphore(concurrency)
+                cls._playwright_sem_loop = current_loop
                 cls._current_concurrency = concurrency
         return cls._playwright_sem
 

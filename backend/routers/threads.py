@@ -710,11 +710,11 @@ def update_style_guide(thread_id: int, payload: StyleGuideUpdate, db: Session = 
 
 
 @router.get("/threads/{thread_id}/chapters/{chapter_id}", response_model=ChapterContent)
-def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Get single chapter with full content."""
     stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
     chapter = db.execute(stmt).scalar_one_or_none()
-    
+
     if not chapter:
         raise HTTPException(404, "Chapter not found")
 
@@ -730,35 +730,31 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
             bookmark.chapter_id = chapter_id
             bookmark.scroll_progress = 0.0
     db.commit()
-    
+
     current_scroll_progress = bookmark.scroll_progress
 
     # --- ON-DEMAND READ SCRAPING ---
     if not chapter.content_original and getattr(chapter, "source_url", None):
         try:
-            from services.security import validate_external_url
+            from services.security import validate_external_url, create_safe_async_client
             validate_external_url(chapter.source_url)
 
             from routers.scrape import is_domain
             if is_domain(chapter.source_url, "novalpie.cc"):
-                import asyncio
                 from services.scrapers.novalpie import NovalpieAdapter
                 novalpie = NovalpieAdapter()
-                fetched_title, fetched_markdown = asyncio.run(novalpie.scrape_chapter_content(chapter.source_url))
+                fetched_title, fetched_markdown = await novalpie.scrape_chapter_content(chapter.source_url)
             elif is_domain(chapter.source_url, "sfacg.com"):
-                import asyncio
                 from services.scrapers.sfacg import SFACGAdapter
                 sfacg = SFACGAdapter()
-                fetched_title, fetched_markdown = asyncio.run(sfacg.scrape_chapter_content(chapter.source_url))
+                fetched_title, fetched_markdown = await sfacg.scrape_chapter_content(chapter.source_url)
             else:
-                import httpx
                 from routers.scrape import html_to_markdown
-                with httpx.Client(
-                    follow_redirects=True,
+                async with create_safe_async_client(
                     timeout=15.0,
                     headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
                 ) as client:
-                    resp = client.get(chapter.source_url)
+                    resp = await client.get(chapter.source_url)
                     resp.raise_for_status()
 
                 fetched_title, fetched_markdown = html_to_markdown(resp.text)
@@ -779,9 +775,11 @@ def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTas
                 chapter.content_original = fetched_markdown
                 if not chapter.title_original and fetched_title:
                     chapter.title_original = fetched_title
-            
+
             db.commit()
             print(f"[ON-DEMAND READ] Fetched chapter {chapter_id} content from {chapter.source_url}")
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"[ERROR] Failed to fetch on-demand chapter {chapter_id}: {e}")
 

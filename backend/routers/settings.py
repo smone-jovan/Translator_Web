@@ -141,8 +141,9 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.display_mode is not None: gs.display_mode = req.display_mode
     if req.scraper_concurrency is not None: gs.scraper_concurrency = max(1, min(5, req.scraper_concurrency))
     if req.novalpie_auth_enabled is not None: gs.novalpie_auth_enabled = req.novalpie_auth_enabled
-    if req.novalpie_cookie is not None: gs.novalpie_cookie = req.novalpie_cookie.strip()
-    
+    # Keep SQLite free of cookie secrets (stored in .env only via save_secrets)
+    gs.novalpie_cookie = ""
+
     # Cloud LLM & API Keys Settings (ADR-029)
     if req.llm_provider is not None: gs.llm_provider = req.llm_provider
     if req.openai_url is not None: gs.openai_url = req.openai_url
