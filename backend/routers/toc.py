@@ -1,13 +1,14 @@
 import urllib.parse
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
+from starlette.requests import Request
 from pydantic import BaseModel
 import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from database import get_db, Thread, Chapter
+from database import get_db, Thread, Chapter, resolve_workspace, get_db_workspace
 
 router = APIRouter(prefix="/api", tags=["Scraping", "TOC"])
 
@@ -93,10 +94,12 @@ def is_domain(url: str, domain: str) -> bool:
 
 
 @router.post("/threads/scrape-toc", response_model=TOCScrapeResponse)
-async def scrape_toc(req: TOCScrapeRequest):
+async def scrape_toc(req: TOCScrapeRequest, request: Request = None):
     """Scrape a novel index/TOC page and detect chapter links heuristically or via dedicated adapters."""
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
+
+    ws = resolve_workspace(request)
 
     # SSRF guard: block requests to internal/private IPs
     from services.security import validate_external_url, create_safe_async_client
@@ -106,7 +109,7 @@ async def scrape_toc(req: TOCScrapeRequest):
     if is_domain(req.url, "novalpie.cc"):
         try:
             from services.scrapers.novalpie import NovalpieAdapter
-            novalpie = NovalpieAdapter()
+            novalpie = NovalpieAdapter(workspace=ws)
             novel_title, chapters_list = await novalpie.scrape_toc(req.url)
             toc_chapters = [TOCChapterInfo(title=c["title"], url=c["url"]) for c in chapters_list]
             return TOCScrapeResponse(title=novel_title, chapters=toc_chapters)
@@ -196,8 +199,9 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
                         synopsis = meta.synopsis or ""
                         cover_image = meta.cover_image or ""
                 elif is_domain(req.base_url, "novalpie.cc"):
+                    ws = get_db_workspace(db)
                     from services.scrapers.novalpie import NovalpieAdapter
-                    novalpie = NovalpieAdapter()
+                    novalpie = NovalpieAdapter(workspace=ws)
                     meta = await novalpie.scrape_metadata(req.base_url)
                     if meta.success:
                         title = meta.title or title

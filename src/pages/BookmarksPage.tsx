@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getApiUrl } from "@/lib/api";
+import { useEffect, useState, useCallback } from "react";
+import { getApiUrl, getActiveWorkspace } from "@/lib/api";
 import { Star, BookOpen, LibraryBig } from "lucide-react";
 
 interface BookmarkedChapter {
@@ -16,13 +16,12 @@ interface BookmarksPageProps {
   onOpenLibrary: () => void;
 }
 
-const bookmarksCacheStore = {
-  data: null as BookmarkedChapter[] | null,
-};
+const bookmarksCacheStore: Record<string, BookmarkedChapter[] | null> = {};
 
 function removeChapterFromBookmarksCache(chapterId: number) {
-  if (bookmarksCacheStore.data) {
-    bookmarksCacheStore.data = bookmarksCacheStore.data.filter(
+  const ws = getActiveWorkspace();
+  if (bookmarksCacheStore[ws]) {
+    bookmarksCacheStore[ws] = bookmarksCacheStore[ws]!.filter(
       (b) => b.id !== chapterId
     );
   }
@@ -32,41 +31,42 @@ export default function BookmarksPage({
   onOpenChapter,
   onOpenLibrary,
 }: BookmarksPageProps) {
+  const ws = getActiveWorkspace();
   const [bookmarks, setBookmarks] = useState<BookmarkedChapter[]>(
-    () => bookmarksCacheStore.data ?? []
+    () => bookmarksCacheStore[ws] ?? []
   );
   const [loading, setLoading] = useState(
-    () => bookmarksCacheStore.data === null
+    () => !bookmarksCacheStore[ws]
   );
 
-  const fetchBookmarks = async (silent = false) => {
+  const fetchBookmarks = useCallback(async (silent = false) => {
     try {
       if (!silent) setLoading(true);
       const res = await fetch(getApiUrl("/api/bookmarks"));
       const data = await res.json();
       if (Array.isArray(data)) {
         setBookmarks(data);
-        bookmarksCacheStore.data = data;
+        bookmarksCacheStore[ws] = data;
       }
     } catch (err) {
       console.error("Failed to fetch bookmarks:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [ws]);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       await Promise.resolve();
       if (!active) return;
-      fetchBookmarks(bookmarksCacheStore.data !== null);
+      fetchBookmarks(bookmarksCacheStore[ws] != null);
     };
     load();
     return () => {
       active = false;
     };
-  }, []);
+  }, [fetchBookmarks, ws]);
 
   const removeBookmark = async (
     threadId: number,

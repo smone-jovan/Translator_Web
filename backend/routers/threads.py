@@ -740,9 +740,10 @@ async def get_chapter(thread_id: int, chapter_id: int, background_tasks: Backgro
             validate_external_url(chapter.source_url)
 
             from routers.scrape import is_domain
+            ws = get_db_workspace(db)
             if is_domain(chapter.source_url, "novalpie.cc"):
                 from services.scrapers.novalpie import NovalpieAdapter
-                novalpie = NovalpieAdapter()
+                novalpie = NovalpieAdapter(workspace=ws)
                 fetched_title, fetched_markdown = await novalpie.scrape_chapter_content(chapter.source_url)
             elif is_domain(chapter.source_url, "sfacg.com"):
                 from services.scrapers.sfacg import SFACGAdapter

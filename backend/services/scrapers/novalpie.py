@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional, List, Tuple, Dict, Any
 import httpx
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
+from services.security import validate_external_url, create_safe_async_client
 
 _pw_thread_local = threading.local()
 _all_active_browsers = []
@@ -284,10 +285,11 @@ class NovalpieAdapter(BaseScraperAdapter):
             )
 
         detail_url = f"{self.API_BASE}/novels/{novel_id}/detail"
+        validate_external_url(detail_url)
         print(f"🥧 [Novalpie] Fetching novel metadata from {detail_url}")
 
         try:
-            async with httpx.AsyncClient(headers=self.get_request_headers(), timeout=20.0, follow_redirects=True) as client:
+            async with create_safe_async_client(headers=self.get_request_headers(), timeout=20.0, follow_redirects=True) as client:
                 resp = await client.get(detail_url)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -378,11 +380,12 @@ class NovalpieAdapter(BaseScraperAdapter):
 
         # 2. Fetch chapter list
         toc_url = f"{self.API_BASE}/novels/{novel_id}/chapters"
+        validate_external_url(toc_url)
         print(f"🥧 [Novalpie] Fetching TOC from {toc_url}")
 
         chapters: List[dict] = []
         try:
-            async with httpx.AsyncClient(headers=self.get_request_headers(), timeout=25.0, follow_redirects=True) as client:
+            async with create_safe_async_client(headers=self.get_request_headers(), timeout=25.0, follow_redirects=True) as client:
                 resp = await client.get(toc_url)
                 if resp.status_code == 200:
                     data = resp.json()

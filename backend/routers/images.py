@@ -260,8 +260,8 @@ async def get_image_cache_stats():
 
 
 @router.post("/cache/images/clear")
-async def clear_image_cache():
-    """Safely delete all cached images from disk."""
+async def clear_image_cache(db: Session = Depends(get_db)):
+    """Safely delete cached images from disk and clear active image jobs for the current workspace."""
     deleted_count = 0
     freed_bytes = 0
 
@@ -276,8 +276,12 @@ async def clear_image_cache():
                 except Exception:
                     pass
 
-    # Clear active jobs
-    ACTIVE_IMAGE_JOBS.clear()
+    ws = getattr(db, "_workspace", "main").lower()
+    for key in list(ACTIVE_IMAGE_JOBS.keys()):
+        if isinstance(key, tuple) and len(key) > 0 and str(key[0]).lower() == ws:
+            ACTIVE_IMAGE_JOBS.pop(key, None)
+        elif not isinstance(key, tuple):
+            ACTIVE_IMAGE_JOBS.pop(key, None)
 
     return {
         "status": "success",

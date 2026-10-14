@@ -29,9 +29,9 @@ active_tasks: dict = {}
 translation_queues: dict = {}
 
 def get_chapter_translation_queues(workspace: str, chapter_id: int) -> list:
-    """Safely get all queues listening to a chapter stream across compound or legacy keys."""
+    """Safely get all queues listening to a chapter stream scoped strictly by (workspace, chapter_id)."""
     ws_key = (str(workspace).lower(), chapter_id)
-    return translation_queues.get(ws_key) or translation_queues.get(chapter_id) or []
+    return translation_queues.get(ws_key) or []
 
 # Strong references to prevent garbage collection of wrapper tasks
 _prefetch_tasks = set()
@@ -215,7 +215,7 @@ class BackgroundTranslator:
                         scrape_resp = None
                         for s_attempt in range(1, max_scrape_attempts + 1):
                             try:
-                                scrape_resp = await scrape_url(ScrapeRequest(url=chapter.source_url))
+                                scrape_resp = await scrape_url(ScrapeRequest(url=chapter.source_url), workspace=workspace)
                                 if scrape_resp and scrape_resp.markdown and len(scrape_resp.markdown.strip()) >= 50:
                                     err_keywords = ["加载章节内容失败", "请求过于频繁", "请稍后再试", "Ray ID:", "Cloudflare Turnstile blocked"]
                                     if not any(k in scrape_resp.markdown for k in err_keywords):
@@ -244,7 +244,8 @@ class BackgroundTranslator:
                                 has_error_text = True
 
                         if has_error_text or not fetched_markdown or len(fetched_markdown.strip()) < 50:
-                            if not (chapter.source_url and "novalpie.cc" in chapter.source_url):
+                            from routers.scrape import is_domain
+                            if not (chapter.source_url and (is_domain(chapter.source_url, "novalpie.cc") or is_domain(chapter.source_url, "sfacg.com"))):
                                 is_vip = True
                             else:
                                 print(f"[RATE_LIMIT_OR_EMPTY] Chapter {chapter_id} received empty/rate-limited text ({len(fetched_markdown or '')} chars). Marking error.")
@@ -459,9 +460,8 @@ class BackgroundTranslator:
                     # Handle prohibited/filtered response — skip this chapter entirely
                     if round_prohibited:
                         print(f"[PROHIBITED] Chapter {chapter_id} was blocked by AI content filter. Skipping.")
-                        if chapter_id in translation_queues:
-                            for q in translation_queues[chapter_id]:
-                                await q.put("[PROHIBITED]")
+                        for q in list(get_chapter_translation_queues(workspace, chapter_id)):
+                            await q.put("[PROHIBITED]")
                         with get_session(workspace) as db:
                             ch = db.get(Chapter, chapter_id)
                             if ch:

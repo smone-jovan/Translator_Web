@@ -76,12 +76,6 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
             translation_queues[queue_key] = []
         translation_queues[queue_key].append(q)
 
-        # Legacy fallback key for callers expecting single int
-        if req.chapter_id not in translation_queues:
-            translation_queues[req.chapter_id] = []
-        if q not in translation_queues[req.chapter_id]:
-            translation_queues[req.chapter_id].append(q)
-
         try:
             while True:
                 content = await q.get()
@@ -93,11 +87,6 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
                 translation_queues[queue_key].remove(q)
                 if not translation_queues[queue_key]:
                     del translation_queues[queue_key]
-
-            if req.chapter_id in translation_queues and q in translation_queues[req.chapter_id]:
-                translation_queues[req.chapter_id].remove(q)
-                if not translation_queues[req.chapter_id]:
-                    del translation_queues[req.chapter_id]
 
         yield "data: [DONE]\n\n"
 

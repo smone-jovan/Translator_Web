@@ -233,6 +233,16 @@
   - Pengaktifan kembali pinch-to-zoom di `index.html`, kompensasi safe-area `BottomNav.tsx`, penanganan PIN fleksibel di `SettingsPage.tsx`, popover responsif di `ChapterListControls.tsx`, kartu relasi karakter interaktif di `RelationshipGraph.tsx`, dan navigasi hash di `App.tsx` (ADR-117).
 - **Status**: Finished.
 
+## Phase 29: Ghost Cache Isolation, SSE Queue Tenancy, & Scraper Router Workspace Hardening (COMPLETE)
+- **Goal**: Menyelesaikan 6 bug edge-case terakhir (Issue #10) terkait isolasi cache Ghost Mode di sisi frontend, penghapusan integer key pada antrean SSE `translation_queues`, propagasi workspace pada NovalpieAdapter, proteksi SSRF redirect di Novalpie API, deteksi URL TOC SFACG, dan isolasi pembersihan cache gambar.
+- **Implementation**:
+  - Pelingkupan kunci session storage & local storage dengan `getActiveWorkspace()` pada `App.tsx`, `LibraryPage.tsx`, `ReaderPage.tsx`, dan `BookmarksPage.tsx`, serta pembersihan `sessionStorage.clear()` saat berpindah workspace di `Sidebar.tsx` dan `SettingsPage.tsx`.
+  - Penghapusan integer key pada antrean streaming SSE `translation_queues` di `translate.py` dan `background_translator.py`.
+  - Meneruskan `workspace=ws` pada seluruh instansiasi `NovalpieAdapter` di `scrape.py`, `toc.py`, dan `threads.py`, serta integrasi `create_safe_async_client` pada `scrape_metadata` dan `scrape_toc`.
+  - Penambahan regex `TOC_ROOT_URL_PATTERN` di `scrape.py` dan penyelarasan regex SFACG TOC di `TranslatePage.tsx`.
+  - Pelingkupan pembersihan `ACTIVE_IMAGE_JOBS` per workspace aktif pada endpoint `clear_image_cache`.
+- **Status**: Finished.
+
 ---
 
 ## 4. Testing

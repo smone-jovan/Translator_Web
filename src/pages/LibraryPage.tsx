@@ -2,7 +2,7 @@ import { BookOpen, FileText, Trash2, MoreVertical, Play, Clock, Search, Sparkles
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { getApiUrl } from '@/lib/api';
+import { getApiUrl, getActiveWorkspace } from '@/lib/api';
 import BulkTranslateModal from '@/components/BulkTranslateModal';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import Menu from '@mui/material/Menu';
@@ -322,8 +322,13 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
   );
 };
 
-const LIBRARY_CACHE_KEY = 'readomni_library_cache_v1';
-const LIBRARY_SCROLL_KEY = 'readomni_library_scroll_v1';
+function getLibraryCacheKey(): string {
+  return `readomni_library_cache_v1_${getActiveWorkspace()}`;
+}
+
+function getLibraryScrollKey(): string {
+  return `readomni_library_scroll_v1_${getActiveWorkspace()}`;
+}
 
 interface LibraryCacheData {
   threads: ThreadItem[];
@@ -334,17 +339,18 @@ interface LibraryCacheData {
   savedAt: number;
 }
 
-let memoryLibraryCache: LibraryCacheData | null = null;
-let memoryScrollY = 0;
+const memoryLibraryCacheByWs: Record<string, LibraryCacheData | null> = {};
+const memoryScrollYByWs: Record<string, number> = {};
 
 function readLibrarySessionCache(): LibraryCacheData | null {
-  if (memoryLibraryCache) return memoryLibraryCache;
+  const ws = getActiveWorkspace();
+  if (memoryLibraryCacheByWs[ws]) return memoryLibraryCacheByWs[ws];
   try {
-    const raw = sessionStorage.getItem(LIBRARY_CACHE_KEY);
+    const raw = sessionStorage.getItem(getLibraryCacheKey());
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LibraryCacheData>;
     if (parsed && Array.isArray(parsed.threads)) {
-      memoryLibraryCache = {
+      memoryLibraryCacheByWs[ws] = {
         threads: parsed.threads,
         searchQuery: typeof parsed.searchQuery === 'string' ? parsed.searchQuery : '',
         activeTab: parsed.activeTab || 'all',
@@ -352,7 +358,7 @@ function readLibrarySessionCache(): LibraryCacheData | null {
         lastOpenedThreadId: typeof parsed.lastOpenedThreadId === 'number' ? parsed.lastOpenedThreadId : null,
         savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
       };
-      return memoryLibraryCache;
+      return memoryLibraryCacheByWs[ws];
     }
   } catch {
     // ignore
@@ -361,13 +367,14 @@ function readLibrarySessionCache(): LibraryCacheData | null {
 }
 
 function readSavedScrollY(): number {
-  if (memoryScrollY > 0) return memoryScrollY;
+  const ws = getActiveWorkspace();
+  if ((memoryScrollYByWs[ws] ?? 0) > 0) return memoryScrollYByWs[ws];
   try {
-    const raw = sessionStorage.getItem(LIBRARY_SCROLL_KEY);
+    const raw = sessionStorage.getItem(getLibraryScrollKey());
     if (raw) {
       const num = parseInt(raw, 10);
       if (!isNaN(num) && num > 0) {
-        memoryScrollY = num;
+        memoryScrollYByWs[ws] = num;
         return num;
       }
     }
@@ -378,6 +385,7 @@ function readSavedScrollY(): number {
 }
 
 function saveLibrarySessionCache(data: Partial<LibraryCacheData>) {
+  const ws = getActiveWorkspace();
   const prev = readLibrarySessionCache() || {
     threads: [],
     searchQuery: '',
@@ -391,18 +399,19 @@ function saveLibrarySessionCache(data: Partial<LibraryCacheData>) {
     ...data,
     savedAt: Date.now()
   };
-  memoryLibraryCache = updated;
+  memoryLibraryCacheByWs[ws] = updated;
   try {
-    sessionStorage.setItem(LIBRARY_CACHE_KEY, JSON.stringify(updated));
+    sessionStorage.setItem(getLibraryCacheKey(), JSON.stringify(updated));
   } catch {
     // ignore
   }
 }
 
 function saveScrollY(scrollY: number) {
-  memoryScrollY = scrollY;
+  const ws = getActiveWorkspace();
+  memoryScrollYByWs[ws] = scrollY;
   try {
-    sessionStorage.setItem(LIBRARY_SCROLL_KEY, String(scrollY));
+    sessionStorage.setItem(getLibraryScrollKey(), String(scrollY));
   } catch {
     // ignore
   }

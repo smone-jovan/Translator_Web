@@ -11,7 +11,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, getActiveWorkspace } from "@/lib/api";
 import ExportModal from "@/components/ExportModal";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
 import BulkFetchModal from "@/components/BulkFetchModal";
@@ -50,8 +50,8 @@ interface ReaderSessionState {
   lastActiveAt: number;
 }
 
-function getReaderSessionKey(threadId: number) {
-  return `readomni_reader_session_${threadId}`;
+function getReaderSessionKey(threadId: number): string {
+  return `readomni_reader_session_v1_${getActiveWorkspace()}_${threadId}`;
 }
 
 function readReaderSession(threadId: number): ReaderSessionState | null {

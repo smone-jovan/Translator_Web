@@ -19,12 +19,17 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace
+from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace, get_db_workspace
 from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.engine import MetadataScraperEngine
 
 router = APIRouter(prefix="/api", tags=["Scraping"])
 scraper_engine = MetadataScraperEngine()
+
+TOC_ROOT_URL_PATTERN = re.compile(
+    r"^https?://(?:(?:www\.)?novalpie\.cc/(?:book|novel)/\d+|(?:[a-zA-Z0-9-]+\.)?sfacg\.com/(?:Novel|b)/\d+(?:/MainIndex)?)/?$",
+    re.IGNORECASE,
+)
 
 
 class ScrapeRequest(BaseModel):
@@ -152,7 +157,7 @@ def is_domain(url: str, domain: str) -> bool:
 
 
 @router.post("/scrape", response_model=ScrapeResponse)
-async def scrape_url(req: ScrapeRequest):
+async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Optional[str] = None):
     """Fetch URL, strip ads/nav, return clean markdown."""
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
@@ -161,11 +166,19 @@ async def scrape_url(req: ScrapeRequest):
     from services.security import validate_external_url
     validate_external_url(req.url)
 
+    if TOC_ROOT_URL_PATTERN.match(req.url.strip()):
+        raise HTTPException(
+            400,
+            "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.",
+        )
+
+    ws = workspace or resolve_workspace(request)
+
     # 1. Dedicated Adapter: Novalpie
     if is_domain(req.url, "novalpie.cc"):
         try:
             from services.scrapers.novalpie import NovalpieAdapter
-            novalpie = NovalpieAdapter()
+            novalpie = NovalpieAdapter(workspace=ws)
             title, markdown = await novalpie.scrape_chapter_content(req.url)
             if not markdown:
                 raise HTTPException(422, "No content extracted from novalpie URL.")
@@ -231,14 +244,19 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
 
     validate_external_url(req.url)
 
+    if TOC_ROOT_URL_PATTERN.match(req.url.strip()):
+        raise HTTPException(
+            400,
+            "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.",
+        )
+
+    ws = get_db_workspace(db)
     source_url = req.url
-    if re.match(r'^https?://(?:www\.)?novalpie\.cc/(?:book|novel)/\d+/?$', req.url):
-        raise HTTPException(400, "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.")
 
     if is_domain(req.url, "novalpie.cc"):
         try:
             from services.scrapers.novalpie import NovalpieAdapter
-            novalpie = NovalpieAdapter()
+            novalpie = NovalpieAdapter(workspace=ws)
             title, markdown = await novalpie.scrape_chapter_content(req.url)
             if not markdown:
                 raise HTTPException(422, "No content extracted from novalpie URL.")
@@ -315,10 +333,10 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
         synopsis = None
         remaining_chapters = []
 
-        if "novalpie.cc" in req.url:
+        if is_domain(req.url, "novalpie.cc"):
             try:
                 from services.scrapers.novalpie import NovalpieAdapter
-                novalpie = NovalpieAdapter()
+                novalpie = NovalpieAdapter(workspace=ws)
                 meta, remaining_chapters = await novalpie.get_remaining_chapters(req.url)
                 if meta and meta.success:
                     if meta.original_title:
@@ -549,10 +567,12 @@ async def fetch_next_chapter(
     next_url = None
     next_title = None
 
+    ws = get_db_workspace(db)
+
     if is_domain(chapter.source_url, "novalpie.cc"):
         try:
             from services.scrapers.novalpie import NovalpieAdapter
-            novalpie = NovalpieAdapter()
+            novalpie = NovalpieAdapter(workspace=ws)
             next_info = await novalpie.get_next_chapter(chapter.source_url)
             if next_info:
                 next_url, next_title = next_info
@@ -605,7 +625,7 @@ async def fetch_next_chapter(
     # Fetch and parse the new chapter content
     if is_domain(next_url, "novalpie.cc"):
         from services.scrapers.novalpie import NovalpieAdapter
-        novalpie = NovalpieAdapter()
+        novalpie = NovalpieAdapter(workspace=ws)
         parsed_title, markdown = await novalpie.scrape_chapter_content(next_url)
     elif is_domain(next_url, "sfacg.com"):
         from services.scrapers.sfacg import SFACGAdapter
@@ -736,7 +756,7 @@ async def crawl_next_chapters(
                 if is_domain(current_url, "novalpie.cc"):
                     try:
                         from services.scrapers.novalpie import NovalpieAdapter
-                        novalpie = NovalpieAdapter()
+                        novalpie = NovalpieAdapter(workspace=ws)
                         next_info = await novalpie.get_next_chapter(current_url)
                         if next_info:
                             next_url, next_title = next_info
@@ -807,7 +827,7 @@ async def crawl_next_chapters(
                     try:
                         if is_domain(next_url, "novalpie.cc"):
                             from services.scrapers.novalpie import NovalpieAdapter
-                            novalpie = NovalpieAdapter()
+                            novalpie = NovalpieAdapter(workspace=ws)
                             parsed_title, markdown = await novalpie.scrape_chapter_content(next_url)
                         elif is_domain(next_url, "sfacg.com"):
                             from services.scrapers.sfacg import SFACGAdapter
@@ -842,7 +862,7 @@ async def crawl_next_chapters(
                 elif parsed_title and "VIP章节" in parsed_title:
                     is_vip = True
                 elif not markdown or len(markdown) < 50:
-                    if not is_domain(next_url, "novalpie.cc"):
+                    if not (is_domain(next_url, "novalpie.cc") or is_domain(next_url, "sfacg.com")):
                         is_vip = True
 
 

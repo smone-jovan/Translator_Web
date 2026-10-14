@@ -369,6 +369,11 @@ export default function SettingsPage() {
       if (data?.workspace) {
         localStorage.setItem("readomni_workspace", data.workspace);
       }
+      try {
+        sessionStorage.clear();
+      } catch {
+        // ignore
+      }
       window.location.reload();
     } catch (e) {
       console.error(e);

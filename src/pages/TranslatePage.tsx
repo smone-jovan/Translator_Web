@@ -92,8 +92,8 @@ export default function TranslatePage({ onOpenThread, onNavigateToSettings, onNa
     if (/^https?:\/\/(?:www\.)?novelupdates\.com\/series\/[^\s/]+\/?$/i.test(trimmed)) {
       return true;
     }
-    // SFACG novel index (e.g. https://book.sfacg.com/b/123456/ or m.sfacg.com/b/123456/)
-    if (/^https?:\/\/(?:[a-zA-Z0-9-]+\.)?sfacg\.com\/b\/\d+\/?$/i.test(trimmed)) {
+    // SFACG novel index (e.g. https://book.sfacg.com/Novel/123456/, /Novel/123456/MainIndex/, or /b/123456/)
+    if (/^https?:\/\/(?:[a-zA-Z0-9-]+\.)?sfacg\.com\/(?:Novel|b)\/\d+(?:\/MainIndex)?\/?$/i.test(trimmed)) {
       return true;
     }
     // General table of contents indicators
