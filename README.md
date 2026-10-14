@@ -171,8 +171,9 @@ Translator_Web/
 
 | Document | Description |
 |----------|-------------|
-| [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview |
-| [SDLC](docs/SDLC.md) | Software development lifecycle |
+| [Architecture Overview](docs/overview.md) | High-level system architecture, data flows, and key entry points |
+| [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview, and Agent Playbook |
+| [SDLC](docs/SDLC.md) | Software development lifecycle & Categorized ADR Index |
 | [ADRs](docs/decisions/) | 115 architectural decision records (ADR-004 to ADR-118) |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
 
