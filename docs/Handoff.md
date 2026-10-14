@@ -366,6 +366,18 @@ The AI glossary extraction prompt and parser were hardened to improve entry qual
 * **Parser Bug Fix:** `desc.rstrip('.!;,。！ ')` before `endswith(")")` check — fixes entries like `(context).` that previously failed to split `translated_term` from `notes`.
 * **Per-Novel Style Guide:** Quality mode injects `thread.style_guide` (up to 1000 chars) into the translation prompt for novel-specific tone and style control.
 
+### P. Scraper Architecture Tiering (ADR-116, ADR-117, Issue #9)
+When maintaining or creating novel scrapers in `backend/services/scrapers/`, adhere strictly to this 3-tier hierarchy:
+1. **Tier 1 — Pure HTTP (`create_safe_async_client` / `curl_cffi`)**:
+   - For SSR pages and JSON APIs (e.g. `sfacg.py`, Novalpie detail/TOC endpoints). High throughput (<0.5s/chapter).
+   - Mandatory: `validate_external_url(url)` and `create_safe_async_client` event hooks to block SSRF on HTTP 30x redirects.
+2. **Tier 2 — Custom Thread-Local Playwright/Patchright Pool (`novalpie.py`)**:
+   - For single-page web applications requiring complex client-side JS execution and storage/cookie injection (e.g. Novalpie Nuxt 3 with AES-GCM decryption `BOp3s4R4.js`).
+   - Retain `_get_thread_browser()` with auto-detection of `patchright` (stealth Chromium) or `playwright`, plus Adaptive State Polling 400ms to avoid premature ready bugs.
+3. **Tier 3 — Scrapling `StealthyFetcher` / `AsyncStealthySession` (`stealth_base.py`)**:
+   - For new novel websites protected by aggressive Cloudflare Turnstile/Interstitial challenges or dynamic anti-bot defenses.
+   - Use `StealthyNovelAdapter` (`services/scrapers/stealth_base.py`) providing automatic Turnstile bypass (`solve_cloudflare=True`), resource blocking (`disable_resources=True`), and adaptive DOM selectors (`adaptive=True`).
+
 ---
 
 ## 🧪 5. Sandbox Quality Control & Verification

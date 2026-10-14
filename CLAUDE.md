@@ -44,6 +44,17 @@ Sebagai **Skill-Driven Agent**, Anda TIDAK BOLEH melakukan tebak-tebakan (*ad-ho
 - Hindari kerentanan *path traversal*: selalu kanonikalisasi path dengan `Path.resolve()` dan pastikan `candidate.is_relative_to(trusted_base)`.
 - Pertahankan isolasi basis data ganda (`app.db` dan `ghost.db`). Identitas workspace harus selalu terikat ke request/job (`X-Workspace` header atau cookie) dan tidak boleh bocor antar workspace.
 
+### Scraper Architecture Tiering (Mandatory Decision Rule):
+Saat memelihara atau menambahkan adapter situs web novel baru di `backend/services/scrapers/`, patuhi hierarki 3-tingkat berikut:
+1. **Tier 1 — Pure HTTP (`create_safe_async_client` / `curl_cffi`)**:
+   - Gunakan untuk situs SSR atau REST API JSON (seperti `sfacg.py` dan endpoint metadata/TOC `novalpie.py`).
+   - WAJIB memanggil `validate_external_url(url)` dan menggunakan `create_safe_async_client` untuk mencegah SSRF via HTTP 30x redirect.
+2. **Tier 2 — Custom Thread-Local Playwright/Patchright Pool (`novalpie.py`)**:
+   - Pertahankan arsitektur `_get_thread_browser()` + *Adaptive State Polling 400ms* pada `novalpie.py` karena dekripsi AES-GCM Nuxt 3 (`BOp3s4R4.js`) memerlukan verifikasi isi teks pasca-dekripsi agar tidak terjebak *Premature Ready Bug* (`正在准备内容`).
+3. **Tier 3 — Scrapling `StealthyFetcher` / `AsyncStealthySession` (`stealth_base.py`)**:
+   - Jika menambahkan adapter untuk **situs novel baru** yang memblokir `playwright-stealth` biasa dengan Cloudflare Turnstile/Interstitial ketat atau sering mengganti struktur HTML/CSS-nya, gunakan `StealthyFetcher(solve_cloudflare=True, disable_resources=True)` dan fitur selector `adaptive=True` dari **Scrapling** (atau `patchright`) daripada menulis solver Cloudflare manual dari nol.
+   - Ingat aturan Tooling Safety: meminta persetujuan pengguna terlebih dahulu sebelum menjalankan `pip install "scrapling[fetchers]"` atau mengubah `backend/requirements.txt`.
+
 ---
 
 ## 3. Quality Gates

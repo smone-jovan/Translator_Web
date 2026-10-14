@@ -154,8 +154,17 @@ def _get_thread_browser():
     import sys
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    from playwright.sync_api import sync_playwright
-    print("🚀 [Playwright] Launching reusable Chromium browser instance for worker thread...")
+
+    # Prefer Patchright (CDP-stealth patched Chromium engine used by Scrapling) if installed,
+    # otherwise fall back seamlessly to standard Playwright.
+    try:
+        from patchright.sync_api import sync_playwright
+        engine_label = "Patchright Stealth"
+    except ImportError:
+        from playwright.sync_api import sync_playwright
+        engine_label = "Playwright"
+
+    print(f"🚀 [{engine_label}] Launching reusable Chromium browser instance for worker thread...")
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
         headless=True,
