@@ -5,7 +5,7 @@
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](#)
 [![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python)](#)
 [![React](https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react)](#)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](#license)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](#license)
 
 ReadOmni AI lets you read, crawl, and translate Chinese web novels using local or cloud AI — with zero data leaving your network. Import EPUBs, scrape from URLs, batch-translate chapters, manage glossaries, and export polished EPUBs — all from a single self-hosted dashboard.
 
@@ -203,9 +203,14 @@ npm run lint && npm run build
 
 ---
 
-## License
+## License & Attribution
 
-MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the **Apache License 2.0** with mandatory attribution requirements. See the [LICENSE](LICENSE) file for the full license terms.
+
+### ⚖️ Attribution Notice
+Under Section 4(d) of the Apache License 2.0, any public deployment, redistribution, modification, or fork of this project **must retain the [NOTICE](NOTICE) file** and provide clear attribution referencing the original author and repository:
+- **Author:** SMONE ([@smone-jovan](https://github.com/smone-jovan))
+- **Original Repository:** [https://github.com/smone-jovan/Translator_Web](https://github.com/smone-jovan/Translator_Web)
 
 ---
 
