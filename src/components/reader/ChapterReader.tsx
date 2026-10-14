@@ -1000,7 +1000,9 @@ export default function ChapterReader({
             title="Pilih Bab (Table of Contents)"
           >
             <span>BAB {selectedChapterIdx + 1}</span>
-            <span className="text-[var(--muted-foreground)] font-normal text-[9px]">/ {thread.chapters.length}</span>
+            <span className="text-[var(--muted-foreground)] font-normal text-[9px]">
+              / {thread.chapters.length}
+            </span>
           </button>
 
           <button
@@ -1303,7 +1305,9 @@ export default function ChapterReader({
             title="Pilih Bab (Table of Contents)"
           >
             <BookOpen className="w-3.5 h-3.5 text-[var(--primary)]" />
-            <span className="font-mono">{selectedChapterIdx + 1} / {thread.chapters.length}</span>
+            <span className="font-mono">
+              {selectedChapterIdx + 1} / {thread.chapters.length}
+            </span>
           </button>
           <Button
             variant="outline"
