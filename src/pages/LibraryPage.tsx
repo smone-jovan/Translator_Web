@@ -27,6 +27,7 @@ import {
   getApiUrl,
   getActiveWorkspace,
   getWorkspaceStorageKey,
+  invalidateThreadCache,
 } from "@/lib/api";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
 import AutoAwesome from "@mui/icons-material/AutoAwesome";
@@ -448,10 +449,13 @@ const memoryScrollYByWs: Record<string, number> = {};
 
 function readLibrarySessionCache(): LibraryCacheData | null {
   const ws = getActiveWorkspace();
-  if (memoryLibraryCacheByWs[ws]) return memoryLibraryCacheByWs[ws];
   try {
     const raw = sessionStorage.getItem(getLibraryCacheKey());
-    if (!raw) return null;
+    if (!raw) {
+      memoryLibraryCacheByWs[ws] = null;
+      return null;
+    }
+    if (memoryLibraryCacheByWs[ws]) return memoryLibraryCacheByWs[ws];
     const parsed = JSON.parse(raw) as Partial<LibraryCacheData>;
     if (parsed && Array.isArray(parsed.threads)) {
       memoryLibraryCacheByWs[ws] = {
@@ -716,6 +720,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
 
     try {
       await fetch(getApiUrl(`/api/threads/${id}`), { method: "DELETE" });
+      invalidateThreadCache(id);
       fetchThreads();
       toast.success("Book deleted successfully");
     } catch {
@@ -740,6 +745,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed");
+      invalidateThreadCache(thread.id);
       fetchThreads();
       toast.success(
         `Translations cleared for ${data.chapters_affected} chapters`
@@ -759,6 +765,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed");
+      invalidateThreadCache(thread.id);
       fetchThreads();
       if (data.reset > 0) {
         toast.success(
@@ -852,6 +859,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `${label} failed`);
+      invalidateThreadCache(thread.id);
       await fetchThreads();
 
       const message = `${label} finished. Scanned: ${data.chapters_scanned}, Updated: ${data.chapters_updated}, Deleted: ${data.chapters_deleted}, Removed lines: ${data.lines_removed}`;

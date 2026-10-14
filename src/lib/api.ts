@@ -43,6 +43,55 @@ export function clearWorkspaceSessionCache(): void {
   }
 }
 
+/**
+ * Bersihkan cache sessionStorage untuk daftar Library, metadata Thread,
+ * dan konten Chapter setelah terjadi mutasi (import, hapus, edit, sinkronisasi glosarium,
+ * atau perbaikan fidelity) agar pengguna tidak pernah melihat teks/status basi.
+ */
+export function invalidateThreadCache(
+  threadId?: number | string | null,
+  chapterId?: number | string | null
+): void {
+  try {
+    const ws = getActiveWorkspace();
+    sessionStorage.removeItem(`readomni_library_cache_v1_${ws}`);
+    sessionStorage.removeItem("readomni_library_cache_v1");
+
+    if (threadId !== undefined && threadId !== null && threadId !== "") {
+      const tid = String(threadId);
+      sessionStorage.removeItem(`readomni_thread_cache_${ws}_${tid}`);
+      sessionStorage.removeItem(`readomni_thread_cache_${tid}`);
+
+      if (chapterId !== undefined && chapterId !== null && chapterId !== "") {
+        const cid = String(chapterId);
+        sessionStorage.removeItem(
+          `readomni_chapter_cache_${ws}_${tid}_${cid}`
+        );
+        sessionStorage.removeItem(`readomni_chapter_cache_${tid}_${cid}`);
+        sessionStorage.removeItem(`readomni_ch_cache_${ws}_${tid}_${cid}`);
+        sessionStorage.removeItem(`readomni_ch_cache_${tid}_${cid}`);
+      } else {
+        const prefixes = [
+          `readomni_chapter_cache_${ws}_${tid}_`,
+          `readomni_chapter_cache_${tid}_`,
+          `readomni_ch_cache_${ws}_${tid}_`,
+          `readomni_ch_cache_${tid}_`,
+        ];
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && prefixes.some((p) => k.startsWith(p))) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach((k) => sessionStorage.removeItem(k));
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function getWorkspaceHeaders(): Record<string, string> {
   return {
     "X-Workspace": getActiveWorkspace(),

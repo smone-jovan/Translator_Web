@@ -18,7 +18,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiUrl, getActiveWorkspace } from "@/lib/api";
+import { getApiUrl, getActiveWorkspace, invalidateThreadCache } from "@/lib/api";
 import { renderMarkdown, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { ThreadDetail, ChapterContent } from "./types";
@@ -154,6 +154,7 @@ export default function ChapterReader({
         }
       );
       if (!res.ok) throw new Error("Gagal mengabaikan");
+      invalidateThreadCache(thread.id, chapterContent.id);
       toast.success("Peringatan fidelity berhasil diabaikan");
       if (setChapterContent) {
         setChapterContent((prev) =>
@@ -179,6 +180,7 @@ export default function ChapterReader({
         }
       );
       if (!res.ok) throw new Error("Gagal");
+      invalidateThreadCache(thread.id, chapterContent.id);
       toast.success("Bab telah masuk antrean perbaikan terjemahan");
       if (setChapterContent) {
         setChapterContent((prev) =>
@@ -215,6 +217,7 @@ export default function ChapterReader({
       if (!res.ok) throw new Error("Gagal menyinkronkan");
       const data = await res.json();
       if (data.content_translated) {
+        invalidateThreadCache(thread.id, chapterContent.id);
         if (setChapterContent) {
           setChapterContent((prev) =>
             prev

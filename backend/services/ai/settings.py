@@ -9,23 +9,41 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
         return requested_model
 
     provider = getattr(gs, "llm_provider", "lm_studio")
+    local_lm_model = getattr(gs, "lm_model", None)
+
     if provider == "gemini":
-        if requested_model and ("gemini" in requested_model.lower() or "gemma" in requested_model.lower()):
+        saved_gemini = getattr(gs, "gemini_model", None) or "gemini-2.5-flash"
+        if (
+            requested_model
+            and requested_model != local_lm_model
+            and ("gemini" in requested_model.lower() or "gemma" in requested_model.lower())
+        ):
             return requested_model
-        return getattr(gs, "gemini_model", None)
+        return saved_gemini
+
     if provider == "openai":
-        if requested_model and any(x in requested_model.lower() for x in ["gpt", "o1", "o3", "openai"]):
+        saved_openai = getattr(gs, "openai_model", None) or "gpt-4o-mini"
+        if (
+            requested_model
+            and requested_model != local_lm_model
+            and any(
+                x in requested_model.lower()
+                for x in ["gpt", "o1", "o3", "o4", "chatgpt", "openai"]
+            )
+        ):
             return requested_model
-        return getattr(gs, "openai_model", None)
+        return saved_openai
+
     if provider == "openrouter":
         saved_or_model = getattr(gs, "openrouter_model", None) or "deepseek/deepseek-chat"
         # Ignore local LM Studio model names that lack an 'author/model' slash or match gs.lm_model
-        if requested_model and "/" in requested_model and requested_model != getattr(gs, "lm_model", None):
+        if requested_model and "/" in requested_model and requested_model != local_lm_model:
             return requested_model
         return saved_or_model
+
     if requested_model:
         return requested_model
-    return getattr(gs, "lm_model", None)
+    return local_lm_model
 
 
 def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None = None) -> str:

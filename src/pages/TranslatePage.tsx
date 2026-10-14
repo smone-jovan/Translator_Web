@@ -19,7 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { toast } from "sonner";
 import { TocImportModal, type TocChapter } from "@/components/TocImportModal";
 
@@ -344,6 +344,7 @@ export default function TranslatePage({
 
       const data = await res.json();
       if (data.thread_id) {
+        invalidateThreadCache(data.thread_id);
         setInputText("");
         onOpenThread?.(data.thread_id);
       }
@@ -367,6 +368,7 @@ export default function TranslatePage({
       });
       if (res.ok) {
         const data = await res.json();
+        invalidateThreadCache(data.thread_id);
         onOpenThread?.(data.thread_id);
       } else {
         toast.error("Failed to upload EPUB.");

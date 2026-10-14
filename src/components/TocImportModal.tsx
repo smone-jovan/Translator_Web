@@ -13,7 +13,7 @@ import ListItemText from '@mui/material/ListItemText';
 import CircularProgress from '@mui/material/CircularProgress';
 import Close from '@mui/icons-material/Close';
 import { Trash2 } from 'lucide-react';
-import { getApiUrl } from '@/lib/api';
+import { getApiUrl, invalidateThreadCache } from '@/lib/api';
 import { toast } from 'sonner';
 
 export interface TocChapter {
@@ -80,6 +80,7 @@ export function TocImportModal({ open, onOpenChange, novelTitle, chapters: initi
       if (!res.ok) throw new Error('Failed to import chapters');
       
       const data = await res.json();
+      invalidateThreadCache(data.thread_id);
       toast.success(`Successfully imported ${data.imported_count} chapters!`);
       onOpenChange(false);
       if (onSuccess) onSuccess(data.thread_id);

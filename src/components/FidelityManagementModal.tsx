@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { getApiUrl } from '@/lib/api';
+import { getApiUrl, invalidateThreadCache } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -152,6 +152,7 @@ export default function FidelityManagementModal({
       });
       if (!res.ok) throw new Error('Gagal mengabaikan peringatan');
       const data = await res.json();
+      invalidateThreadCache(threadId);
       toast.success(`${data.dismissed_count} peringatan berhasil ditandai beres / diabaikan`);
       await fetchIssues();
       if (onRefresh) onRefresh();
@@ -174,6 +175,7 @@ export default function FidelityManagementModal({
       });
       if (!res.ok) throw new Error('Gagal menjadwalkan terjemahan ulang');
       const data = await res.json();
+      invalidateThreadCache(threadId);
       toast.success(`${data.queued_count} bab berhasil dijadwalkan untuk diterjemahkan ulang`);
       await fetchIssues();
       if (onRefresh) onRefresh();
@@ -192,6 +194,7 @@ export default function FidelityManagementModal({
         method: 'POST',
       });
       if (!res.ok) throw new Error('Gagal mengabaikan');
+      invalidateThreadCache(threadId, chapterId);
       toast.success('Peringatan fidelity berhasil diabaikan');
       setIssues(prev => prev.filter(i => i.chapter_id !== chapterId));
       setSelectedIds(prev => {
@@ -212,6 +215,7 @@ export default function FidelityManagementModal({
         method: 'POST',
       });
       if (!res.ok) throw new Error('Gagal menjadwalkan');
+      invalidateThreadCache(threadId, chapterId);
       toast.success('Bab telah masuk antrean terjemahan ulang');
       setIssues(prev => prev.filter(i => i.chapter_id !== chapterId));
       setSelectedIds(prev => {

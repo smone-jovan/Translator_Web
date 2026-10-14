@@ -15,6 +15,7 @@ import {
   getApiUrl,
   getActiveWorkspace,
   getWorkspaceStorageKey,
+  invalidateThreadCache,
 } from "@/lib/api";
 import ExportModal from "@/components/ExportModal";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
@@ -344,7 +345,7 @@ export default function ReaderPage({
 
   const fetchThread = useCallback(
     async (opts?: { silent?: boolean; force?: boolean }) => {
-      const CACHE_KEY = `readomni_thread_cache_${threadId}`;
+      const CACHE_KEY = getWorkspaceStorageKey("readomni_thread_cache", threadId);
 
       // On silent refresh (polling), skip if tab is hidden unless forced
       if (opts?.silent && !opts?.force && document.hidden) return;
@@ -553,7 +554,7 @@ export default function ReaderPage({
 
   // Initial Load — parallel fetch with sessionStorage fast-restore
   useEffect(() => {
-    const CACHE_KEY = `readomni_thread_cache_${threadId}`;
+    const CACHE_KEY = getWorkspaceStorageKey("readomni_thread_cache", threadId);
     const CACHE_TTL = 5 * 60 * 1000;
 
     const init = async () => {
@@ -724,6 +725,7 @@ export default function ReaderPage({
 
         // Optimistically update thread state so green dot lights up immediately
         if (chId) {
+          invalidateThreadCache(threadId, chId);
           setThread((prev) => {
             if (!prev) return prev;
             return {
@@ -764,7 +766,10 @@ export default function ReaderPage({
     const ch = thread.chapters[selectedChapterIdx];
     if (!ch) return;
 
-    const CH_CACHE_KEY = `readomni_chapter_cache_${threadId}_${ch.id}`;
+    const CH_CACHE_KEY = getWorkspaceStorageKey(
+      "readomni_chapter_cache",
+      `${threadId}_${ch.id}`
+    );
 
     // Prevent re-fetching ONLY if we already have valid chapterContent AND id matches AND translation_status matches
     if (
@@ -1101,19 +1106,12 @@ export default function ReaderPage({
         { method: "DELETE" }
       );
       if (res.ok) {
-        sessionStorage.removeItem(`readomni_thread_cache_${threadId}`);
-        sessionStorage.removeItem(`readomni_ch_cache_${threadId}_${chapterId}`);
-        sessionStorage.removeItem(
-          getWorkspaceStorageKey(
-            "readomni_ch_cache",
-            `${threadId}_${chapterId}`
-          )
-        );
+        invalidateThreadCache(threadId, chapterId);
         setSelectedChapterIdx((prev) =>
           prev !== null && prev > 0 ? prev - 1 : prev
         );
         toast.success("Chapter deleted");
-        await fetchThread();
+        await fetchThread({ force: true });
       }
     } catch {
       toast.error("Failed to delete chapter");
@@ -1237,9 +1235,29 @@ export default function ReaderPage({
         }
       );
       if (!res.ok) throw new Error("Failed to save translation");
-      await fetchThread();
+      const updatedChapter: ChapterContent = {
+        ...chapterContent,
+        content_translated: translatedText,
+        translation_status: "done",
+      };
+      setChapterContent(updatedChapter);
+      invalidateThreadCache(threadId, chapterContent.id);
+      try {
+        sessionStorage.setItem(
+          getWorkspaceStorageKey(
+            "readomni_chapter_cache",
+            `${threadId}_${chapterContent.id}`
+          ),
+          JSON.stringify(updatedChapter)
+        );
+      } catch {
+        /* ignore quota */
+      }
+      toast.success("Translation saved");
+      await fetchThread({ force: true });
     } catch (err) {
       console.error("Failed to save:", err);
+      toast.error("Failed to save translation");
     }
   };
 
@@ -1288,10 +1306,11 @@ export default function ReaderPage({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `${label} failed`);
-      await fetchThread();
+      invalidateThreadCache(threadId);
+      await fetchThread({ force: true });
 
-      const message = `${label} finished. Scanned: ${data.chapters_scanned}, Updated: ${data.chapters_updated}, Deleted: ${data.chapters_deleted}, Removed lines: ${data.lines_removed}`;
-      if (data.chapters_updated > 0 || data.chapters_deleted > 0) {
+      const message = `${label}: ${data.chapters_updated}/${data.chapters_scanned} chapters updated (${data.lines_removed} lines removed).`;
+      if (data.chapters_updated > 0 || (data.chapters_deleted && data.chapters_deleted > 0)) {
         toast.success(message);
       } else {
         toast.info(message);

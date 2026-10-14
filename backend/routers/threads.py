@@ -887,12 +887,13 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
 
         if is_truncated_mid_sentence(trans):
             chapter.content_translated = None
-            # Preserve translated title - only reset content
+            # Preserve translated title - only reset content & stale fidelity warning
             chapter.translation_status = "idle"
+            chapter.fidelity_warning = None
             reset_count += 1
 
     db.commit()
-    return {"reset": reset_count}
+    return {"reset": reset_count, "reset_count": reset_count}
 
 
 @router.get("/threads/{thread_id}/fidelity-issues", response_model=ThreadFidelityAuditOut)
@@ -905,15 +906,24 @@ def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
 
     from services.fidelity_checker import verify_translation_fidelity, is_truncated_mid_sentence
 
+    total_chapters = (
+        db.execute(select(func.count(Chapter.id)).where(Chapter.thread_id == thread_id)).scalar()
+        or 0
+    )
+
     chapters_stmt = (
         select(Chapter)
-        .where(Chapter.thread_id == thread_id)
+        .where(
+            Chapter.thread_id == thread_id,
+            Chapter.fidelity_warning.is_not(None),
+            func.length(func.trim(Chapter.fidelity_warning)) > 0,
+        )
         .order_by(Chapter.order)
     )
-    all_chapters = db.execute(chapters_stmt).scalars().all()
+    flagged_chapters = db.execute(chapters_stmt).scalars().all()
 
     issues: list[ChapterFidelityIssueOut] = []
-    for ch in all_chapters:
+    for ch in flagged_chapters:
         warning_str = (ch.fidelity_warning or "").strip()
         if not warning_str:
             continue
@@ -980,7 +990,7 @@ def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
 
     return ThreadFidelityAuditOut(
         thread_id=thread_id,
-        total_chapters=len(all_chapters),
+        total_chapters=total_chapters,
         flagged_chapters_count=len(issues),
         issues=issues,
     )
@@ -1114,21 +1124,27 @@ async def delete_all_translations(thread_id: int, db: Session = Depends(get_db))
     ch_ids_stmt = select(Chapter.id).where(Chapter.thread_id == thread_id)
     db.execute(delete(TranslationSegment).where(TranslationSegment.chapter_id.in_(ch_ids_stmt)))
 
-    # Bulk update chapters to clear translations
+    # Bulk update chapters to clear translations and stale fidelity warnings
     result = db.execute(
         update(Chapter)
         .where(Chapter.thread_id == thread_id)
-        .where((Chapter.content_translated != None) | (Chapter.title_translated != None) | (Chapter.translation_status != "idle"))
+        .where(
+            (Chapter.content_translated != None)
+            | (Chapter.title_translated != None)
+            | (Chapter.translation_status != "idle")
+            | (Chapter.fidelity_warning != None)
+        )
         .values(
             content_translated=None,
             title_translated=None,
-            translation_status="idle"
+            translation_status="idle",
+            fidelity_warning=None,
         )
     )
     affected = result.rowcount
     db.commit()
 
-    return {"chapters_affected": affected}
+    return {"status": "ok", "chapters_affected": affected, "cleared_chapters": affected}
 
 
 @router.delete("/threads/{thread_id}/chapters/{chapter_id}")

@@ -22,7 +22,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import RelationshipGraph from "@/components/RelationshipGraph";
@@ -119,6 +119,7 @@ export default function ContextLibraryPage() {
       );
       if (!res.ok) throw new Error("Gagal menyinkronkan glosarium");
       const data = await res.json();
+      invalidateThreadCache(selectedThreadId);
       toast.success(
         `Glosarium berhasil disinkronkan ke ${data.chapters_updated} dari ${data.total_chapters} bab! (0 token)`
       );

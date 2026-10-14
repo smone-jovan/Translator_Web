@@ -204,6 +204,13 @@ export default function BulkFetchModal({
     }
   }, [isOpen, chapters, hasInitialized, initialTab, anchorChapter]);
 
+  useEffect(() => {
+    if (isOpen && hasInitialized) {
+      const clampedRange = Math.min(range, Math.max(missingChapters.length, 1));
+      setSelectedIds(missingChapters.slice(0, clampedRange).map((c) => c.id));
+    }
+  }, [missingChapters.length, isOpen, hasInitialized]);
+
   const handleRangeChange = (_: any, newValue: number | number[]) => {
     const val = newValue as number;
     setRange(val);
@@ -226,7 +233,7 @@ export default function BulkFetchModal({
 
   const handleStartMissingFetch = async () => {
     if (selectedIds.length === 0) {
-      alert("Please select at least 1 chapter to fetch!");
+      toast.error("Pilih minimal 1 bab kosong terlebih dahulu!");
       return;
     }
     setIsStarting(true);
@@ -241,7 +248,7 @@ export default function BulkFetchModal({
   const handleStartCrawl = async () => {
     const effectiveCustomUrl = customUrl.trim();
     if (!anchorChapter && !effectiveCustomUrl) {
-      alert(
+      toast.error(
         "Silakan masukkan link URL awal chapter atau pilih chapter dengan URL sumber."
       );
       return;
