@@ -345,7 +345,10 @@ export default function ReaderPage({
 
   const fetchThread = useCallback(
     async (opts?: { silent?: boolean; force?: boolean }) => {
-      const CACHE_KEY = getWorkspaceStorageKey("readomni_thread_cache", threadId);
+      const CACHE_KEY = getWorkspaceStorageKey(
+        "readomni_thread_cache",
+        threadId
+      );
 
       // On silent refresh (polling), skip if tab is hidden unless forced
       if (opts?.silent && !opts?.force && document.hidden) return;
@@ -1310,7 +1313,10 @@ export default function ReaderPage({
       await fetchThread({ force: true });
 
       const message = `${label}: ${data.chapters_updated}/${data.chapters_scanned} chapters updated (${data.lines_removed} lines removed).`;
-      if (data.chapters_updated > 0 || (data.chapters_deleted && data.chapters_deleted > 0)) {
+      if (
+        data.chapters_updated > 0 ||
+        (data.chapters_deleted && data.chapters_deleted > 0)
+      ) {
         toast.success(message);
       } else {
         toast.info(message);

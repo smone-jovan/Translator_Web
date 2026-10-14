@@ -166,12 +166,12 @@ export default function BookmarksPage({
                     <div className="flex-1 min-w-0 pr-2">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[var(--primary)]/10 text-[var(--primary)] shrink-0 font-mono">
-                          Bab {ch.order}
+                          Bab {ch.order + 1}
                         </span>
                         <h3 className="font-semibold text-xs sm:text-sm truncate group-hover:text-[var(--primary)] transition-colors text-[var(--foreground)]">
                           {ch.title_translated ||
                             ch.title_original ||
-                            `Chapter ${ch.order}`}
+                            `Chapter ${ch.order + 1}`}
                         </h3>
                       </div>
                       {ch.title_original && (

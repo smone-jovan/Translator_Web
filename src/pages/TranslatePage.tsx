@@ -317,10 +317,13 @@ export default function TranslatePage({
         : getApiUrl("/api/translate");
       const body: Record<string, string | number> = isUrl
         ? { url: inputText.trim() }
-        : { text: inputText.trim() };
+        : {
+            text: inputText.trim(),
+            ...(selectedModel ? { model: selectedModel } : {}),
+          };
 
       if (selectedThreadId !== "new") {
-        body.thread_id = parseInt(selectedThreadId);
+        body.thread_id = parseInt(selectedThreadId, 10);
       }
 
       const res = await fetch(endpoint, {

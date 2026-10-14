@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from database import GlobalSetting
 from services.ai.factory import AIProviderFactory
+from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.scrapers.base import ScrapedNovelMetadata
 from services.scrapers.novel_updates import NovelUpdatesAdapter
 from services.scrapers.sfacg import SFACGAdapter
@@ -23,11 +24,17 @@ class MetadataScraperEngine:
             "novalpie": NovalpieAdapter(),
         }
 
-    async def clean_title_with_ai(self, raw_title: str, base_url: str) -> str:
-        """Use local LLM to clean up raw Chinese titles."""
+    async def clean_title_with_ai(
+        self,
+        raw_title: str,
+        base_url: str,
+        model: str | None = None,
+        db_session: Session | None = None,
+    ) -> str:
+        """Use active LLM provider to clean up raw novel titles."""
         if not raw_title:
             return ""
-            
+
         sys_prompt = (
             "You are an expert Chinese web novel database assistant.\n"
             "Your task is to take a raw, messy Chinese novel title (which may contain extra words, descriptive text, "
@@ -40,9 +47,9 @@ class MetadataScraperEngine:
             "Example Output: 我怎么可能是圣女？"
         )
         user_prompt = f"Please clean this title: {raw_title}"
-        
+
         try:
-            provider = AIProviderFactory.get_provider(base_url=base_url)
+            provider = AIProviderFactory.get_provider(base_url=base_url, model=model, db_session=db_session)
             messages = [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt}
@@ -53,7 +60,7 @@ class MetadataScraperEngine:
                 return cleaned_title
         except Exception as e:
             print(f"⚠️ [Engine] Failed to clean title using AI: {e}. Falling back to original.")
-            
+
         return raw_title
 
     async def scrape_candidates(
@@ -67,13 +74,15 @@ class MetadataScraperEngine:
         """
         Coordinates title cleaning and triggers the chosen scraper adapter to return candidates.
         """
-        # 1. Resolve base_url for AI title cleaning
+        # 1. Resolve base_url and active_model for AI title cleaning
         lm_url = "http://localhost:1234"
+        active_model = None
         if db_session:
             gs_stmt = select(GlobalSetting)
             gs = db_session.execute(gs_stmt).scalar_one_or_none()
             if gs:
-                lm_url = gs.lm_url
+                lm_url = resolve_active_base_url(gs)
+                active_model = resolve_active_model(gs)
 
         # 2. Check source bypass/override based on query content
         if source == "novalpie" or ("novalpie.cc" in query):
@@ -82,18 +91,18 @@ class MetadataScraperEngine:
             active_source = "sfacg"
         else:
             active_source = "novelupdates"
-        
+
         # 3. Clean query title if not a direct URL/ID
         cleaned_query = query
         if active_source == "novelupdates" and not query.startswith(("http://", "https://")):
-            cleaned_query = await self.clean_title_with_ai(query, lm_url)
+            cleaned_query = await self.clean_title_with_ai(query, lm_url, model=active_model, db_session=db_session)
             print(f"✨ [Engine] Raw query: '{query}' -> Cleaned query: '{cleaned_query}'")
 
         # 4. Trigger active adapter
         adapter = self.adapters.get(active_source)
         if not adapter:
             return []
-            
+
         return await adapter.scrape_candidates(cleaned_query, search_by=search_by, include_cover=include_cover)
 
     async def scrape(
@@ -107,13 +116,15 @@ class MetadataScraperEngine:
         """
         Coordinates title cleaning and triggers the chosen scraper adapter.
         """
-        # 1. Resolve base_url for AI title cleaning
+        # 1. Resolve base_url and active_model for AI title cleaning
         lm_url = "http://localhost:1234"
+        active_model = None
         if db_session:
             gs_stmt = select(GlobalSetting)
             gs = db_session.execute(gs_stmt).scalar_one_or_none()
             if gs:
-                lm_url = gs.lm_url
+                lm_url = resolve_active_base_url(gs)
+                active_model = resolve_active_model(gs)
 
         # 2. Check source bypass/override based on query content
         if source == "novalpie" or ("novalpie.cc" in query):
@@ -122,11 +133,11 @@ class MetadataScraperEngine:
             active_source = "sfacg"
         else:
             active_source = "novelupdates"
-        
+
         # 3. Clean query title if not a direct URL/ID
         cleaned_query = query
         if active_source == "novelupdates" and not query.startswith(("http://", "https://")):
-            cleaned_query = await self.clean_title_with_ai(query, lm_url)
+            cleaned_query = await self.clean_title_with_ai(query, lm_url, model=active_model, db_session=db_session)
             print(f"✨ [Engine] Raw query: '{query}' -> Cleaned query: '{cleaned_query}'")
 
         # 4. Trigger active adapter

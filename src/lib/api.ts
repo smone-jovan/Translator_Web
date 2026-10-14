@@ -64,9 +64,7 @@ export function invalidateThreadCache(
 
       if (chapterId !== undefined && chapterId !== null && chapterId !== "") {
         const cid = String(chapterId);
-        sessionStorage.removeItem(
-          `readomni_chapter_cache_${ws}_${tid}_${cid}`
-        );
+        sessionStorage.removeItem(`readomni_chapter_cache_${ws}_${tid}_${cid}`);
         sessionStorage.removeItem(`readomni_chapter_cache_${tid}_${cid}`);
         sessionStorage.removeItem(`readomni_ch_cache_${ws}_${tid}_${cid}`);
         sessionStorage.removeItem(`readomni_ch_cache_${tid}_${cid}`);

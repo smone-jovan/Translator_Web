@@ -18,7 +18,11 @@ import {
   BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiUrl, getActiveWorkspace, invalidateThreadCache } from "@/lib/api";
+import {
+  getApiUrl,
+  getActiveWorkspace,
+  invalidateThreadCache,
+} from "@/lib/api";
 import { renderMarkdown, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { ThreadDetail, ChapterContent } from "./types";

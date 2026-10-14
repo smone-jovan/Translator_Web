@@ -770,17 +770,17 @@ class ContextEngine:
 
         source_lang = ContextEngine.detect_source_language(original_text)
         sys_prompt = build_glossary_extraction_prompt(target_lang, source_lang=source_lang)
-        
+
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
             sample_size = gs.extract_sample_size if gs else 1000
-            
-            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model)
+
+            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model, db_session=db)
             messages = [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:sample_size]}"},
             ]
-            
+
             response = await provider.chat_completion(messages=messages, temperature=0.2)
             # Use existing logic to save
             ContextEngine.auto_save_glossary(db, thread_id, response)
@@ -789,36 +789,46 @@ class ContextEngine:
             print(f"[WARN] [EXTRACT] AI glossary extraction failed: {e}")
 
     @staticmethod
-    async def extract_relationships_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None, target_lang: str = "English"):
+    async def extract_relationships_pass(
+        db: Session,
+        thread_id: int,
+        original_text: str,
+        lm_url: str,
+        model: str | None = None,
+        target_lang: str = "English",
+        max_input_chars: int | None = None,
+    ):
         """Dedicated pass to extract character relationships from source text."""
         from services.ai.factory import AIProviderFactory
         from database import GlobalSetting, CharacterRelationship
         from sqlalchemy import select
         import json
-        import re
 
         source_lang = ContextEngine.detect_source_language(original_text)
         sys_prompt = build_relationship_extraction_prompt(target_lang, source_lang=source_lang)
 
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
-            sample_size = gs.extract_sample_size if gs else 1000
+            sample_limit = max_input_chars if max_input_chars is not None else (gs.extract_sample_size if gs else 1000)
 
-            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model)
+            provider = AIProviderFactory.get_provider(base_url=lm_url, model=model, db_session=db)
             messages = [
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": f"Extract relationships from this text:\n\n{original_text[:sample_size]}"},
+                {"role": "user", "content": f"Extract relationships from this text:\n\n{original_text[:sample_limit]}"},
             ]
 
             response = await provider.chat_completion(messages=messages, temperature=0.1)
 
-            # Clean response to find JSON array
-            json_str = response.strip()
-            # If wrapped in markdown block, extract it
-            if json_str.startswith("```json"):
-                json_str = json_str.split("```json")[1].split("```")[0].strip()
-            elif json_str.startswith("```"):
-                json_str = json_str.split("```")[1].split("```")[0].strip()
+            # Strip thinking blocks (<think> / <thought>) and markdown fences before JSON parsing
+            cleaned = ContextEngine.strip_thinking_blocks(response or "").strip()
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+            start_idx = cleaned.find("[")
+            end_idx = cleaned.rfind("]")
+            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                json_str = cleaned[start_idx : end_idx + 1]
+            else:
+                json_str = cleaned
 
             relationships_data = json.loads(json_str)
 
@@ -828,13 +838,15 @@ class ContextEngine:
 
             new_count = 0
             for item in relationships_data:
+                if not isinstance(item, dict):
+                    continue
                 if "source" not in item or "target" not in item or "type" not in item:
                     continue
 
-                src = item["source"].strip()
-                tgt = item["target"].strip()
-                rel_type = item["type"].strip()
-                notes = item.get("notes", "").strip()
+                src = str(item["source"] or "").strip()
+                tgt = str(item["target"] or "").strip()
+                rel_type = str(item["type"] or "").strip()
+                notes = str(item.get("notes") or "").strip()
 
                 if not src or not tgt or src == tgt:
                     continue
@@ -867,5 +879,7 @@ class ContextEngine:
             return new_count
 
         except Exception as e:
+            print(f"[WARN] [RELATIONSHIPS] AI relationship extraction failed: {e}")
+            return 0
             print(f"[WARN] [RELATIONSHIPS] Extraction failed: {e}")
             return 0

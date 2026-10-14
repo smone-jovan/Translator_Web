@@ -175,9 +175,10 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
         if not thread:
             raise HTTPException(404, "Thread not found")
 
-        max_order = db.execute(
+        max_order_val = db.execute(
             select(func.max(Chapter.order)).where(Chapter.thread_id == thread.id)
-        ).scalar() or 0
+        ).scalar()
+        max_order = -1 if max_order_val is None else max_order_val
     else:
         title = req.title or "Imported Novel"
         author = ""

@@ -12,7 +12,7 @@ import json
 import asyncio
 
 from sqlalchemy import select, func
-from database import get_db, LorebookEntry, Chapter, SessionLocal, GlobalSetting, get_db_workspace, make_workspace_key
+from database import get_db, LorebookEntry, Chapter, Thread, SessionLocal, GlobalSetting, get_db_workspace, make_workspace_key
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -32,6 +32,8 @@ class TranslateResponse(BaseModel):
     translation: str
     model_used: str
     lorebook_terms: int
+    thread_id: int | None = None
+    chapter_id: int | None = None
 
 from services.background_translator import BackgroundTranslator, translation_queues
 
@@ -100,22 +102,20 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
 
 @router.post("/translate", response_model=TranslateResponse)
 async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
-    """Translate text via LM Studio (non-streaming)."""
+    """Translate text via active AI provider (non-streaming) and persist to Thread/Chapter."""
+    if not req.text or not req.text.strip():
+        raise HTTPException(400, "Text is required")
+
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
-    
+
     ai_url = await get_lm_url(req.lm_url, db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
     selected_model = resolve_active_model(gs, req.model)
 
-    provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model)
-    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang, req.text)
+    provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model, db_session=db)
+    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang, req.text, model=selected_model)
     max_tokens = get_chapter_translation_max_tokens(gs)
-
-    lorebook_count = 0
-    if req.thread_id:
-        count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == req.thread_id)
-        lorebook_count = db.execute(count_stmt).scalar() or 0
 
     import re
     image_pattern = re.compile(r"(!\[.*?\]\(.*?\))")
@@ -133,9 +133,6 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
         translation = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
         model_used = selected_model or "unknown"
 
-        if req.thread_id:
-            ContextEngine.auto_save_glossary(db, req.thread_id, translation)
-
         always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
         clean_translation = ContextEngine.clean_final_translation(
             translation,
@@ -147,14 +144,84 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
             if img_md not in clean_translation:
                 clean_translation += f"\n\n{img_md}\n\n"
 
-        if req.thread_id:
-            clean_translation = ContextEngine.enforce_glossary_locking(db, req.thread_id, clean_translation)
+        # Derive a clean title from the first non-empty line of the input text
+        first_line = next(
+            (line.strip().lstrip("#").strip() for line in req.text.splitlines() if line.strip()),
+            "Untitled Text",
+        )[:120] or "Untitled Text"
+
+        resolved_thread_id = req.thread_id
+        resolved_chapter_id = req.chapter_id
+
+        if req.chapter_id:
+            chapter = db.execute(select(Chapter).where(Chapter.id == req.chapter_id)).scalar_one_or_none()
+            if chapter:
+                resolved_thread_id = chapter.thread_id
+                ContextEngine.auto_save_glossary(db, resolved_thread_id, translation)
+                clean_translation = ContextEngine.enforce_glossary_locking(db, resolved_thread_id, clean_translation)
+                chapter.content_translated = clean_translation
+                chapter.translation_status = "done"
+                db.commit()
+        elif req.thread_id:
+            thread = db.execute(select(Thread).where(Thread.id == req.thread_id)).scalar_one_or_none()
+            if not thread:
+                raise HTTPException(404, "Thread not found")
+            ContextEngine.auto_save_glossary(db, thread.id, translation)
+            clean_translation = ContextEngine.enforce_glossary_locking(db, thread.id, clean_translation)
+            max_order_val = db.execute(
+                select(func.max(Chapter.order)).where(Chapter.thread_id == thread.id)
+            ).scalar()
+            next_order = 0 if max_order_val is None else max_order_val + 1
+            chapter = Chapter(
+                thread_id=thread.id,
+                order=next_order,
+                title_original=first_line,
+                content_original=req.text,
+                content_translated=clean_translation,
+                translation_status="done",
+            )
+            db.add(chapter)
+            db.commit()
+            db.refresh(chapter)
+            resolved_chapter_id = chapter.id
+        else:
+            thread = Thread(
+                title=first_line,
+                original_title=first_line,
+                source_type="text",
+            )
+            db.add(thread)
+            db.flush()
+            resolved_thread_id = thread.id
+            ContextEngine.auto_save_glossary(db, thread.id, translation)
+            clean_translation = ContextEngine.enforce_glossary_locking(db, thread.id, clean_translation)
+            chapter = Chapter(
+                thread_id=thread.id,
+                order=0,
+                title_original=first_line,
+                content_original=req.text,
+                content_translated=clean_translation,
+                translation_status="done",
+            )
+            db.add(chapter)
+            db.commit()
+            db.refresh(chapter)
+            resolved_chapter_id = chapter.id
+
+        lorebook_count = 0
+        if resolved_thread_id:
+            count_stmt = select(func.count(LorebookEntry.id)).where(LorebookEntry.thread_id == resolved_thread_id)
+            lorebook_count = db.execute(count_stmt).scalar() or 0
 
         return TranslateResponse(
             translation=clean_translation,
             model_used=model_used,
             lorebook_terms=lorebook_count,
+            thread_id=resolved_thread_id,
+            chapter_id=resolved_chapter_id,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         # Log full error server-side for debugging, but don't leak internals to client
         print(f"[ERROR] Translation failed: {e}")

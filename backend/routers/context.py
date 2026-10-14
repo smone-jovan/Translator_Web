@@ -7,6 +7,7 @@ import re
 from sqlalchemy import select
 from database import get_db, GlobalSetting, Thread, Chapter
 from services.ai.factory import AIProviderFactory
+from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.context_engine import ContextEngine
 
 router = APIRouter(prefix="/api", tags=["Context"])
@@ -23,6 +24,47 @@ class ExtractedTerm(BaseModel):
     notes: str | None = None
     gender: str | None = None
 
+
+def _collect_chapter_samples(
+    db: Session,
+    thread_id: int,
+    chapter_count: int,
+    sample_size: int,
+) -> tuple[str, int]:
+    from database import UserBookmark
+
+    bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
+    bookmark = db.execute(bookmark_stmt).scalars().first()
+
+    start_order = 0
+    if bookmark:
+        last_ch = db.execute(select(Chapter).where(Chapter.id == bookmark.chapter_id)).scalar_one_or_none()
+        if last_ch:
+            start_order = last_ch.order
+
+    def _fetch_from(order_val: int):
+        stmt = (
+            select(Chapter)
+            .where(Chapter.thread_id == thread_id, Chapter.order >= order_val)
+            .order_by(Chapter.order)
+            .limit(chapter_count)
+        )
+        rows = db.execute(stmt).scalars().all()
+        parts = []
+        chars = 0
+        for ch in rows:
+            if ch.content_original:
+                sample = ch.content_original[:sample_size]
+                parts.append(f"--- Chapter {ch.order + 1}: {ch.title_original} ---\n{sample}")
+                chars += len(sample)
+        return "\n\n".join(parts), chars
+
+    full_text, total_chars = _fetch_from(start_order)
+    if not full_text and start_order > 0:
+        full_text, total_chars = _fetch_from(0)
+    return full_text, total_chars
+
+
 @router.post("/threads/{thread_id}/extract-context")
 async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
     """Analyze chapter text to extract key terms (names, locations, etc)."""
@@ -30,48 +72,14 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
     thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
-        
-    # 1. Identify starting point (last_read or first chapter)
-    from database import UserBookmark
-    bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
-    bookmark = db.execute(bookmark_stmt).scalars().first()
-    
-    start_order = 0
-    if bookmark:
-        last_ch_stmt = select(Chapter).where(Chapter.id == bookmark.chapter_id)
-        last_ch = db.execute(last_ch_stmt).scalar_one_or_none()
-        if last_ch:
-            start_order = last_ch.order
 
-    # 1.5 Get Global Settings for Defaults
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
-    
+
     chapter_count = req.chapter_count if req.chapter_count is not None else (gs.extract_chapter_count if gs else 25)
     sample_size = req.sample_size if req.sample_size is not None else (gs.extract_sample_size if gs else 1000)
 
-    # 2. Fetch up to X chapters starting from start_order
-    ch_stmt = (
-        select(Chapter)
-        .where(Chapter.thread_id == thread_id, Chapter.order >= start_order)
-        .order_by(Chapter.order)
-        .limit(chapter_count)
-    )
-    chapters = db.execute(ch_stmt).scalars().all()
-    
-    if not chapters:
-        return {"terms": []}
-
-    # 3. Combine text samples from all fetched chapters
-    text_parts = []
-    total_chars = 0
-    for ch in chapters:
-        if ch.content_original:
-            sample = ch.content_original[:sample_size]
-            text_parts.append(f"--- Chapter {ch.order + 1}: {ch.title_original} ---\n{sample}")
-            total_chars += len(sample)
-    
-    full_text = "\n\n".join(text_parts)
+    full_text, total_chars = _collect_chapter_samples(db, thread_id, chapter_count, sample_size)
     if not full_text:
         return {"terms": []}
 
@@ -104,8 +112,9 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
         f'[{{\n  "original_term": "...",\n  "translated_term": "...",\n  "notes": "...",\n  "gender": "MALE" | "FEMALE" | null\n}}]\n'
     )
     
-    ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
-    provider = AIProviderFactory.get_provider(base_url=ai_url, model=req.model)
+    ai_url = resolve_active_base_url(gs, req.lm_url)
+    selected_model = resolve_active_model(gs, req.model)
+    provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model, db_session=db)
     
     messages = [
         {"role": "system", "content": prompt},
@@ -238,56 +247,23 @@ async def extract_thread_context(thread_id: int, req: ExtractRequest, db: Sessio
 @router.post("/threads/{thread_id}/extract-relationships")
 async def extract_thread_relationships(thread_id: int, req: ExtractRequest, db: Session = Depends(get_db)):
     """Analyze chapter text to extract character relationships."""
-    from services.context_engine import ContextEngine
-
     stmt = select(Thread).where(Thread.id == thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
 
-    # 1. Identify starting point
-    from database import UserBookmark
-    bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
-    bookmark = db.execute(bookmark_stmt).scalars().first()
-
-    start_order = 0
-    if bookmark:
-        last_ch_stmt = select(Chapter).where(Chapter.id == bookmark.chapter_id)
-        last_ch = db.execute(last_ch_stmt).scalar_one_or_none()
-        if last_ch:
-            start_order = last_ch.order
-
-    # 1.5 Get Global Settings
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
 
     chapter_count = req.chapter_count if req.chapter_count is not None else (gs.extract_chapter_count if gs else 25)
     sample_size = req.sample_size if req.sample_size is not None else (gs.extract_sample_size if gs else 1000)
 
-    # 2. Fetch up to X chapters starting from start_order
-    ch_stmt = (
-        select(Chapter)
-        .where(Chapter.thread_id == thread_id, Chapter.order >= start_order)
-        .order_by(Chapter.order)
-        .limit(chapter_count)
-    )
-    chapters = db.execute(ch_stmt).scalars().all()
-
-    if not chapters:
-        return {"status": "ok", "new_count": 0}
-
-    # 3. Combine text samples
-    text_parts = []
-    for ch in chapters:
-        if ch.content_original:
-            sample = ch.content_original[:sample_size]
-            text_parts.append(f"--- Chapter {ch.order + 1}: {ch.title_original} ---\n{sample}")
-
-    full_text = "\n\n".join(text_parts)
+    full_text, _ = _collect_chapter_samples(db, thread_id, chapter_count, sample_size)
     if not full_text:
         return {"status": "ok", "new_count": 0}
 
-    ai_url = req.lm_url or (gs.lm_url if gs else "http://localhost:1234")
+    ai_url = resolve_active_base_url(gs, req.lm_url)
+    selected_model = resolve_active_model(gs, req.model)
     target_lang = gs.target_language if gs else "Indonesian"
 
     new_count = await ContextEngine.extract_relationships_pass(
@@ -295,8 +271,9 @@ async def extract_thread_relationships(thread_id: int, req: ExtractRequest, db: 
         thread_id=thread_id,
         original_text=full_text,
         lm_url=ai_url,
-        model=req.model,
-        target_lang=target_lang
+        model=selected_model,
+        target_lang=target_lang,
+        max_input_chars=len(full_text),
     )
 
     return {"status": "ok", "new_count": new_count}

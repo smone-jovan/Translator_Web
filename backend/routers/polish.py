@@ -4,9 +4,11 @@ from sqlalchemy import select
 from typing import Optional
 import asyncio
 import re
+import json
 
 from database import get_db, Thread, Chapter, GlobalSetting
 from services.ai.factory import AIProviderFactory
+from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.prompt_templates import (
     build_title_cleaning_prompt,
     build_synopsis_translation_prompt,
@@ -147,7 +149,8 @@ async def translate_titles(
     # Get server-side settings
     gs_stmt = select(GlobalSetting)
     gs = db.execute(gs_stmt).scalar_one_or_none()
-    lm_url = gs.lm_url if gs else "http://localhost:1234"
+    lm_url = resolve_active_base_url(gs)
+    active_model = resolve_active_model(gs)
     polish_mode = gs.polish_mode if gs else "soft"
     polish_soft_limit = gs.polish_soft_limit if gs else 100
 
@@ -176,7 +179,7 @@ async def translate_titles(
             sys_prompt_clean = build_title_cleaning_prompt()
             user_prompt_clean = f"Please clean this title: {thread.original_title}"
             try:
-                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
                 messages_clean = [
                     {"role": "system", "content": sys_prompt_clean},
                     {"role": "user", "content": user_prompt_clean}
@@ -195,7 +198,7 @@ async def translate_titles(
             sys_prompt_syn = build_synopsis_translation_prompt(target_lang)
             user_prompt_syn = thread.synopsis
             try:
-                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
                 messages_syn = [
                     {"role": "system", "content": sys_prompt_syn},
                     {"role": "user", "content": user_prompt_syn}
@@ -408,7 +411,7 @@ async def translate_titles(
 
             try:
                 print(f"🔄 Processing title batch {chunk_num}...")
-                provider = AIProviderFactory.get_provider(base_url=lm_url, db_session=db)
+                provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
                 messages = [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt}
@@ -450,7 +453,7 @@ async def translate_titles(
                 db.commit()
             except Exception as e:
                 print(f"❌ Batch Error at chunk {start_idx}: {e}")
-                yield f'{{"status": "error", "message": "AI Error at chunk {start_idx}: {str(e)}"}}\n'
+                yield json.dumps({"status": "error", "message": f"AI Error at chunk {start_idx}: {str(e)}"}) + "\n"
                 return
 
         # Sweep and apply volume/sequential formatting to ALL chapters in the thread that have translated titles

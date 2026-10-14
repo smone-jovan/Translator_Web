@@ -562,6 +562,40 @@ def run_txt_cleaner(thread_id: int, db: Session = Depends(get_db)):
     )
 
 
+def _reassign_bookmark_before_delete(
+    db: Session,
+    thread: Thread,
+    deleted_ids: set[int],
+    orig_orders: dict[int, int],
+) -> None:
+    """Move UserBookmark to the nearest surviving chapter before deleting false chapters."""
+    if not deleted_ids:
+        return
+    bookmark = db.execute(
+        select(UserBookmark).where(
+            UserBookmark.thread_id == thread.id,
+            UserBookmark.chapter_id.in_(deleted_ids),
+        )
+    ).scalars().first()
+    if not bookmark:
+        return
+
+    deleted_order = orig_orders.get(bookmark.chapter_id, 0)
+    surviving = [ch for ch in thread.chapters if ch.id not in deleted_ids]
+    surviving.sort(key=lambda c: orig_orders.get(c.id, c.order))
+
+    prev_candidates = [c for c in surviving if orig_orders.get(c.id, c.order) < deleted_order]
+    next_candidates = [c for c in surviving if orig_orders.get(c.id, c.order) >= deleted_order]
+    fallback_ch = (prev_candidates[-1] if prev_candidates else None) or (
+        next_candidates[0] if next_candidates else None
+    )
+    if fallback_ch:
+        bookmark.chapter_id = fallback_ch.id
+        bookmark.scroll_progress = 0.0
+    else:
+        db.delete(bookmark)
+
+
 @router.post("/threads/{thread_id}/epub-cleaner", response_model=CleanerToolResponse)
 def run_epub_cleaner(thread_id: int, db: Session = Depends(get_db)):
     """Rule-based cleaner for EPUB-imported false chapters such as TOC, ads, and micro-junk pages."""
@@ -569,9 +603,13 @@ def run_epub_cleaner(thread_id: int, db: Session = Depends(get_db)):
     if not thread:
         raise HTTPException(404, "Thread not found")
 
+    orig_orders = {ch.id: ch.order for ch in thread.chapters}
     summary = CleanerTools.run_epub_cleaner(thread)
+    deleted_set = set(summary.deleted_chapter_ids)
+    _reassign_bookmark_before_delete(db, thread, deleted_set, orig_orders)
+
     for chapter in list(thread.chapters):
-        if chapter.id in summary.deleted_chapter_ids:
+        if chapter.id in deleted_set:
             db.delete(chapter)
 
     db.commit()
@@ -677,14 +715,17 @@ def apply_cleanup(thread_id: int, db: Session = Depends(get_db)):
     thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
     if not thread:
         raise HTTPException(404, "Thread not found")
-        
+
+    orig_orders = {ch.id: ch.order for ch in thread.chapters}
     epub_summary = CleanerTools.run_epub_cleaner(thread)
     txt_summary = CleanerTools.run_txt_cleaner(thread)
-    
+    deleted_set = set(epub_summary.deleted_chapter_ids)
+    _reassign_bookmark_before_delete(db, thread, deleted_set, orig_orders)
+
     for chapter in list(thread.chapters):
-        if chapter.id in epub_summary.deleted_chapter_ids:
+        if chapter.id in deleted_set:
             db.delete(chapter)
-            
+
     db.commit()
     
     return CleanerToolResponse(
