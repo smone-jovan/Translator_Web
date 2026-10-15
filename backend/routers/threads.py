@@ -60,6 +60,7 @@ class ThreadItemOut(BaseModel):
 
 class ThreadDetail(ThreadItemOut):
     style_guide: Optional[str] = None
+    thread_context: Optional[str] = None
     chapters: List[ChapterOut]
 
 
@@ -483,6 +484,8 @@ def get_thread(thread_id: int, db: Session = Depends(get_db)):
         author=thread.author,
         chapter_count=len(ch_out),
         created_at=str(thread.created_at) if thread.created_at else None,
+        style_guide=thread.style_guide,
+        thread_context=thread.thread_context,
         chapters=ch_out,
         last_read_id=bookmark.chapter_id if bookmark else None,
         last_read_at=str(bookmark.last_read_at) if bookmark and bookmark.last_read_at else None
@@ -926,7 +929,7 @@ def fix_truncated_translations(thread_id: int, db: Session = Depends(get_db)):
         if not trans.strip() or len(orig) == 0:
             continue
 
-        if is_truncated_mid_sentence(trans):
+        if is_truncated_mid_sentence(trans, original_text=orig):
             chapter.content_translated = None
             # Preserve translated title - only reset content & stale fidelity warning
             chapter.translation_status = "idle"
@@ -973,7 +976,7 @@ def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
         trans_text = ch.content_translated or ""
 
         fidelity = verify_translation_fidelity(orig_text, trans_text, chapter_id=ch.id)
-        is_trunc = fidelity.get("is_truncated", False) or is_truncated_mid_sentence(trans_text)
+        is_trunc = fidelity.get("is_truncated", False) or is_truncated_mid_sentence(trans_text, original_text=orig_text)
         para_ratio = fidelity.get("paragraph_ratio", 0.0)
         char_ratio = fidelity.get("char_ratio", 0.0)
 
@@ -987,7 +990,7 @@ def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
             issue_types.append("empty")
 
         is_consolidated = (
-            "consolidated" in display_warning.lower() or 
+            "consolidated" in display_warning.lower() or
             (para_ratio < 0.3 and char_ratio >= 1.0 and not is_trunc)
         )
         if is_consolidated:
@@ -1002,13 +1005,27 @@ def get_thread_fidelity_issues(thread_id: int, db: Session = Depends(get_db)):
         if "Dialogue lines dropped" in display_warning:
             issue_types.append("dialogue_drop")
 
-        if not is_trunc and 0.7 <= para_ratio <= 0.95 and "dropped significantly" not in display_warning and "Critical" not in display_warning:
+        if fidelity.get("untranslated_script_chars", 0) >= 6 or "Untranslated source script" in display_warning:
+            issue_types.append("untranslated_script")
+        if fidelity.get("has_hallucination_loop", False) or "Hallucination repetition loop" in display_warning:
+            issue_types.append("hallucination_loop")
+        if "meta-commentary" in display_warning or "truncation sentinel" in display_warning:
+            issue_types.append("meta_leakage")
+
+        if not is_trunc and 0.7 <= para_ratio <= 0.95 and "dropped significantly" not in display_warning and "Critical" not in display_warning and not (fidelity.get("untranslated_script_chars", 0) >= 6 or fidelity.get("has_hallucination_loop", False)):
             issue_types.append("minor_ratio")
 
         if not issue_types:
             issue_types.append("other")
 
-        if "truncated" in issue_types or "empty" in issue_types or "severe_drop" in issue_types:
+        if (
+            "truncated" in issue_types
+            or "empty" in issue_types
+            or "severe_drop" in issue_types
+            or "untranslated_script" in issue_types
+            or "hallucination_loop" in issue_types
+            or "meta_leakage" in issue_types
+        ):
             severity = "critical"
         elif "consolidated" in issue_types or "minor_ratio" in issue_types:
             severity = "minor"
@@ -1267,12 +1284,20 @@ def update_chapter_translation(thread_id: int, chapter_id: int, body: Translatio
         
     from services.context_engine import ContextEngine
     from services.fidelity_checker import verify_translation_fidelity
-    
-    cleaned_translation = ContextEngine.clean_final_translation(body.translated_text, always_hide_thoughts=True)
-    chapter.content_translated = cleaned_translation
-    
+
+    gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+    always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
+    cleaned_translation = ContextEngine.clean_final_translation(
+        body.translated_text,
+        always_hide_thoughts=bool(always_hide_thoughts),
+    )
+    locked_translation = ContextEngine.enforce_glossary_locking(db, thread_id, cleaned_translation)
+    chapter.content_translated = locked_translation
+    if locked_translation.strip():
+        chapter.translation_status = "done"
+
     fidelity = verify_translation_fidelity(
-        chapter.content_original or "", cleaned_translation, chapter_id=chapter_id
+        chapter.content_original or "", locked_translation, chapter_id=chapter_id
     )
     if fidelity["is_suspicious"]:
         chapter.fidelity_warning = " | ".join(fidelity["warnings"]) if fidelity.get("warnings") else (
@@ -1380,19 +1405,27 @@ def toggle_chapter_bookmark(thread_id: int, chapter_id: int, db: Session = Depen
 def reapply_glossary_chapter(thread_id: int, chapter_id: int, db: Session = Depends(get_db)):
     """Terapkan ulang aturan glosarium terbaru ke satu chapter (zero token / instant sync)."""
     from services.context_engine import ContextEngine
+    from services.fidelity_checker import verify_translation_fidelity
     stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
     chapter = db.execute(stmt).scalar_one_or_none()
     if not chapter:
         raise HTTPException(404, "Chapter not found")
-    
+
     if chapter.content_translated:
         chapter.content_translated = ContextEngine.enforce_glossary_locking(db, thread_id, chapter.content_translated)
-        db.commit()
-    
+        fid = verify_translation_fidelity(chapter.content_original or "", chapter.content_translated, chapter_id=chapter.id)
+        chapter.fidelity_warning = " | ".join(fid["warnings"]) if fid.get("is_suspicious") and fid.get("warnings") else None
+
+    if chapter.title_translated:
+        chapter.title_translated = ContextEngine.enforce_glossary_locking(db, thread_id, chapter.title_translated)
+
+    db.commit()
+
     return {
         "status": "applied",
         "chapter_id": chapter_id,
-        "content_translated": chapter.content_translated
+        "content_translated": chapter.content_translated,
+        "title_translated": chapter.title_translated,
     }
 
 
@@ -1400,20 +1433,35 @@ def reapply_glossary_chapter(thread_id: int, chapter_id: int, db: Session = Depe
 def reapply_glossary_thread(thread_id: int, db: Session = Depends(get_db)):
     """Terapkan ulang aturan glosarium terbaru ke seluruh chapter dalam thread (zero token / mass sync)."""
     from services.context_engine import ContextEngine
-    stmt = select(Chapter).where(Chapter.thread_id == thread_id, Chapter.content_translated.isnot(None))
+    from services.fidelity_checker import verify_translation_fidelity
+    stmt = select(Chapter).where(
+        Chapter.thread_id == thread_id,
+        (Chapter.content_translated.isnot(None)) | (Chapter.title_translated.isnot(None))
+    )
     chapters = db.execute(stmt).scalars().all()
-    
+
     updated_count = 0
     for ch in chapters:
+        ch_updated = False
         if ch.content_translated:
             locked = ContextEngine.enforce_glossary_locking(db, thread_id, ch.content_translated)
             if locked != ch.content_translated:
                 ch.content_translated = locked
-                updated_count += 1
-    
-    if updated_count > 0:
-        db.commit()
-        
+                ch_updated = True
+            fid = verify_translation_fidelity(ch.content_original or "", ch.content_translated, chapter_id=ch.id)
+            ch.fidelity_warning = " | ".join(fid["warnings"]) if fid.get("is_suspicious") and fid.get("warnings") else None
+
+        if ch.title_translated:
+            locked_title = ContextEngine.enforce_glossary_locking(db, thread_id, ch.title_translated)
+            if locked_title != ch.title_translated:
+                ch.title_translated = locked_title
+                ch_updated = True
+
+        if ch_updated:
+            updated_count += 1
+
+    db.commit()
+
     return {
         "status": "applied",
         "thread_id": thread_id,

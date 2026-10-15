@@ -111,7 +111,7 @@ export default function FidelityManagementModal({
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const chNum = `bab ${item.chapter_order}`.toLowerCase();
+        const chNum = `bab ${item.chapter_order + 1}`.toLowerCase();
         const titleTrans = (item.title_translated || "").toLowerCase();
         const titleOrig = (item.title_original || "").toLowerCase();
         const warning = (item.fidelity_warning || "").toLowerCase();
@@ -488,7 +488,7 @@ export default function FidelityManagementModal({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mb-1">
                           <span className="font-extrabold text-xs text-foreground font-mono">
-                            Bab {item.chapter_order}
+                            Bab {item.chapter_order + 1}
                           </span>
                           <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-md">
                             {item.title_translated ||
@@ -502,9 +502,19 @@ export default function FidelityManagementModal({
                               <AlertTriangle className="w-2.5 h-2.5" />
                               {item.is_truncated
                                 ? "Kritis: Terpotong"
-                                : item.issue_types.includes("empty")
-                                  ? "Kritis: Kosong"
-                                  : "Kritis: Paragraf Anjlok"}
+                                : item.issue_types.includes(
+                                      "untranslated_script"
+                                    )
+                                  ? "Kritis: Teks Asli Bocor"
+                                  : item.issue_types.includes(
+                                        "hallucination_loop"
+                                      )
+                                    ? "Kritis: Loop Halusinasi"
+                                    : item.issue_types.includes("meta_leakage")
+                                      ? "Kritis: Meta AI Bocor"
+                                      : item.issue_types.includes("empty")
+                                        ? "Kritis: Kosong"
+                                        : "Kritis: Paragraf Anjlok"}
                             </span>
                           )}
                           {item.severity === "medium" && (

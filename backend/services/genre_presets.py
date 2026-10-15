@@ -1,18 +1,18 @@
 """
-Cultivation Rank Preset System (ADR-073).
+Cultivation Rank & Genre Preset System (ADR-073).
 
 Pre-built lorebook templates for common Chinese web novel power/rank systems.
-Users can apply a preset to seed their thread's lorebook with consistent terminology.
-Presets are ADDITIVE — they don't overwrite existing lorebook entries.
+Supports bilingual output (English & Indonesian) synchronized with GlobalSetting.target_language.
+Presets are ADDITIVE — they do not overwrite existing lorebook entries.
 """
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from database import LorebookEntry
+from database import LorebookEntry, GlobalSetting
 
 
 # ---------------------------------------------------------------------------
-# Preset Definitions
+# Preset Definitions (English Standard)
 # Each preset is a list of (original_term, translated_term, notes) tuples.
 # ---------------------------------------------------------------------------
 
@@ -63,8 +63,54 @@ CULTIVATION_XIANXIA_STANDARD = [
     ("储物戒", "Storage Ring", "Spatial ring for carrying items"),
 ]
 
+CULTIVATION_XIANXIA_INDONESIAN = [
+    # Core Cultivation Ranks (Indonesian localization)
+    ("炼气", "Pemurnian Qi", "Tahap awal kultivasi, menyerap energi spiritual alam"),
+    ("筑基", "Pembentukan Fondasi", "Membangun fondasi kultivasi tingkat lanjut"),
+    ("金丹", "Pembentukan Inti Emas", "Membentuk Inti Emas (Jin Dan) di dalam Dantian"),
+    ("元婴", "Jiwa Nascent", "Melahirkan Jiwa Nascent (Yuan Ying) di dalam Inti Emas"),
+    ("化神", "Transformasi Dewa", "Mengubah Jiwa Nascent menuju ranah ilahi"),
+    ("炼虚", "Pemurnian Kehampaan", "Memurnikan kehampaan untuk melampaui batas fana"),
+    ("合体", "Integrasi Tubuh", "Menyatukan tubuh dan jiwa menjadi satu kesatuan utuh"),
+    ("大乘", "Mahayana", "Tahap kendaraan agung, mendekati keabadian"),
+    ("渡劫", "Transendensi Tribulasi", "Bertahan dari tribulasi surgawi untuk naik ke alam abadi"),
+    # Core Concepts
+    ("修炼", "Kultivasi", "Praktik melatih energi spiritual demi mencapai kekuatan dan keabadian"),
+    ("丹田", "Dantian", "Pusat energi di perut bagian bawah tempat Qi disimpan"),
+    ("经脉", "Meridian", "Jalur saluran energi di dalam tubuh tempat mengalirnya Qi"),
+    ("灵根", "Akar Spiritual", "Bakat bawaan kultivasi yang menentukan afinitas elemen"),
+    ("灵气", "Energi Spiritual", "Energi alam semesta yang diserap untuk kultivasi"),
+    ("灵石", "Batu Roh", "Kristal energi spiritual yang digunakan sebagai mata uang dan sumber energi"),
+    ("天劫", "Tribulasi Surgawi", "Ujian petir langit sebelum menembus ranah besar"),
+    ("突破", "Terobosan", "Naik ke tingkat kultivasi berikutnya"),
+    ("瓶颈", "Kemacetan Kultivasi", "Batas penghalang yang menghambat kenaikan ranah"),
+    # Sect/Organization
+    ("宗门", "Sekte", "Organisasi atau perguruan kultivasi"),
+    ("长老", "Tetua", "Anggota senior sekte yang memiliki wewenang tinggi"),
+    ("宗主", "Ketua Sekte", "Pemimpin tertinggi sebuah sekte kultivasi"),
+    ("掌门", "Pemimpin Sekte", "Kepala perguruan atau sekte"),
+    ("老祖", "Leluhur Tua", "Pendiri atau leluhur kuno sekte yang sangat kuat"),
+    ("弟子", "Murid", "Pengikut atau pelajar di dalam sekte"),
+    ("内门弟子", "Murid Dalam", "Murid elit dengan akses ke ajaran inti sekte"),
+    ("外门弟子", "Murid Luar", "Murid reguler dengan akses dasar"),
+    ("真传弟子", "Murid Inti", "Murid warisan langsung yang dibimbing oleh Tetua atau Ketua Sekte"),
+    # Relationships
+    ("师兄", "Kakak Senior", "Saudara seperguruan laki-laki yang lebih senior (Shixiong)"),
+    ("师姐", "Kakak Senior", "Saudara seperguruan perempuan yang lebih senior (Shijie)"),
+    ("师弟", "Adik Junior", "Saudara seperguruan laki-laki yang lebih junior (Shidi)"),
+    ("师妹", "Adik Junior", "Saudara seperguruan perempuan yang lebih junior (Shimei)"),
+    ("师父", "Guru", "Guru atau mentor pembimbing kultivasi (Shifu)"),
+    ("道友", "Rekan Taois", "Sapaan sopan antar sesama kultivator"),
+    # Items
+    ("法宝", "Pusaka Sakti", "Senjata atau artefak kultivator berkekuatan magis"),
+    ("灵丹", "Pil Roh", "Pil obat yang diracik dari tanaman herbal spiritual"),
+    ("功法", "Teknik Kultivasi", "Kitab atau metode olah napas untuk menyerap energi spiritual"),
+    ("阵法", "Formasi", "Susunan formasi mantra dengan berbagai efek magis"),
+    ("灵兽", "Binatang Roh", "Makhluk atau binatang yang memiliki kekuatan spiritual"),
+    ("储物戒", "Cincin Penyimpanan", "Cincin dimensi ruang untuk menyimpan barang"),
+]
+
 CULTIVATION_WUXIA_STANDARD = [
-    # Wuxia-specific terms
     ("江湖", "Jianghu", "The martial arts world — a world of wandering fighters and honor"),
     ("武功", "Martial Arts", "Fighting skills and techniques"),
     ("内力", "Internal Energy", "Inner power cultivated through breathing and meditation"),
@@ -87,8 +133,30 @@ CULTIVATION_WUXIA_STANDARD = [
     ("秘籍", "Secret Manual", "Hidden martial arts technique scroll"),
 ]
 
+CULTIVATION_WUXIA_INDONESIAN = [
+    ("江湖", "Jianghu", "Dunia persilatan — komunitas pendekar pengembara dan kehormatan"),
+    ("武功", "Ilmu Silat", "Keahlian dan teknik bela diri"),
+    ("内力", "Tenaga Dalam", "Kekuatan batin yang dilatih melalui pernapasan dan meditasi"),
+    ("真气", "Qi Sejati", "Tenaga dalam murni tingkat tinggi"),
+    ("轻功", "Ilmu Meringankan Tubuh", "Teknik gerakan cepat dan lompatan ringan di udara (Qinggong)"),
+    ("暗器", "Senjata Rahasia", "Senjata lempar tersembunyi seperti jarum atau pisau terbang"),
+    ("穴位", "Titik Akupunktur", "Titik tekan pada jalur meridian tubuh"),
+    ("掌法", "Jurus Tapak", "Teknik bela diri menggunakan telapak tangan terbuka"),
+    ("剑法", "Jurus Pedang", "Teknik dan aliran ilmu berpedang"),
+    ("拳法", "Jurus Tinju", "Teknik pertarungan tangan kosong"),
+    ("武林", "Dunia Persilatan", "Kalangan dan masyarakat pendekar bela diri (Wulin)"),
+    ("武林盟主", "Ketua Aliansi Persilatan", "Pemimpin tertinggi aliansi dunia persilatan"),
+    ("门派", "Perguruan", "Aliran atau organisasi bela diri"),
+    ("镖局", "Biro Pengawal", "Lembaga jasa pengawalan bersenjata"),
+    ("侠客", "Pendekar", "Praktisi bela diri berjiwa kesatria"),
+    ("大侠", "Pendekar Besar", "Gelar kehormatan bagi pendekar berbudi luhur yang terkenal"),
+    ("点穴", "Totok Jalan Darah", "Teknik melumpuhkan lawan dengan menekan titik meridian"),
+    ("毒", "Racun", "Zat mematikan yang digunakan dalam pertarungan atau pembunuhan"),
+    ("解药", "Penawar Racun", "Obat penyembuh racun"),
+    ("秘籍", "Kitab Pusaka", "Gulungan atau kitab rahasia ilmu bela diri"),
+]
+
 CULTIVATION_XUANHUAN_STANDARD = [
-    # Xuanhuan power system (e.g., Battle Through the Heavens style)
     ("斗之气", "Dou Qi", "Battle energy — the fundamental power in xuanhuan worlds"),
     ("斗者", "Dou Zhe", "Dou Practitioner — entry-level fighter rank"),
     ("斗师", "Dou Shi", "Dou Master — intermediate fighter rank"),
@@ -105,8 +173,24 @@ CULTIVATION_XUANHUAN_STANDARD = [
     ("玄气", "Profound Qi", "Mysterious/dark energy variant"),
 ]
 
+CULTIVATION_XUANHUAN_INDONESIAN = [
+    ("斗之气", "Dou Qi", "Energi Tempur — kekuatan dasar di dunia xuanhuan"),
+    ("斗者", "Dou Zhe", "Praktisi Dou — tingkat petarung pemula"),
+    ("斗师", "Dou Shi", "Master Dou — tingkat petarung menengah"),
+    ("斗灵", "Dou Ling", "Roh Dou — tingkat petarung lanjut"),
+    ("斗王", "Dou Wang", "Raja Dou — tingkat petarung kuat"),
+    ("斗皇", "Dou Huang", "Kaisar Dou — tingkat petarung elit"),
+    ("斗宗", "Dou Zong", "Leluhur Dou — tingkat mendekati puncak"),
+    ("斗尊", "Dou Zun", "Yang Mulia Dou — tingkat papan atas"),
+    ("斗圣", "Dou Sheng", "Orang Suci Dou — tingkat legendaris"),
+    ("斗帝", "Dou Di", "Dewa Kaisar Dou — tingkat tertinggi"),
+    ("斗技", "Teknik Dou", "Jurus bertarung yang digerakkan oleh Dou Qi"),
+    ("异火", "Api Surgawi", "Fenomena api alam langka berkekuatan dahsyat"),
+    ("魔兽", "Binatang Buas Magis", "Monster dengan kekuatan magis bawaan"),
+    ("玄气", "Qi Mendalam", "Varian energi mistis mendalam"),
+]
+
 IMPERIAL_COURT_STANDARD = [
-    # Imperial/historical titles
     ("皇帝", "Emperor", "Supreme ruler of the empire"),
     ("皇后", "Empress", "Primary wife of the Emperor"),
     ("太后", "Empress Dowager", "Mother of the current Emperor"),
@@ -116,7 +200,6 @@ IMPERIAL_COURT_STANDARD = [
     ("丞相", "Prime Minister", "Highest-ranking official in the imperial court"),
     ("将军", "General", "Military commander"),
     ("太监", "Eunuch", "Castrated male servant of the imperial palace"),
-    # Concubine ranks (high to low)
     ("皇贵妃", "Imperial Noble Consort", "Highest concubine rank, just below Empress"),
     ("贵妃", "Noble Consort", "Senior concubine rank"),
     ("妃", "Consort", "Middle concubine rank"),
@@ -124,7 +207,6 @@ IMPERIAL_COURT_STANDARD = [
     ("贵人", "Noble Lady", "Lower concubine rank"),
     ("常在", "Attendant", "Minor concubine rank"),
     ("答应", "First Attendant", "Lowest formal concubine rank"),
-    # Court terminology
     ("朝堂", "Imperial Court", "The formal government assembly"),
     ("后宫", "Inner Palace", "The women's quarters of the imperial palace"),
     ("龙椅", "Dragon Throne", "The Emperor's throne"),
@@ -133,38 +215,59 @@ IMPERIAL_COURT_STANDARD = [
     ("侍卫", "Imperial Guard", "Personal bodyguard of royalty"),
 ]
 
+IMPERIAL_COURT_INDONESIAN = [
+    ("皇帝", "Kaisar", "Penguasa tertinggi kekaisaran"),
+    ("皇后", "Permaisuri", "Istri utama Kaisar"),
+    ("太后", "Ibu Suri", "Ibu dari Kaisar yang sedang bertahta"),
+    ("太子", "Putra Mahkota", "Pewaris resmi tahta kekaisaran"),
+    ("王爷", "Pangeran", "Bangsawan kerajaan, putra atau saudara Kaisar"),
+    ("公主", "Putri", "Anak perempuan Kaisar"),
+    ("丞相", "Perdana Menteri", "Pejabat tertinggi di istana kekaisaran"),
+    ("将军", "Jenderal", "Panglima militer kekaisaran"),
+    ("太监", "Kasim", "Pelayan istana kekaisaran"),
+    ("皇贵妃", "Selir Agung Kekaisaran", "Tingkat selir tertinggi tepat di bawah Permaisuri"),
+    ("贵妃", "Selir Mulia", "Tingkat selir senior"),
+    ("妃", "Selir Utama", "Tingkat selir menengah atas"),
+    ("嫔", "Selir Kekaisaran", "Tingkat selir menengah"),
+    ("贵人", "Wanita Mulia", "Tingkat selir rendah"),
+    ("常在", "Dayang Kehormatan", "Tingkat selir minor"),
+    ("答应", "Dayang Istana", "Tingkat selir formal terendah"),
+    ("朝堂", "Balairung Istana", "Sidang pemerintahan resmi kekaisaran"),
+    ("后宫", "Istana Dalam", "Kediaman para permaisuri dan selir Kaisar (Harem Istana)"),
+    ("龙椅", "Tahta Naga", "Singgasana Kaisar"),
+    ("圣旨", "Titah Kaisar", "Dekrit resmi dari Kaisar"),
+    ("大臣", "Menteri", "Pejabat tinggi istana yang melayani Kaisar"),
+    ("侍卫", "Pengawal Kekaisaran", "Pengawal pribadi keluarga kerajaan"),
+]
 
-# ---------------------------------------------------------------------------
-# All presets registry
-# ---------------------------------------------------------------------------
 
 PRESETS = {
     "xianxia": {
         "name": "Xianxia / Cultivation (Standard)",
         "description": "Standard cultivation rank system used in most xianxia novels. Includes Qi Refining → Foundation Establishment → Core Formation → Nascent Soul → Deity Transformation → etc.",
         "entries": CULTIVATION_XIANXIA_STANDARD,
+        "entries_id": CULTIVATION_XIANXIA_INDONESIAN,
     },
     "wuxia": {
         "name": "Wuxia / Martial Arts",
         "description": "Jianghu martial arts terminology. Includes internal energy, lightness skills, acupoints, weapons, and martial world organizations.",
         "entries": CULTIVATION_WUXIA_STANDARD,
+        "entries_id": CULTIVATION_WUXIA_INDONESIAN,
     },
     "xuanhuan": {
         "name": "Xuanhuan / High Fantasy (Battle Through the Heavens style)",
         "description": "Xuanhuan power rank system based on Dou Qi. Includes Dou Zhe → Dou Shi → Dou Wang → Dou Huang → Dou Zong → Dou Zun → Dou Saint → Dou Di.",
         "entries": CULTIVATION_XUANHUAN_STANDARD,
+        "entries_id": CULTIVATION_XUANHUAN_INDONESIAN,
     },
     "imperial": {
         "name": "Imperial Court / Historical Dynasty",
         "description": "Imperial court titles, concubine ranks, and dynasty terminology for historical/court novels.",
         "entries": IMPERIAL_COURT_STANDARD,
+        "entries_id": IMPERIAL_COURT_INDONESIAN,
     },
 }
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def list_presets() -> list[dict]:
     """Return a list of available presets with their metadata."""
@@ -174,26 +277,39 @@ def list_presets() -> list[dict]:
             "name": preset["name"],
             "description": preset["description"],
             "entry_count": len(preset["entries"]),
+            "languages": ["Indonesian", "English"],
         }
         for key, preset in PRESETS.items()
     ]
 
 
-def apply_preset(db: Session, thread_id: int, preset_key: str) -> dict:
+def apply_preset(
+    db: Session,
+    thread_id: int,
+    preset_key: str,
+    target_language: str | None = None,
+    lock_entries: bool = True,
+) -> dict:
     """
     Apply a preset to a thread's lorebook. ADDITIVE — does not overwrite existing entries.
-
+    Automatically selects Indonesian or English terminology when target_language is provided.
     Returns a summary dict with counts of added and skipped entries.
     """
     preset = PRESETS.get(preset_key)
     if not preset:
         return {"error": f"Unknown preset: {preset_key}", "added": 0, "skipped": 0}
 
+    use_indonesian = False
+    if target_language and str(target_language).strip().lower() in ("indonesian", "id", "bahasa indonesia"):
+        use_indonesian = True
+
+    entries_source = preset["entries_id"] if use_indonesian else preset["entries"]
+    resolved_lang = "Indonesian" if use_indonesian else "English"
+
     added = 0
     skipped = 0
 
-    for original_term, translated_term, notes in preset["entries"]:
-        # Check if this term already exists (case-insensitive)
+    for original_term, translated_term, notes in entries_source:
         exists_stmt = select(LorebookEntry).where(
             LorebookEntry.thread_id == thread_id,
             func.lower(func.trim(LorebookEntry.original_term)) == original_term.lower().strip()
@@ -201,7 +317,13 @@ def apply_preset(db: Session, thread_id: int, preset_key: str) -> dict:
         existing = db.execute(exists_stmt).scalars().first()
 
         if existing:
-            skipped += 1
+            if existing.is_archived:
+                existing.is_archived = False
+                if not existing.notes:
+                    existing.notes = f"{notes} (Preset: {preset['name']})"
+                added += 1
+            else:
+                skipped += 1
             continue
 
         new_entry = LorebookEntry(
@@ -209,18 +331,22 @@ def apply_preset(db: Session, thread_id: int, preset_key: str) -> dict:
             original_term=original_term,
             translated_term=translated_term,
             notes=f"{notes} (Preset: {preset['name']})",
-            is_locked=True,  # Lock preset entries to prevent auto-archival
+            is_locked=bool(lock_entries),
+            is_archived=False,
         )
         db.add(new_entry)
         added += 1
 
     if added > 0:
         db.commit()
-        print(f"[PRESET] Applied '{preset['name']}' to thread {thread_id}: {added} added, {skipped} skipped.")
+        from services.context_engine import ContextEngine
+        ContextEngine.enforce_context_limit(db, thread_id)
+        print(f"[PRESET] Applied '{preset['name']}' ({resolved_lang}) to thread {thread_id}: {added} added, {skipped} skipped.")
 
     return {
         "preset": preset["name"],
+        "language": resolved_lang,
         "added": added,
         "skipped": skipped,
-        "total_in_preset": len(preset["entries"]),
+        "total_in_preset": len(entries_source),
     }

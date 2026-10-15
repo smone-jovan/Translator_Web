@@ -3,10 +3,13 @@ import threading
 import time
 import atexit
 import asyncio
+import json
+import random
 from typing import Optional, List, Tuple, Dict, Any
 import httpx
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
 from services.security import validate_external_url, create_safe_async_client
+from services.scrapers.adaptive_dom import AdaptiveDOM
 
 _pw_thread_local = threading.local()
 _all_active_browsers = []
@@ -171,7 +174,9 @@ def _get_thread_browser():
         headless=True,
         args=[
             "--disable-blink-features=AutomationControlled",
-            "--no-sandbox"
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-infobars",
+            "--no-sandbox",
         ]
     )
     _pw_thread_local.pw = pw
@@ -180,6 +185,181 @@ def _get_thread_browser():
     with _browsers_lock:
         _all_active_browsers.append((pw, browser))
     return browser
+
+
+_BLOCKED_RESOURCE_TYPES = {"font", "media", "websocket", "manifest", "texttrack", "eventsource"}
+_BLOCKED_TRACKER_DOMAINS = (
+    "google-analytics.com", "googletagmanager.com", "doubleclick.net",
+    "facebook.net", "clarity.ms", "hm.baidu.com", "cnzz.com", "hotjar.com",
+)
+
+
+def _is_cloudflare_challenge(raw_html: str) -> bool:
+    if not raw_html:
+        return False
+    markers = (
+        "Just a moment...",
+        "cf-browser-verification",
+        "Enable JavaScript and cookies to continue",
+        "challenges.cloudflare.com/turnstile",
+        "cf-chl-widget",
+    )
+    return any(m in raw_html for m in markers)
+
+
+def _inject_scrapling_stealth_scripts(context: Any, *, block_webrtc: bool = True, hide_canvas: bool = True) -> None:
+    try:
+        script_parts = [
+            """
+            try {
+                Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+                window.chrome = window.chrome || { runtime: {}, loadTimes: function(){}, csi: function(){} };
+                Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh", "en-US", "en"] });
+                Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
+                Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
+            } catch (e) {}
+            """
+        ]
+        if block_webrtc:
+            script_parts.append(
+                """
+                try {
+                    const OrigPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+                    if (OrigPeerConnection) {
+                        window.RTCPeerConnection = function(config, constraints) {
+                            if (config && config.iceServers) { config.iceServers = []; }
+                            return new OrigPeerConnection(config, constraints);
+                        };
+                        window.RTCPeerConnection.prototype = OrigPeerConnection.prototype;
+                    }
+                } catch (e) {}
+                """
+            )
+        if hide_canvas:
+            script_parts.append(
+                """
+                try {
+                    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                    HTMLCanvasElement.prototype.toDataURL = function() {
+                        const ctx = this.getContext("2d");
+                        if (ctx && this.width > 0 && this.height > 0) {
+                            try {
+                                const imgData = ctx.getImageData(0, 0, 1, 1);
+                                imgData.data[0] = (imgData.data[0] + 1) % 256;
+                                ctx.putImageData(imgData, 0, 0);
+                            } catch (e) {}
+                        }
+                        return origToDataURL.apply(this, arguments);
+                    };
+                } catch (e) {}
+                """
+            )
+        context.add_init_script("\n".join(script_parts))
+    except Exception:
+        pass
+
+
+def _install_resource_shield(page: Any, disable_resources: bool = True) -> None:
+    if not disable_resources:
+        return
+
+    def _route_handler(route: Any) -> None:
+        try:
+            req = route.request
+            res_type = getattr(req, "resource_type", "") or ""
+            req_url = (getattr(req, "url", "") or "").lower()
+            if res_type in _BLOCKED_RESOURCE_TYPES or any(d in req_url for d in _BLOCKED_TRACKER_DOMAINS):
+                route.abort()
+                return
+        except Exception:
+            pass
+        try:
+            route.continue_()
+        except Exception:
+            pass
+
+    try:
+        page.route("**/*", _route_handler)
+    except Exception:
+        pass
+
+
+def _try_solve_cloudflare_turnstile(page: Any) -> bool:
+    clicked = False
+    try:
+        for frame in getattr(page, "frames", []):
+            frame_url = (getattr(frame, "url", "") or "").lower()
+            if any(k in frame_url for k in ("challenges.cloudflare.com", "turnstile", "cf-chl-widget")):
+                for sel in ("input[type='checkbox']", "[role='checkbox']", ".cb-lb", "#challenge-stage input", "body"):
+                    try:
+                        loc = frame.locator(sel).first
+                        if loc and loc.count() > 0:
+                            loc.click(timeout=1200, force=True)
+                            clicked = True
+                            break
+                    except Exception:
+                        continue
+
+        if not clicked:
+            for iframe_sel in (
+                "iframe[src*='challenges.cloudflare.com']",
+                "iframe[src*='turnstile']",
+                "#turnstile-wrapper iframe",
+                ".cf-turnstile iframe",
+                "#cf-turnstile",
+                ".cf-turnstile",
+            ):
+                try:
+                    el = page.query_selector(iframe_sel)
+                    if el:
+                        box = el.bounding_box()
+                        if box and box.get("width", 0) > 20 and box.get("height", 0) > 20:
+                            target_x = box["x"] + min(28.0, box["width"] * 0.2) + random.uniform(-3.0, 3.0)
+                            target_y = box["y"] + (box["height"] / 2.0) + random.uniform(-3.0, 3.0)
+                            page.mouse.move(target_x, target_y, steps=5)
+                            page.mouse.click(target_x, target_y)
+                            clicked = True
+                            break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return clicked
+
+
+def _attach_xhr_chapter_capture(page: Any, chapter_id: Optional[int] = None) -> Dict[str, str]:
+    captured: Dict[str, str] = {"title": "", "content": ""}
+
+    def _on_response(response: Any) -> None:
+        try:
+            resp_url = (getattr(response, "url", "") or "").lower()
+            if "/api/" not in resp_url or "users/me" in resp_url:
+                return
+            if chapter_id and str(chapter_id) not in resp_url and "chapter" not in resp_url:
+                return
+            ctype = (response.headers.get("content-type", "") if hasattr(response, "headers") else "").lower()
+            if "json" not in ctype:
+                return
+            data = response.json()
+            if not isinstance(data, dict):
+                return
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            if not isinstance(payload, dict):
+                return
+            body = payload.get("content") or payload.get("text") or payload.get("chapter_content") or payload.get("body")
+            if isinstance(body, str) and len(body.strip()) > 100 and "正在准备内容" not in body:
+                captured["content"] = body.strip()
+                t_val = payload.get("title") or payload.get("chapter_title") or payload.get("name")
+                if isinstance(t_val, str) and t_val.strip():
+                    captured["title"] = t_val.strip()
+        except Exception:
+            pass
+
+    try:
+        page.on("response", _on_response)
+    except Exception:
+        pass
+    return captured
 
 
 class NovalpieAdapter(BaseScraperAdapter):
@@ -502,6 +682,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                     )
+                    _inject_scrapling_stealth_scripts(context, block_webrtc=True, hide_canvas=True)
                     auth_enabled, raw_cookie, auth_token, pw_cookies = get_novalpie_auth_config(self.workspace)
                     if auth_enabled and pw_cookies:
                         try:
@@ -525,6 +706,8 @@ class NovalpieAdapter(BaseScraperAdapter):
                             print(f"⚠️ [Novalpie Auth] Init script injection failed: {se}")
                     try:
                         page = context.new_page()
+                        _install_resource_shield(page, disable_resources=True)
+                        captured_xhr = _attach_xhr_chapter_capture(page, chapter_id=chapter_id)
                         if auth_enabled:
                             def _spoof_user_profile(route):
                                 try:
@@ -563,8 +746,9 @@ class NovalpieAdapter(BaseScraperAdapter):
                         while elapsed < max_poll_seconds:
                             raw_html = page.content()
 
-                            # If actively in Cloudflare Turnstile challenge, keep polling
-                            if "Just a moment..." in raw_html or "cf-browser-verification" in raw_html:
+                            # If actively in Cloudflare Turnstile challenge, keep polling and try solving
+                            if _is_cloudflare_challenge(raw_html):
+                                _try_solve_cloudflare_turnstile(page)
                                 page.wait_for_timeout(int(poll_interval * 1000))
                                 elapsed += poll_interval
                                 continue
@@ -575,8 +759,13 @@ class NovalpieAdapter(BaseScraperAdapter):
                                     raise Exception("Novalpie 403: Gagal memperoleh kunci bab atau membutuhkan akun.")
                                 raise Exception("Novalpie rate limit atau gagal memuat konten bab.")
 
-                            # Check if real chapter content has finished decrypting
+                            # Check if real chapter content has finished decrypting or captured via XHR
                             p_title, p_content = self._parse_chapter_html(raw_html, chapter_id=chapter_id)
+                            if (not p_content or len(p_content) <= 100) and len(captured_xhr.get("content", "")) > 100:
+                                p_content = self._clean_content(captured_xhr["content"])
+                                if captured_xhr.get("title"):
+                                    p_title = captured_xhr["title"]
+
                             if len(p_content) > 100 and "正在准备内容" not in p_content and "加载中" not in p_content:
                                 print(f"⚡ [Playwright Context] Bab terdekripsi siap dalam {elapsed:.2f}s!")
                                 try:
@@ -632,26 +821,60 @@ class NovalpieAdapter(BaseScraperAdapter):
         Extracts clean chapter markdown and title from Novalpie reader DOM.
         Targets the specific chapter container (#chapter-{chapter_id}) to prevent cross-chapter bleeding,
         converts illustrations into markdown images, and strips Vue boilerplate.
+        Uses AdaptiveDOM relocation if classes have mutated.
         """
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(raw_html, "html.parser")
 
         target = None
         if chapter_id:
-            target = soup.find("div", id=f"chapter-{chapter_id}") or soup.find("div", attrs={"data-chapter-id": str(chapter_id)})
+            target = (
+                soup.find("div", id=f"chapter-{chapter_id}")
+                or soup.find("div", attrs={"data-chapter-id": str(chapter_id)})
+                or soup.find(attrs={"data-id": str(chapter_id)})
+            )
+            if target is not None:
+                AdaptiveDOM.save_signature("novalpie.cc", "chapter_content", AdaptiveDOM.compute_signature(target))
 
         if not target:
-            target = soup.find("article", class_="reader-content") or soup.find("article") or soup
+            target = (
+                AdaptiveDOM.select_one(
+                    soup,
+                    [
+                        "article.reader-content",
+                        ".reader-content",
+                        "#ChapterBody",
+                        ".chapter-content",
+                        ".novel-content",
+                        "article",
+                    ],
+                    domain="novalpie.cc",
+                    key="chapter_content",
+                    role="content",
+                    adaptive=True,
+                    auto_save=True,
+                    min_text_len=40,
+                )
+                or soup
+            )
 
-        # Extract title from h2 or title tag
         title = "Untitled"
-        h2 = target.find("h2")
+        h2 = target.find(["h2", "h1"]) if hasattr(target, "find") else None
         if h2 and h2.get_text(strip=True):
             title = h2.get_text(strip=True)
+            AdaptiveDOM.save_signature("novalpie.cc", "chapter_title", AdaptiveDOM.compute_signature(h2))
         else:
-            title_tag = soup.find("title")
-            if title_tag:
-                title = title_tag.get_text(strip=True)
+            adaptive_title_el = AdaptiveDOM.select_one(
+                soup,
+                ["h2.chapter-title", "h1.chapter-title", ".reader-title", ".ep-title", "h2", "h1", "title"],
+                domain="novalpie.cc",
+                key="chapter_title",
+                role="title",
+                adaptive=True,
+                auto_save=True,
+            )
+            if adaptive_title_el and adaptive_title_el.get_text(strip=True):
+                title = adaptive_title_el.get_text(strip=True)
 
         # Process illustrations into markdown images BEFORE decomposing wrappers
         for img in target.find_all("img"):

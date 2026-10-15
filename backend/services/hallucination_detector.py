@@ -7,6 +7,11 @@ WORD_RE = re.compile(r"[A-Za-z0-9\u00C0-\u024F\u4E00-\u9FFF]+")
 SUSPICIOUS_CHAR_RE = re.compile(r"[①-⑳⑴-⑼⓪⒈-⒛@&]")
 LATIN_RE = re.compile(r"[A-Za-z]")
 CJK_RE = re.compile(r"[\u4E00-\u9FFF]")
+PHRASE_LOOP_RE = re.compile(
+    r"\b((?:[A-Za-z0-9À-ɏ']+\s+){1,9}[A-Za-z0-9À-ɏ']+)"
+    r"(?:[\s,;—\-]+\1){3,}\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -53,6 +58,37 @@ class HallucinationDetector:
         if count >= threshold:
             matches.append(RepetitionMatch(current_original, count, start_index, end_index))
 
+        return matches
+
+    @staticmethod
+    def detect_repeated_phrases(
+        text: str,
+        min_words: int = 2,
+        max_words: int = 8,
+        threshold: int = 4,
+    ) -> list[RepetitionMatch]:
+        """Detect consecutive multi-word N-gram phrase repetition loops."""
+        if not text:
+            return []
+
+        matches: list[RepetitionMatch] = []
+        pattern = re.compile(
+            rf"\b((?:[A-Za-z0-9À-ɏ']+\s+){{{max(1, min_words - 1)},{max(1, max_words - 1)}}}[A-Za-z0-9À-ɏ']+)"
+            rf"(?:[\s,;—\-]+\1){{{max(1, threshold - 1)},}}\b",
+            re.IGNORECASE,
+        )
+        for m in pattern.finditer(text):
+            phrase = m.group(1).strip()
+            full_span = m.group(0)
+            approx_count = max(threshold, len(re.findall(re.escape(phrase), full_span, flags=re.IGNORECASE)))
+            matches.append(
+                RepetitionMatch(
+                    token=phrase,
+                    count=approx_count,
+                    start_index=m.start(),
+                    end_index=m.end(),
+                )
+            )
         return matches
 
     @staticmethod
@@ -147,6 +183,19 @@ class HallucinationDetector:
         return cleaned.strip()
 
     @staticmethod
+    def strip_phrase_repetition_loops(text: str) -> str:
+        """Collapse runaway multi-word phrase/clause repetition loops (4+ repeats of 2-10 words)."""
+        if not text:
+            return ""
+        collapsed = text
+        for _ in range(3):
+            next_val = PHRASE_LOOP_RE.sub(r"\1", collapsed)
+            if next_val == collapsed:
+                break
+            collapsed = next_val
+        return collapsed
+
+    @staticmethod
     def strip_repetitive_character_loops(text: str) -> str:
         """
         Collapse degenerate repetitive character runs (e.g. 50+ '□', '■', '•', or identical tokens)
@@ -164,12 +213,15 @@ class HallucinationDetector:
         # 3. Collapse runaway repetitive identical words (e.g. 8+ 'the the the ...')
         collapsed = re.sub(r"\b(\w+)(?:\s+\1){7,}\b", r"\1 \1 \1", collapsed, flags=re.IGNORECASE)
 
+        collapsed = HallucinationDetector.strip_phrase_repetition_loops(collapsed)
         return collapsed
 
 
     @staticmethod
     def summarize_text_audit(text: str, threshold: int = 10) -> dict:
-        matches = HallucinationDetector.detect_repeated_words(text, threshold=threshold)
+        word_matches = HallucinationDetector.detect_repeated_words(text, threshold=threshold)
+        phrase_matches = HallucinationDetector.detect_repeated_phrases(text, threshold=4)
+        matches = word_matches + phrase_matches
         return {
             "has_repetition": bool(matches),
             "repetition_matches": [

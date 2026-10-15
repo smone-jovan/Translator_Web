@@ -47,20 +47,45 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
 
 
 def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None = None) -> str:
-    """Return the base URL that belongs to the currently selected provider."""
-    if requested_url:
-        return requested_url.rstrip("/")
+    """Return the base URL that belongs to the currently selected provider, guarding cloud providers against local URLs."""
     if not gs:
-        return "http://localhost:1234"
+        return (requested_url or "http://localhost:1234").rstrip("/")
 
     provider = getattr(gs, "llm_provider", "lm_studio")
+    local_lm_url = (getattr(gs, "lm_url", None) or "http://localhost:1234").rstrip("/")
+    req_clean = requested_url.rstrip("/") if requested_url else None
+
+    def _is_local_url(u: str | None) -> bool:
+        if not u:
+            return False
+        u_low = u.lower()
+        return (
+            u.rstrip("/") == local_lm_url
+            or "localhost" in u_low
+            or "127.0.0.1" in u_low
+            or "0.0.0.0" in u_low
+        )
+
     if provider == "gemini":
+        if req_clean and not _is_local_url(req_clean) and (
+            "googleapis.com" in req_clean.lower() or "gemini" in req_clean.lower()
+        ):
+            return req_clean
         return "https://generativelanguage.googleapis.com/v1beta/openai"
+
     if provider == "openai":
+        if req_clean and not _is_local_url(req_clean):
+            return req_clean
         return (getattr(gs, "openai_url", None) or "https://api.openai.com/v1").rstrip("/")
+
     if provider == "openrouter":
+        if req_clean and not _is_local_url(req_clean) and "openrouter.ai" in req_clean.lower():
+            return req_clean
         return "https://openrouter.ai/api/v1"
-    return (getattr(gs, "lm_url", None) or "http://localhost:1234").rstrip("/")
+
+    if req_clean:
+        return req_clean
+    return local_lm_url
 
 
 def get_chapter_translation_max_tokens(gs: GlobalSetting | None = None) -> int | None:

@@ -22,6 +22,23 @@ from sqlalchemy import select, func
 from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace, get_db_workspace
 from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.engine import MetadataScraperEngine
+from services.scrapers.adaptive_dom import AdaptiveDOM
+from services.scrapers.novalpie import _is_cloudflare_challenge
+
+_DEFAULT_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,ko;q=0.6,ja;q=0.5",
+}
+
+_SPA_SHELL_RE = re.compile(
+    r'(<div[^>]+id=["\'](?:app|__nuxt|__next|root)["\'][^>]*>\\s*</div>|window\\.__NUXT__|__NEXT_DATA__)',
+    re.IGNORECASE,
+)
+
 
 router = APIRouter(prefix="/api", tags=["Scraping"])
 scraper_engine = MetadataScraperEngine()
@@ -68,13 +85,22 @@ AD_PATTERNS = re.compile(
 )
 
 
-def html_to_markdown(html: str) -> tuple[str, str]:
+def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
+    domain = urllib.parse.urlparse(url).hostname or "default" if url else "default"
     """Convert HTML to clean markdown-ish text. Returns (title, content)."""
     soup = BeautifulSoup(html, "html.parser")
 
-    # Extract title
-    title_tag = soup.find("title")
-    title = title_tag.get_text(strip=True) if title_tag else "Untitled"
+    # Extract title adaptively
+    adaptive_title = AdaptiveDOM.select_one(
+        soup,
+        ["h1", "h2", ".chapter-title", ".ep-title", ".reader-title", "title"],
+        domain=domain,
+        key="title",
+        role="title",
+        adaptive=True,
+        auto_save=bool(url),
+    )
+    title = adaptive_title.get_text(strip=True) if adaptive_title else (soup.find("title").get_text(strip=True) if soup.find("title") else "Untitled")
 
     # Remove unwanted tags
     for tag_name in STRIP_TAGS:
@@ -101,8 +127,29 @@ def html_to_markdown(html: str) -> tuple[str, str]:
         if AD_PATTERNS.search(classes) or AD_PATTERNS.search(el_id):
             el.decompose()
 
-    # Try to find main content area
-    content_el = (
+    # Try to find main content area adaptively
+    adaptive_content = AdaptiveDOM.select_one(
+        soup,
+        [
+            "article.reader-content",
+            "article",
+            ".chapter-content",
+            ".novel-content",
+            "#chapter-content",
+            "#content",
+            ".entry-content",
+            ".post-content",
+            "main",
+        ],
+        domain=domain,
+        key="content",
+        role="content",
+        adaptive=True,
+        auto_save=bool(url),
+        min_text_len=60,
+    )
+
+    content_el = adaptive_content or (
         soup.find("article")
         or soup.find("div", class_=re.compile(r"(chapter|content|entry|post|text|body)", re.I))
         or soup.find("main")
@@ -154,6 +201,87 @@ def is_domain(url: str, domain: str) -> bool:
         return host == domain or host.endswith(f".{domain}")
     except Exception:
         return False
+
+
+async def fetch_html_adaptive(
+    url: str,
+    *,
+    workspace: Optional[str] = None,
+    allow_playwright_fallback: bool = True,
+) -> tuple[str, str]:
+    validate_external_url(url)
+    primary_exc: Optional[Exception] = None
+    html_text = ""
+    final_url = url
+
+    try:
+        async with create_safe_async_client(
+            follow_redirects=True,
+            timeout=30.0,
+            headers=_DEFAULT_BROWSER_HEADERS,
+        ) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            html_text = resp.text or ""
+            final_url = str(resp.url) if getattr(resp, "url", None) else url
+    except httpx.HTTPStatusError as exc:
+        primary_exc = exc
+        if exc.response is None or exc.response.status_code not in (403, 429, 503):
+            raise
+    except httpx.HTTPError as exc:
+        primary_exc = exc
+        raise
+
+    needs_escalation = primary_exc is not None or not html_text or _is_cloudflare_challenge(html_text)
+
+    if needs_escalation:
+        try:
+            from curl_cffi.requests import AsyncSession
+            async with AsyncSession(
+                impersonate="chrome120",
+                headers=_DEFAULT_BROWSER_HEADERS,
+                timeout=25.0,
+                allow_redirects=True,
+            ) as cf_session:
+                cf_resp = await cf_session.get(url)
+                cf_final_url = str(getattr(cf_resp, "url", "") or url)
+                if cf_final_url != url:
+                    validate_external_url(cf_final_url)
+                if cf_resp.status_code == 200 and cf_resp.text and not _is_cloudflare_challenge(cf_resp.text):
+                    html_text = cf_resp.text
+                    final_url = cf_final_url
+                    needs_escalation = False
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    if not needs_escalation and html_text and _SPA_SHELL_RE.search(html_text):
+        _, probe_md = html_to_markdown(html_text, url=final_url)
+        if len(probe_md.strip()) < 50:
+            needs_escalation = True
+
+    if needs_escalation and allow_playwright_fallback:
+        try:
+            from services.scrapers.stealth_base import StealthyNovelAdapter
+            stealth = StealthyNovelAdapter(workspace=workspace, adaptive_domain=url)
+            page = await stealth.fetch_stealth_page(
+                url, solve_cloudflare=True, disable_resources=True, timeout_ms=45000
+            )
+            page_html = getattr(page, "html", "") or (page.get_all_text() if hasattr(page, "get_all_text") else "")
+            if page_html and not _is_cloudflare_challenge(page_html):
+                html_text = page_html
+                final_url = getattr(page, "url", None) or final_url
+                needs_escalation = False
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    if not html_text and primary_exc is not None:
+        raise primary_exc
+
+    return html_text, final_url
 
 
 @router.post("/scrape", response_model=ScrapeResponse)
@@ -214,17 +342,12 @@ async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Opt
         raise HTTPException(400, "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.")
 
     try:
-        async with create_safe_async_client(
-            follow_redirects=True,
-            timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-        ) as client:
-            resp = await client.get(req.url)
-            resp.raise_for_status()
-    except httpx.HTTPError as e:
+        html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
+        title, markdown = html_to_markdown(html_text, url=final_url)
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(502, f"Failed to fetch URL: {e}")
-
-    title, markdown = html_to_markdown(resp.text)
 
     if not markdown:
         raise HTTPException(422, "No content extracted from URL.")
@@ -277,16 +400,11 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             raise HTTPException(502, f"Failed to scrape sfacg chapter: {e}")
     else:
         try:
-            async with create_safe_async_client(
-                timeout=30.0,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-            ) as client:
-                resp = await client.get(req.url)
-                resp.raise_for_status()
-                title, markdown = html_to_markdown(resp.text)
+            html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
+            title, markdown = html_to_markdown(html_text, url=final_url)
         except HTTPException:
             raise
-        except httpx.HTTPError as e:
+        except Exception as e:
             raise HTTPException(502, f"Failed to fetch URL: {e}")
 
     is_vip = False

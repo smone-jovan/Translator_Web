@@ -30,15 +30,11 @@ class TOCBulkImportRequest(BaseModel):
     genres: Optional[str] = None
     chapters: List[TOCChapterInfo]
 
-async def fetch_and_extract_links(url: str, client: httpx.AsyncClient):
-    resp = await client.get(url)
-    resp.raise_for_status()
-
-    soup = BeautifulSoup(resp.text, "html.parser")
+def extract_links_from_html(html_text: str, base_url: str):
+    soup = BeautifulSoup(html_text, "html.parser")
     title_tag = soup.find("title")
     novel_title = title_tag.get_text(strip=True) if title_tag else "Untitled Novel"
 
-    base_url = str(resp.url)
     parsed_base = urllib.parse.urlparse(base_url)
 
     links = []
@@ -50,21 +46,21 @@ async def fetch_and_extract_links(url: str, client: httpx.AsyncClient):
         text = a.get_text(strip=True)
         if not text or len(text) < 2:
             continue
-            
+
         abs_url = urllib.parse.urljoin(base_url, href)
         parsed = urllib.parse.urlparse(abs_url)
-        
+
         if parsed.netloc != parsed_base.netloc:
             continue
-            
+
         if abs_url == base_url or abs_url in seen_urls:
             continue
-            
+
         raw_links.append((text, abs_url, parsed))
-        
+
         is_chapter = False
         junk_paths = ["/stag/", "/cmts/", "/lcmt/", "/fans", "/vip/c/"]
-        
+
         # 1. Path is deeper than base (e.g. /Novel/123/456/)
         if parsed.path.startswith(parsed_base.path) and len(parsed.path.rstrip('/')) > len(parsed_base.path.rstrip('/')):
             if not any(junk in parsed.path for junk in junk_paths):
@@ -83,6 +79,12 @@ async def fetch_and_extract_links(url: str, client: httpx.AsyncClient):
             seen_urls.add(abs_url)
 
     return novel_title, links, raw_links
+
+
+async def fetch_and_extract_links(url: str, client: Optional[httpx.AsyncClient] = None, workspace: Optional[str] = None):
+    from routers.scrape import fetch_html_adaptive
+    html_text, final_url = await fetch_html_adaptive(url, workspace=workspace)
+    return extract_links_from_html(html_text, final_url)
 
 def is_domain(url: str, domain: str) -> bool:
     """Check if URL host matches domain or subdomain exactly."""
@@ -132,29 +134,24 @@ async def scrape_toc(req: TOCScrapeRequest, request: Request = None):
             raise HTTPException(502, f"Failed to scrape sfacg.com TOC: {e}")
 
     try:
-        async with create_safe_async_client(
-            follow_redirects=True,
-            timeout=30.0,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-        ) as client:
-            novel_title, links, raw_links = await fetch_and_extract_links(req.url, client)
+        novel_title, links, raw_links = await fetch_and_extract_links(req.url, workspace=ws)
 
-            # If we found too few links, we might be on the summary page.
-            # Look for a dedicated TOC link (like /MainIndex/ or "点击阅读")
-            if len(links) < 50:
-                toc_url = None
-                for text, url, parsed in raw_links:
-                    if "/MainIndex/" in url or "目录" in text or "点击阅读" in text:
-                        toc_url = url
-                        break
+        # If we found too few links, we might be on the summary page.
+        # Look for a dedicated TOC link (like /MainIndex/ or "点击阅读")
+        if len(links) < 50:
+            toc_url = None
+            for text, url, parsed in raw_links:
+                if "/MainIndex/" in url or "目录" in text or "点击阅读" in text:
+                    toc_url = url
+                    break
 
-                if toc_url:
-                    validate_external_url(toc_url)
-                    print(f"[TOC Scraper] Found <50 links. Automatically following TOC link: {toc_url}")
-                    novel_title2, links2, _ = await fetch_and_extract_links(toc_url, client)
-                    if len(links2) > len(links):
-                        novel_title = novel_title2
-                        links = links2
+            if toc_url:
+                validate_external_url(toc_url)
+                print(f"[TOC Scraper] Found <50 links. Automatically following TOC link: {toc_url}")
+                novel_title2, links2, _ = await fetch_and_extract_links(toc_url, workspace=ws)
+                if len(links2) > len(links):
+                    novel_title = novel_title2
+                    links = links2
 
     except HTTPException:
         raise

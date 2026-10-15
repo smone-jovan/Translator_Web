@@ -423,6 +423,7 @@ export default function SettingsPage() {
   const [newGhostPinInput, setNewGhostPinInput] = useState("");
   const [showGhostPinText, setShowGhostPinText] = useState(false);
   const [ghostPinStatus, setGhostPinStatus] = useState<string | null>(null);
+  const isSettingsLoadedRef = useRef(false);
 
   const fetchGlobalSettings = useCallback(async () => {
     try {
@@ -571,6 +572,7 @@ export default function SettingsPage() {
         setNovalpieCookie(data.novalpie_cookie);
         localStorage.setItem("novalpie_cookie", data.novalpie_cookie);
       }
+      isSettingsLoadedRef.current = true;
     } catch {
       console.error("Failed to fetch server settings");
     }
@@ -727,24 +729,15 @@ export default function SettingsPage() {
   }, [ghostPin]);
 
   useEffect(() => {
+    if (!isSettingsLoadedRef.current) return;
     localStorage.setItem("target_language", targetLang);
-    // Sync to server without showing the saving indicator to avoid render cycle warning
-    const sync = async () => {
-      try {
-        await fetch(getApiUrl("/api/settings"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target_language: targetLang }),
-        });
-      } catch {
-        /* silent fail */
-      }
-    };
-    sync();
+    saveSettingsToServer({ target_language: targetLang });
   }, [targetLang]);
 
   useEffect(() => {
+    if (!isSettingsLoadedRef.current) return;
     localStorage.setItem("display_mode", displayMode);
+    saveSettingsToServer({ display_mode: displayMode });
   }, [displayMode]);
   useEffect(() => {
     localStorage.setItem("theme", theme);
@@ -1747,12 +1740,13 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-3 pt-2">
-                {[20, 50, 100, 200, 300, 500, 750, 1000].map((limit) => {
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-9 gap-3 pt-2">
+                {[20, 50, 100, 150, 200, 300, 500, 750, 1000].map((limit) => {
                   const tokenEstimates: Record<number, string> = {
                     20: "~0.5k tokens",
                     50: "~1.2k tokens",
                     100: "~2.5k tokens",
+                    150: "~3.8k tokens",
                     200: "~5.0k tokens",
                     300: "~7.5k tokens",
                     500: "~12k tokens",

@@ -79,6 +79,37 @@ def test_batch_translate_defaults_load_mode_to_global_setting(client, db_session
         assert kwargs.get("load_mode") == "hard"
 
 
+def test_translate_endpoint_saves_fidelity_warning(client, db_session):
+    from database import Chapter
+    from services.ai.base import BaseAIProviderAdapter
+
+    class MockProvider(BaseAIProviderAdapter):
+        async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+            # Return truncated translation without proper sentence-ending punctuation
+            return "Hasil terjemahan yang terpotong di tengah kalimat dan tiba-tiba dia melihat"
+
+        async def stream_chat(self, messages, temperature=0.3, max_tokens=None):
+            yield "Hasil terjemahan yang terpotong di tengah kalimat dan tiba-tiba dia melihat"
+
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=MockProvider()):
+        resp = client.post(
+            "/api/translate",
+            json={
+                "text": "Bab 1: Pertarungan di Puncak Gunung.\n\nLin En melangkah maju menghadapi musuh bebuyutannya dengan gagah berani.",
+                "target_lang": "Indonesian"
+            }
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["chapter_id"] is not None
+
+        chapter = db_session.get(Chapter, data["chapter_id"])
+        assert chapter is not None
+        assert chapter.fidelity_warning is not None
+        assert "cut off mid-sentence" in chapter.fidelity_warning
+
+
+
 def test_batch_translate_uses_global_load_mode_when_prefetch_disabled(client, db_session):
     # Arrange: prefetch is DISABLED (0), but global load_mode / prefetch_mode is "hard"
     gs = db_session.execute(select(GlobalSetting)).scalar_one_or_none()

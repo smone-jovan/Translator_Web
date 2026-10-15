@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 import json
-from database import get_db, GlobalSetting
+from database import get_db, GlobalSetting, Thread
 from services.ai.secrets import load_secrets, save_secrets, mask_secret, is_masked_secret, resolve_masked_keys
 
 router = APIRouter(prefix="/api", tags=["Settings"])
@@ -32,7 +32,7 @@ class GlobalSettingsUpdate(BaseModel):
     scraper_concurrency: int | None = None
     novalpie_auth_enabled: int | None = None
     novalpie_cookie: str | None = None
-    
+
     # Cloud LLM & API Keys Settings (ADR-029)
     llm_provider: str | None = None
     openai_url: str | None = None
@@ -57,10 +57,9 @@ class GlobalSettingsUpdate(BaseModel):
 def get_global_context(db: Session = Depends(get_db)):
     stmt = select(GlobalSetting)
     gs = db.execute(stmt).scalar_one_or_none()
-    
-    # Load keys securely from ignored .env file
+
     secrets = load_secrets()
-    
+
     return {
         "global_context": gs.global_context if gs else "",
         "lm_url": gs.lm_url if gs else "http://localhost:1234",
@@ -72,16 +71,15 @@ def get_global_context(db: Session = Depends(get_db)):
         "load_mode": gs.prefetch_mode if gs else "soft",
         "polish_mode": gs.polish_mode if gs else "soft",
         "polish_soft_limit": gs.polish_soft_limit if gs else 100,
-        "max_context_terms": gs.max_context_terms if gs else 50,
+        "max_context_terms": (gs.max_context_terms if (gs and gs.max_context_terms) else 150),
         "extract_chapter_count": gs.extract_chapter_count if gs else 25,
         "extract_sample_size": gs.extract_sample_size if gs else 1000,
-        "always_hide_thoughts": gs.always_hide_thoughts if gs else 1,
-        "chapter_token_cap_enabled": gs.chapter_token_cap_enabled if gs else 1,
+        "always_hide_thoughts": gs.always_hide_thoughts if gs is not None and gs.always_hide_thoughts is not None else 1,
+        "chapter_token_cap_enabled": gs.chapter_token_cap_enabled if gs is not None and gs.chapter_token_cap_enabled is not None else 1,
         "chapter_token_cap": gs.chapter_token_cap if gs else 22000,
         "translation_mode": gs.translation_mode if gs else "quality",
         "display_mode": getattr(gs, "display_mode", "translated") or "translated",
-        
-        # New Settings Fields
+
         "llm_provider": gs.llm_provider if gs else "lm_studio",
         "openai_url": gs.openai_url if gs else "https://api.openai.com/v1",
         "openai_model": gs.openai_model if gs else "gpt-4o",
@@ -90,7 +88,6 @@ def get_global_context(db: Session = Depends(get_db)):
         "openai_api_key": mask_secret(secrets.get("openai_api_key", "")),
         "gemini_api_key": mask_secret(secrets.get("gemini_api_key", "")),
         "openrouter_api_key": mask_secret(secrets.get("openrouter_api_key", "")),
-        # Multiple API keys
         "openai_api_keys": [mask_secret(k) for k in json.loads(gs.openai_api_keys)] if gs and gs.openai_api_keys else [],
         "openai_active_key_index": gs.openai_active_key_index if gs else 0,
         "gemini_api_keys": [mask_secret(k) for k in json.loads(gs.gemini_api_keys)] if gs and gs.gemini_api_keys else [],
@@ -121,7 +118,9 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if not gs:
         gs = GlobalSetting()
         db.add(gs)
-    
+
+    limit_changed = req.max_context_terms is not None and req.max_context_terms != gs.max_context_terms
+
     if req.lm_url is not None: gs.lm_url = req.lm_url
     if req.lm_model is not None: gs.lm_model = req.lm_model
     if req.target_language is not None: gs.target_language = req.target_language
@@ -141,21 +140,16 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.display_mode is not None: gs.display_mode = req.display_mode
     if req.scraper_concurrency is not None: gs.scraper_concurrency = max(1, min(5, req.scraper_concurrency))
     if req.novalpie_auth_enabled is not None: gs.novalpie_auth_enabled = req.novalpie_auth_enabled
-    # Keep SQLite free of cookie secrets (stored in .env only via save_secrets)
     gs.novalpie_cookie = ""
 
-    # Cloud LLM & API Keys Settings (ADR-029)
     if req.llm_provider is not None: gs.llm_provider = req.llm_provider
     if req.openai_url is not None: gs.openai_url = req.openai_url
     if req.openai_model is not None: gs.openai_model = req.openai_model
     if req.gemini_model is not None: gs.gemini_model = req.gemini_model
     if req.openrouter_model is not None: gs.openrouter_model = req.openrouter_model
-    # Only update ghost_pin if it's a real new value (not the masked placeholder)
     if req.ghost_pin is not None and not is_masked_secret(req.ghost_pin):
         gs.ghost_pin = req.ghost_pin
 
-    # Save secret keys safely to .env (ignored from git)
-    # Filter out masked placeholders so they don't overwrite real secrets
     real_openai = req.openai_api_key if (req.openai_api_key is not None and not is_masked_secret(req.openai_api_key)) else None
     real_gemini = req.gemini_api_key if (req.gemini_api_key is not None and not is_masked_secret(req.gemini_api_key)) else None
     real_openrouter = req.openrouter_api_key if (req.openrouter_api_key is not None and not is_masked_secret(req.openrouter_api_key)) else None
@@ -168,10 +162,8 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
             openrouter_api_key=real_openrouter,
             novalpie_cookie=real_cookie,
         )
-        # Clear secret from SQLite so database exports never leak secrets
         gs.novalpie_cookie = ""
 
-    # Save multiple API keys — preserve masked placeholders from existing lists without deletion
     if req.openai_api_keys is not None:
         try:
             existing_openai = json.loads(gs.openai_api_keys) if gs.openai_api_keys else []
@@ -196,6 +188,17 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
         gs.openrouter_api_keys = json.dumps(resolve_masked_keys(req.openrouter_api_keys, existing_openrouter))
     if req.openrouter_active_key_index is not None:
         gs.openrouter_active_key_index = req.openrouter_active_key_index
-    
+
     db.commit()
+
+    # Live-sync all threads' lorebook active/archived status when max_context_terms changes
+    if limit_changed or req.max_context_terms is not None:
+        try:
+            from routers.lorebook import enforce_context_limit
+            thread_ids = db.execute(select(Thread.id)).scalars().all()
+            for t_id in thread_ids:
+                enforce_context_limit(t_id, db)
+        except Exception as e:
+            print(f"[SETTINGS] Failed to re-enforce lorebook limits: {e}")
+
     return {"status": "ok"}

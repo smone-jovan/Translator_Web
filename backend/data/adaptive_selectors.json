@@ -1,0 +1,65 @@
+{
+  "novalpie.cc::chapter_content": {
+    "tag": "article",
+    "id_tokens": [],
+    "class_tokens": [
+      "reader",
+      "content"
+    ],
+    "attr_names": [],
+    "parent_tag": "[document]",
+    "parent_class_tokens": [],
+    "grandparent_tag": "",
+    "depth": 1,
+    "top_child_tags": [
+      "p",
+      "img",
+      "h2",
+      "div"
+    ],
+    "len_bucket": "medium",
+    "link_density": 0.0,
+    "p_count": 7,
+    "br_count": 0
+  },
+  "novalpie.cc::chapter_title": {
+    "tag": "h2",
+    "id_tokens": [],
+    "class_tokens": [],
+    "attr_names": [],
+    "parent_tag": "article",
+    "parent_class_tokens": [
+      "reader",
+      "content"
+    ],
+    "grandparent_tag": "[document]",
+    "depth": 2,
+    "top_child_tags": [],
+    "len_bucket": "short",
+    "link_density": 0.0,
+    "p_count": 0,
+    "br_count": 0
+  },
+  "novel-example.com::#old-missing-content": {
+    "tag": "div",
+    "id_tokens": [],
+    "class_tokens": [
+      "new",
+      "chapter",
+      "box"
+    ],
+    "attr_names": [],
+    "parent_tag": "body",
+    "parent_class_tokens": [],
+    "grandparent_tag": "html",
+    "depth": 3,
+    "top_child_tags": [
+      "p",
+      "h1"
+    ],
+    "len_bucket": "medium",
+    "link_density": 0.0,
+    "p_count": 2,
+    "br_count": 0
+  }
+}

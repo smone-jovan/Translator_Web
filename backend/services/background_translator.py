@@ -400,8 +400,8 @@ class BackgroundTranslator:
                 chunk_count = 0
                 notes_started = False
                 notes_header_pattern = re.compile(
-                    r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?)", 
-                    re.IGNORECASE
+                    r"(?:^|\n)[ \t]*(?:#+\s*|\*\*\s*)?(?:Translato(?:r|ion)['’]?s?[ \t]+Notes?|Glossary|New[ \t]+Terms)(?:[ \t]*:[ \t]*[-—*_#]*|[ \t]+[-—*_#]+|[ \t]*\n|$)",
+                    re.IGNORECASE,
                 )
                 continuation_round = 0
                 while continuation_round <= MAX_CONTINUATIONS:
@@ -544,14 +544,17 @@ class BackgroundTranslator:
                             if img_md not in clean_to_save:
                                 clean_to_save += f"\n\n{img_md}\n\n"
 
+                        try:
+                            ContextEngine.auto_save_glossary(db, thread_id, full_content)
+                        except Exception as e:
+                            logger.warning(f"auto_save_glossary non-fatal error on chapter {chapter_id}: {e}")
+
                         clean_to_save = ContextEngine.enforce_glossary_locking(db, thread_id, clean_to_save)
 
                         if not clean_to_save:
                             raise ValueError(
                                 f"AI provider returned an empty translation for chapter {chapter_id}."
                             )
-
-                        ContextEngine.auto_save_glossary(db, thread_id, full_content)
 
                         # Post-translation fidelity check (ADR-072)
                         fidelity = verify_translation_fidelity(
@@ -974,13 +977,17 @@ class BackgroundTranslator:
 
                     try:
                         # Only run glossary extraction on the first N chapters (extract_chapter_count)
-                        # After that, disable to prevent 300+ term accumulation
+                        # After that, disable to prevent 300+ term accumulation.
+                        # Do not count chapters that are fetch_only or already translated (when not force_overwrite).
                         should_extract = False
-                        if batch.force_extract:
+                        if batch.force_extract and not batch.fetch_only:
                             with get_session(ws) as db:
+                                ch_obj = db.get(Chapter, ch_id)
+                                is_skipped = bool(ch_obj and ch_obj.content_translated and not batch.force_overwrite)
                                 gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 extract_limit = gs.extract_chapter_count if gs else 12
-                            if batch.extract_count < extract_limit:
+
+                            if not is_skipped and batch.extract_count < extract_limit:
                                 should_extract = True
                                 batch.extract_count += 1
                                 if batch.extract_count >= extract_limit:

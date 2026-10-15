@@ -24,6 +24,11 @@ COMMON_COLLISION_STOPWORDS = {
     "song", "fang", "long", "wang", "tang", "gang", "ring", "king", "wing", "hang", "bang"
 }
 
+PROTECTED_SPAN_RE = re.compile(
+    r"(!\[[^\]]*\]\([^)]+\)|(?<!\!)\[[^\]]+\]\(https?://[^)]+\)|<[^>]+>|https?://[^\s)\"'>]+|❖(?:IMAGE|GAMBAR)_\d+❖)",
+    re.IGNORECASE,
+)
+
 @dataclass
 class GlossaryLockRule:
     pattern: re.Pattern
@@ -46,21 +51,22 @@ def extract_pinyin_aliases(raw_term: str) -> List[str]:
 
     aliases: Set[str] = set()
 
+    # Ekstrak tanda kurung terlebih dahulu sebelum split slash (e.g. 罗毅 (Luo Yi / Luoyi))
+    for inside_paren in re.findall(r"\(([^)]+)\)", raw_term):
+        for part in inside_paren.split("/"):
+            clean_cand = part.strip(" \t\n\r*•-“”\"'")
+            if clean_cand and not CHINESE_CHAR_PATTERN.search(clean_cand) and len(clean_cand) >= 2:
+                aliases.add(clean_cand)
+
+    clean_term_base = re.sub(r"\([^)]*\)", "", raw_term).strip()
+
     # Pisahkan jika ada subterm dengan slash (e.g. 夏茵 / 夏恩)
-    subterms = [st.strip(" \t\n\r*•-“”\"'") for st in raw_term.split("/") if st.strip(" \t\n\r*•-“”\"'")]
-    if not subterms:
-        subterms = [raw_term]
+    subterms = [st.strip(" \t\n\r*•-“”\"'") for st in clean_term_base.split("/") if st.strip(" \t\n\r*•-“”\"'")]
+    if not subterms and clean_term_base:
+        subterms = [clean_term_base]
 
     for term in subterms:
-        # Bersihkan tanda kurung jika ada catatan pinyin manual di dalamnya (e.g. 罗毅 (Luo Yi))
-        paren_match = re.search(r"\(([^)]+)\)", term)
-        if paren_match:
-            inside_paren = paren_match.group(1).strip()
-            if not CHINESE_CHAR_PATTERN.search(inside_paren) and len(inside_paren) >= 2:
-                aliases.add(inside_paren)
-            clean_term = re.sub(r"\([^)]*\)", "", term).strip()
-        else:
-            clean_term = term
+        clean_term = term
 
         if not clean_term:
             continue
@@ -111,9 +117,12 @@ def build_glossary_lock_rules(entries: List[Any]) -> List[GlossaryLockRule]:
             continue
 
         # 1. Aturan untuk teks karakter asli (Hanzi / Hangul / Kana) dan variasi Pinyin suku kata fleksibel
-        subterms = [st.strip(" \t\n\r*•-“”\"'") for st in orig.split("/") if st.strip(" \t\n\r*•-“”\"'")]
+        clean_orig_base = re.sub(r"\([^)]*\)", "", orig).strip()
+        subterms = [st.strip(" \t\n\r*•-“”\"'") for st in clean_orig_base.split("/") if st.strip(" \t\n\r*•-“”\"'")]
+        if not subterms and clean_orig_base:
+            subterms = [clean_orig_base]
         for st in subterms:
-            clean_st = re.sub(r"\([^)]*\)", "", st).strip()
+            clean_st = st.strip()
             if clean_st and EAST_ASIAN_CHAR_PATTERN.search(clean_st):
                 pattern = re.compile(re.escape(clean_st))
                 raw_rules.append(GlossaryLockRule(
@@ -131,7 +140,8 @@ def build_glossary_lock_rules(entries: List[Any]) -> List[GlossaryLockRule]:
                             escaped_s = [re.escape(s) for s in syllables]
                             # Cocokkan Lu Di Ya, Lu Diya, Ludiya, Lu-Diya, Ai'erte'er, dsb.
                             syll_regex = r"\s*['’\-]?\s*".join(escaped_s)
-                            pat = re.compile(rf"\b{syll_regex}\b", re.IGNORECASE)
+                            clitic_right_boundary = r"(?=(?:-?(?:nya|mu|ku))?\b)"
+                            pat = re.compile(rf"\b{syll_regex}{clitic_right_boundary}", re.IGNORECASE)
                             raw_rules.append(GlossaryLockRule(
                                 pattern=pat,
                                 replacement=trans,
@@ -170,22 +180,26 @@ def build_glossary_lock_rules(entries: List[Any]) -> List[GlossaryLockRule]:
             alias_lower = alias.lower()
             is_multiword = (" " in alias) or (len(alias) >= 4 and any(c.isupper() for c in alias[1:]))
 
+            # Clitic boundary untuk alias multi-kata atau alfabetis >= 4 karakter yang bukan stopword
+            if (is_multiword or len(alias) >= 4) and alias_lower not in COMMON_COLLISION_STOPWORDS:
+                clitic_boundary = r"(?=(?:-?(?:nya|mu|ku))?\b)"
+            else:
+                clitic_boundary = r"\b"
+
             # Guardrail kata pendek, pinyin 1 suku kata, & stopword (selalu case-sensitive)
             if not is_multiword or alias_lower in COMMON_COLLISION_STOPWORDS:
-                # Strict case-sensitive match (hanya tangkap Kapital, e.g. \bSong\b bukan \bsong\b)
                 escaped = re.escape(alias.capitalize())
-                pattern = re.compile(rf"\b{escaped}\b")
+                pattern = re.compile(rf"\b{escaped}{clitic_boundary}")
                 is_case_sensitive = True
             else:
-                # Aman untuk case-insensitive match dengan spasi fleksibel
                 parts = alias.split()
                 if len(parts) > 1:
                     escaped_parts = [re.escape(p) for p in parts]
                     flexible_pattern = r"\s+".join(escaped_parts)
-                    pattern = re.compile(rf"\b{flexible_pattern}\b", re.IGNORECASE)
+                    pattern = re.compile(rf"\b{flexible_pattern}{clitic_boundary}", re.IGNORECASE)
                 else:
                     escaped = re.escape(alias)
-                    pattern = re.compile(rf"\b{escaped}\b", re.IGNORECASE)
+                    pattern = re.compile(rf"\b{escaped}{clitic_boundary}", re.IGNORECASE)
                 is_case_sensitive = False
 
             raw_rules.append(GlossaryLockRule(
@@ -222,6 +236,10 @@ def apply_glossary_lock(text: str, rules: List[GlossaryLockRule]) -> str:
 
     occupied_spans: List[Tuple[int, int]] = []
 
+    # 0. Lindungi span gambar Markdown, link Markdown, tag HTML, dan URL
+    for m in PROTECTED_SPAN_RE.finditer(text):
+        occupied_spans.append(m.span())
+
     # 1. Lindungi kemunculan istilah target yang sudah ada di teks (idempotensi mutlak)
     unique_replacements = {r.replacement for r in rules if r.replacement}
     for repl in unique_replacements:
@@ -229,7 +247,7 @@ def apply_glossary_lock(text: str, rules: List[GlossaryLockRule]) -> str:
         if repl[0].isalnum():
             pattern_str = r"\b" + pattern_str
         if repl[-1].isalnum():
-            pattern_str = pattern_str + r"\b"
+            pattern_str = pattern_str + r"(?=(?:-?(?:nya|mu|ku))?\b)"
 
         # Gunakan case-sensitive matching jika istilah pendek / stopword agar tidak memakan kata umum
         is_stopword = repl.lower() in COMMON_COLLISION_STOPWORDS or len(repl) <= 3

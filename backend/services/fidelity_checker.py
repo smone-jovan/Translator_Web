@@ -8,8 +8,30 @@ Designed for premium Chinese web novel translation standards where every paragra
 
 import re
 import logging
+from services.hallucination_detector import HallucinationDetector
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_KAOMOJI_CHARS = set("囧凸ㅠㅠㅋㅋㅎㅎㅜㅜ눈ωД")
+SOURCE_SCRIPT_RE = re.compile(
+    r"[一-鿿㐀-䶿豈-﫿가-힣぀-ゟ゠-ヿ]"
+)
+MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+META_LEAKAGE_RE = re.compile(
+    r"(\[\[TRUNCATED\]\]|\[\[PROHIBITED\]\]|"
+    r"^(?:here\s+is\s+the\s+(?:indonesian|english)?\s*translation|berikut\s+adalah\s+terjemahan|"
+    r"as\s+an\s+ai\s+language\s+model|i\s+cannot\s+fulfill\s+this\s+request|sebagai\s+model\s+bahasa\s+ai)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def count_untranslated_script_chars(text: str) -> int:
+    """Count raw East Asian characters (Hanzi, Hangul, Kana) excluding markdown image alt-text and kaomoji."""
+    if not text:
+        return 0
+    without_imgs = MD_IMAGE_RE.sub("", text)
+    chars = SOURCE_SCRIPT_RE.findall(without_imgs)
+    return sum(1 for ch in chars if ch not in ALLOWED_KAOMOJI_CHARS)
 
 
 # Fidelity ratio thresholds
@@ -103,7 +125,7 @@ def is_truncated_mid_sentence(text: str, original_text: str | None = None) -> bo
     if original_text and original_text.strip():
         orig_cleaned = original_text.rstrip().rstrip('*_`~\\ \t\r\n')
         orig_last = orig_cleaned[-1:] if orig_cleaned else ""
-        if orig_last not in PROPER_ENDING_CHARS or orig_last in '—-\u2014\u2015~～':
+        if orig_last in '—-—―~～' or orig_cleaned.endswith(('——', '...')):
             return False
             
     return True
@@ -137,9 +159,18 @@ def verify_translation_fidelity(
             "original_chars": 0,
             "translated_chars": 0,
             "char_ratio": 0.0,
+            "original_dialogue_lines": 0,
+            "translated_dialogue_lines": 0,
+            "dialogue_ratio": 0.0,
+            "untranslated_script_chars": 0,
+            "has_hallucination_loop": False,
+            "is_truncated": False,
             "is_suspicious": bool(original_text and not translated_text),
             "warnings": ["Empty translation output"] if (original_text and not translated_text) else [],
         }
+
+    orig_cjk_chars = count_untranslated_script_chars(original_text)
+    is_cjk_source = orig_cjk_chars > (len(original_text.strip()) * 0.30)
 
     orig_paras = _count_meaningful_paragraphs(original_text)
     trans_paras = _count_meaningful_paragraphs(translated_text)
@@ -193,6 +224,12 @@ def verify_translation_fidelity(
             f"Translation is suspiciously short: {orig_chars} original chars → {trans_chars} translated chars "
             f"(ratio: {char_ratio:.2f}). Possible severe truncation."
         )
+    elif is_cjk_source and orig_chars >= 600 and char_ratio < 0.70 and para_ratio < 0.65:
+        is_suspicious = True
+        warnings.append(
+            f"Paragraph count dropped: {orig_paras} original -> {trans_paras} translated "
+            f"(ratio: {para_ratio:.2f}, char ratio: {char_ratio:.2f}x). Possible AI summarization or skipped paragraphs."
+        )
 
     if char_ratio > MAX_CHAR_RATIO:
         is_suspicious = True
@@ -222,6 +259,29 @@ def verify_translation_fidelity(
             f"(ratio: {dialogue_ratio:.2f}). Possible dialogue omission or reformatting issue."
         )
 
+    # Untranslated East Asian script leakage check
+    leaked_script_chars = count_untranslated_script_chars(translated_text)
+    leaked_ratio = leaked_script_chars / max(trans_chars, 1)
+    if is_cjk_source and (leaked_script_chars >= 15 or (leaked_script_chars >= 6 and leaked_ratio >= 0.02)):
+        is_suspicious = True
+        warnings.append(
+            f"Untranslated source script detected: {leaked_script_chars} raw CJK/Hangul/Kana characters leaked into translation."
+        )
+
+    # Hallucination / Repetition Loop check
+    word_loops = HallucinationDetector.detect_repeated_words(translated_text, threshold=8)
+    phrase_loops = HallucinationDetector.detect_repeated_phrases(translated_text, threshold=4)
+    has_hallucination_loop = bool(word_loops or phrase_loops)
+    if has_hallucination_loop:
+        is_suspicious = True
+        sample_tok = word_loops[0].token if word_loops else phrase_loops[0].token
+        warnings.append(f"Hallucination repetition loop detected: '{sample_tok}' repeated excessively.")
+
+    # AI Meta-Commentary / Sentinel Leakage check
+    if META_LEAKAGE_RE.search(translated_text):
+        is_suspicious = True
+        warnings.append("AI meta-commentary or truncation sentinel leaked into translated text.")
+
     # Log warnings
     ch_label = f"Chapter {chapter_id}" if chapter_id else "Unknown chapter"
     if warnings:
@@ -239,6 +299,8 @@ def verify_translation_fidelity(
         "original_dialogue_lines": orig_dialogue,
         "translated_dialogue_lines": trans_dialogue,
         "dialogue_ratio": round(dialogue_ratio, 2),
+        "untranslated_script_chars": leaked_script_chars,
+        "has_hallucination_loop": has_hallucination_loop,
         "is_truncated": truncated,
         "is_suspicious": is_suspicious,
         "warnings": warnings,

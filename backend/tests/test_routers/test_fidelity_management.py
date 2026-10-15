@@ -179,3 +179,110 @@ async def test_batch_retranslate_fidelity(client, db_session):
     assert ch1.fidelity_warning is None
     assert ch1.translation_status == "idle"
     assert ch1.content_translated is None
+
+
+def test_get_fidelity_issues_categorizes_script_leakage_and_loops(client, db_session):
+    thread = Thread(title="Deep Quality Novel", source_type="manual")
+    db_session.add(thread)
+    db_session.commit()
+
+    ch_script = Chapter(
+        thread_id=thread.id,
+        order=1,
+        title_original="Bab 1",
+        content_original="原文章节内容很长很长",
+        content_translated="Teks terjemahan bocor 原文章节内容很长很长",
+        fidelity_warning="Untranslated source script detected: 10 raw CJK/Hangul/Kana characters leaked into translation.",
+        translation_status="translated"
+    )
+    ch_loop = Chapter(
+        thread_id=thread.id,
+        order=2,
+        title_original="Bab 2",
+        content_original="原文章节二",
+        content_translated="Dia berlari dia berlari dia berlari dia berlari dia berlari dia berlari dia berlari dia berlari",
+        fidelity_warning="Hallucination repetition loop detected: 'dia berlari' repeated excessively.",
+        translation_status="translated"
+    )
+    db_session.add_all([ch_script, ch_loop])
+    db_session.commit()
+
+    response = client.get(f"/api/threads/{thread.id}/fidelity-issues")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["issues"]) == 2
+
+    issue_script = next(i for i in data["issues"] if i["chapter_id"] == ch_script.id)
+    assert "untranslated_script" in issue_script["issue_types"]
+    assert issue_script["severity"] == "critical"
+
+    issue_loop = next(i for i in data["issues"] if i["chapter_id"] == ch_loop.id)
+    assert "hallucination_loop" in issue_loop["issue_types"]
+    assert issue_loop["severity"] == "critical"
+
+
+def test_fix_truncated_respects_original_cliffhanger(client, db_session):
+    thread = Thread(title="Cliffhanger Novel", source_type="manual")
+    db_session.add(thread)
+    db_session.commit()
+
+    # Original text ends with em-dash: "我的母亲——"
+    ch = Chapter(
+        thread_id=thread.id,
+        order=1,
+        title_original="Bab 1",
+        content_original="我的母亲——",
+        content_translated="Ibuku",  # ends without period, but matches original cliffhanger
+        fidelity_warning="Translation appears to be cut off mid-sentence.",
+        translation_status="translated"
+    )
+    db_session.add(ch)
+    db_session.commit()
+
+    response = client.post(f"/api/threads/{thread.id}/fix-truncated")
+    assert response.status_code == 200
+    assert response.json()["reset_count"] == 0
+    db_session.refresh(ch)
+    assert ch.content_translated == "Ibuku"
+
+
+def test_reapply_glossary_reevaluates_fidelity_warning(client, db_session):
+    thread = Thread(title="Reapply Novel", source_type="manual")
+    db_session.add(thread)
+    db_session.commit()
+
+    # Original text with normal 2 paragraphs
+    orig = "Paragraf satu asli.\n\nParagraf dua asli."
+    # Translated text previously flagged as truncated mid-sentence
+    ch = Chapter(
+        thread_id=thread.id,
+        order=1,
+        title_original="Bab 1",
+        content_original=orig,
+        content_translated="Paragraf satu diterjemahkan lengkap.\n\nParagraf dua diterjemahkan dan dia berkata bahwa",
+        fidelity_warning="Translation appears to be cut off mid-sentence.",
+        translation_status="done"
+    )
+    db_session.add(ch)
+    db_session.commit()
+
+    # Single chapter reapply
+    resp1 = client.post(f"/api/threads/{thread.id}/chapters/{ch.id}/reapply-glossary")
+    assert resp1.status_code == 200
+    db_session.refresh(ch)
+    # Warning still preserved/updated because it is still cut off
+    assert ch.fidelity_warning is not None
+    assert "cut off mid-sentence" in ch.fidelity_warning
+
+    # Now change content to be clean and complete
+    ch.content_translated = "Paragraf satu diterjemahkan lengkap.\n\nParagraf dua diterjemahkan dengan sempurna."
+    db_session.commit()
+
+    # Thread-wide reapply
+    resp2 = client.post(f"/api/threads/{thread.id}/reapply-glossary")
+    assert resp2.status_code == 200
+    db_session.refresh(ch)
+    # Warning should now be cleared to None
+    assert ch.fidelity_warning is None
+
+

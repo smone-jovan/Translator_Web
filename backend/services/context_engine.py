@@ -1,8 +1,9 @@
 import re
 import json
-from sqlalchemy import select
+from datetime import datetime, timezone
+from sqlalchemy import select, desc, func
 from sqlalchemy.orm import Session
-from database import LorebookEntry, Thread, GlobalSetting
+from database import LorebookEntry, Thread, GlobalSetting, CharacterRelationship
 from services.hallucination_detector import HallucinationDetector
 from services.fidelity_checker import verify_translation_fidelity
 from services.prompt_templates import (
@@ -53,6 +54,14 @@ class ContextEngine:
         if trans_clean in junk_translations or any(jk in trans_clean for jk in ["no new terms", "no terms found", "not specified"]):
             return True
 
+        single_word_meta = {
+            "status", "level", "skill", "skills", "system", "chapter", "title", "name",
+            "rank", "item", "items", "location", "target", "protagonist", "note", "notes",
+            "example", "output", "input", "rule", "rules", "gender", "male", "female",
+        }
+        if orig_clean in single_word_meta:
+            return True
+
         # 2. Istilah orisinil mengandung kata meta / instruksi AI
         junk_originals = [
             "translator note", "translator's note", "final list", "chapter title",
@@ -72,6 +81,10 @@ class ContextEngine:
             return True
 
         return False
+
+    @staticmethod
+    def is_garbage_term(original_term: str | None, translated_term: str | None) -> bool:
+        return ContextEngine.is_garbage_lorebook_entry(original_term, translated_term)
 
     @staticmethod
     def is_non_human_term(
@@ -158,18 +171,40 @@ class ContextEngine:
         return detect_source_language(text)
 
     @staticmethod
+    def normalize_original_term(raw_term: str | None) -> str:
+        """
+        Clean list numbering, markdown bold/italic wrappers, and trailing parenthetical
+        romanization (when East Asian script is present) from an extracted original_term.
+        """
+        if not raw_term:
+            return ""
+        term = str(raw_term).strip(" \t\n\r*•-“”\"'`")
+        term = re.sub(r"^\d+[\.\)]\s*", "", term).strip()
+        term = re.sub(r"\*\*|__|~~|`", "", term).strip(" \t\n\r*•-“”\"'`")
+        east_asian_re = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff]")
+        if east_asian_re.search(term):
+            stripped_paren = re.sub(r"\s*[\(\（\[【][^)\）\]】]*[A-Za-z][^)\）\]】]*[\)\）\]】]\s*$", "", term).strip()
+            if stripped_paren and east_asian_re.search(stripped_paren):
+                term = stripped_paren
+        return term.strip()
+
+    @staticmethod
     def _term_matches_text(original_term: str, text: str) -> bool:
         """
         Check whether any clean variant of a glossary original_term appears in text.
-        Supports slash-separated variants (e.g. '夏茵 / 夏恩') and strips parenthetical notes.
+        Strips parenthetical notes BEFORE splitting by '/' so terms like '罗毅 (Luo Yi / Luoyi)'
+        cleanly match '罗毅' in the source text.
         """
         if not original_term or not text:
             return False
         if original_term in text:
             return True
-        raw_variants = [v.strip() for v in original_term.split("/") if v.strip()]
+        stripped_outer = re.sub(r"\s*[\(\（\[【].*?[\)\）\]】]", "", original_term).strip()
+        if stripped_outer and stripped_outer in text:
+            return True
+        raw_variants = [v.strip() for v in (stripped_outer or original_term).split("/") if v.strip()]
         for rv in raw_variants:
-            clean_v = re.sub(r"\s*[\(\（].*?[\)\）]", "", rv).strip()
+            clean_v = re.sub(r"\s*[\(\（\[【].*?[\)\）\]】]", "", rv).strip()
             if clean_v and (len(clean_v) > 1 or ord(clean_v[0]) > 127):
                 if clean_v in text:
                     return True
@@ -191,14 +226,10 @@ class ContextEngine:
         if mode:
             translation_mode = mode
 
-        # Atur bahasa target (Indo atau Inggris)
         is_indo = target_lang.lower() == "indonesian"
         lang_name = "Indonesian" if is_indo else "English"
-
-        # Mode-aware settings
         is_quality = translation_mode == "quality"
 
-        # Detect genre from thread (ADR-071)
         genre = "default"
         if thread_id:
             thread_stmt = select(Thread).where(Thread.id == thread_id)
@@ -206,23 +237,17 @@ class ContextEngine:
             if thread_obj:
                 genre = detect_primary_genre(thread_obj.genres, thread_obj.tags)
 
-        # Detect source language dynamically (ADR-111)
         from services.prompt_templates import detect_source_language
         source_lang = detect_source_language(original_text)
 
-        # Build core guidelines from centralized templates (ADR-074, ADR-111)
         guidelines = build_core_translation_guidelines(lang_name, genre, source_lang=source_lang)
+        guidelines += build_translator_notes_instruction(is_quality, lang_name, source_lang=source_lang)
 
-        # Tambahkan instruksi Translator Notes berdasarkan mode
-        guidelines += build_translator_notes_instruction(is_quality, lang_name)
-
-        # Gabungkan semua context tambahan (Global & Thread-specific)
         full_prompt = guidelines + "\n\n### ADDITIONAL CONTEXT & KNOWLEDGE\n"
-        
+
         gs_stmt = select(GlobalSetting)
         gs = db.execute(gs_stmt).scalar_one_or_none()
 
-        # Model-aware context scaling (ADR-075)
         scale = get_context_scale_for_model(model)
         gc_max = int(GLOBAL_CONTEXT_MAX_CHARS * scale)
         tc_max = int(THREAD_CONTEXT_MAX_CHARS * scale)
@@ -242,7 +267,6 @@ class ContextEngine:
                 tc_trunc = thread.thread_context[:tc_max] + "... (truncated)" if len(thread.thread_context) > tc_max else thread.thread_context
                 full_prompt += f"\n[Thread-Specific Context]:\n{tc_trunc}\n"
 
-            # Style guide injection (Quality mode only)
             if is_quality and thread and thread.style_guide:
                 sg_trunc = thread.style_guide[:sg_max] + "... (truncated)" if len(thread.style_guide) > sg_max else thread.style_guide
                 full_prompt += f"\n[Style Guide for This Novel]:\n{sg_trunc}\n"
@@ -250,14 +274,9 @@ class ContextEngine:
             if custom_instructions:
                 full_prompt += f"\n[Custom Instructions]:\n{custom_instructions}\n"
 
-            # Mode-aware glossary limit:
-            # - Quality: follow global max_context_terms setting (user controls depth)
-            # - Fast: locked at 10 (protect local LLMs from context bloat)
             global_limit = gs.max_context_terms if gs else 50
             effective_limit = limit if limit is not None else (global_limit if is_quality else min(10, global_limit))
 
-            # Ambil seluruh istilah aktif (non-archived) kandidat thread
-            from sqlalchemy import desc
             all_entries_stmt = (
                 select(LorebookEntry)
                 .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
@@ -270,14 +289,15 @@ class ContextEngine:
             )
             all_entries = db.execute(all_entries_stmt).scalars().all()
 
-            # Prioritaskan istilah yang benar-benar muncul di bab ini dan naikkan usage_count
             if original_text and all_entries:
                 matched_entries = []
                 unmatched_entries = []
                 updated = False
+                now_utc = datetime.now(timezone.utc)
                 for e in all_entries:
                     if ContextEngine._term_matches_text(e.original_term, original_text):
                         e.usage_count = (e.usage_count or 0) + 1
+                        e.last_used_at = now_utc
                         matched_entries.append(e)
                         updated = True
                     else:
@@ -288,12 +308,23 @@ class ContextEngine:
                     except Exception:
                         db.rollback()
 
+                matched_entries.sort(
+                    key=lambda e: (
+                        bool(e.is_locked),
+                        len(ContextEngine.normalize_original_term(e.original_term)),
+                        (e.usage_count or 0),
+                        (e.id or 0),
+                    ),
+                    reverse=True,
+                )
+
                 entries = matched_entries[:effective_limit]
                 if len(entries) < effective_limit:
                     entries.extend(unmatched_entries[: effective_limit - len(entries)])
             else:
                 entries = all_entries[:effective_limit]
 
+            active_translated_names = set()
             if entries:
                 terms_list = []
                 from services.glossary_lock import extract_pinyin_aliases, CHINESE_CHAR_PATTERN
@@ -301,10 +332,11 @@ class ContextEngine:
                 for e in entries:
                     if ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term):
                         continue
+                    active_translated_names.add(e.translated_term.strip().lower())
                     note = e.notes if e.notes else ""
                     if note and len(note) > GLOSSARY_NOTE_MAX_CHARS:
                         note = note[:GLOSSARY_NOTE_MAX_CHARS - 3] + "..."
-                    
+
                     term_display = e.original_term
                     if CHINESE_CHAR_PATTERN.search(term_display) and "(" not in term_display:
                         aliases = extract_pinyin_aliases(term_display)
@@ -312,24 +344,15 @@ class ContextEngine:
                         if spaced_alias:
                             term_display = f"{term_display} (Pinyin: {spaced_alias})"
 
-                    # Whitelist-render gender (Step 4). gender berasal dari output LLM
-                    # ekstraksi (untrusted) — nilai mentah kolom TIDAK PERNAH diinterpolasi;
-                    # hanya token kanonik "MALE"/"FEMALE" yang boleh muncul di prompt.
-                    # getattr(): mock/dummy tanpa atribut gender tetap aman.
                     raw_gender = getattr(e, "gender", None)
                     gender_token = raw_gender if raw_gender in ("MALE", "FEMALE") else None
 
-                    # Safety guard: pastikan entitas non-manusia (kota, wilayah, sekte, benda, jurus)
-                    # TIDAK PERNAH membawa token gender ke context prompt.
                     if gender_token and ContextEngine.is_non_human_term(e.original_term, e.translated_term, e.notes):
                         gender_token = None
 
                     if gender_token:
                         gendered_count += 1
 
-                    # Note sudah memuat token (case-insensitive) → render persis seperti
-                    # sebelumnya (tanpa duplikasi). Selain itu, gender di-kolom disuntikkan
-                    # ke parenthetical. gender None/non-whitelist → format legacy.
                     paren = ""
                     if gender_token and not re.search(rf"\b{gender_token}\b", note, re.IGNORECASE):
                         paren = f" ({gender_token} — {note})" if note else f" ({gender_token})"
@@ -337,29 +360,57 @@ class ContextEngine:
                         paren = f" ({note})"
 
                     terms_list.append(f"- {term_display} → {e.translated_term}{paren}")
-                
+
                 if terms_list:
                     terms = "\n".join(terms_list)
                     full_prompt += f"\n[STRICT GLOSSARY / LOREBOOK - MANDATORY]:\n{terms}\n"
-                    # Blok instruksi pronomina HANYA bila >=1 entri ber-gender ter-inject
-                    # di prompt ini; tanpa entri ber-gender → tidak ada blok sama sekali.
                     if gendered_count:
-                        full_prompt += (
-                            "\n[PRONOUN / GENDER RULES - MANDATORY]: Glossary entries marked MALE "
-                            "are male characters — always use he/him/his for them. Entries marked "
-                            "FEMALE are female — always use she/her/hers. NEVER infer a character's "
-                            "gender from the shape of their name; glossary declarations are authoritative.\n"
-                        )
+                        if is_indo:
+                            full_prompt += (
+                                "\n[PRONOUN / GENDER RULES - MANDATORY]: Glossary entries marked MALE "
+                                "are male characters — always use masculine titles/kinship/descriptors "
+                                "(e.g., Tuan Muda, Putra, Kakak/Saudara Senior, pemuda, pria) and natural Indonesian "
+                                "pronouns (dia/ia/-nya). Entries marked FEMALE are female characters — always use "
+                                "feminine titles/kinship/descriptors (e.g., Nona Muda, Putri, Kakak/Saudari Senior, "
+                                "gadis, wanita). NEVER leak English pronouns (he/she/him/her) and NEVER infer gender "
+                                "from name morphology; glossary declarations are authoritative.\n"
+                            )
+                        else:
+                            full_prompt += (
+                                "\n[PRONOUN / GENDER RULES - MANDATORY]: Glossary entries marked MALE "
+                                "are male characters — always use he/him/his for them. Entries marked "
+                                "FEMALE are female — always use she/her/hers. NEVER infer a character's "
+                                "gender from the shape of their name; glossary declarations are authoritative.\n"
+                            )
+
+            if is_quality:
+                try:
+                    rels = db.execute(
+                        select(CharacterRelationship)
+                        .where(CharacterRelationship.thread_id == thread_id)
+                        .order_by(desc(CharacterRelationship.id))
+                    ).scalars().all()
+                    if rels:
+                        matched_rels = [
+                            r for r in rels
+                            if r.source_term.strip().lower() in active_translated_names
+                            or r.target_term.strip().lower() in active_translated_names
+                        ]
+                        selected_rels = (matched_rels or rels)[:15]
+                        rel_lines = [
+                            f"- {r.source_term} → {r.target_term}: {r.relationship_type}"
+                            + (f" ({r.notes})" if r.notes else "")
+                            for r in selected_rels
+                        ]
+                        if rel_lines:
+                            full_prompt += "\n[CHARACTER RELATIONSHIPS & HIERARCHY]:\n" + "\n".join(rel_lines) + "\n"
+                except Exception:
+                    pass
 
         return full_prompt
 
     @staticmethod
     def reactivate_referenced_archived_terms(db: Session, thread_id: int, original_text: str) -> int:
-        """
-        Restore archived lorebook entries when their original term appears again in the
-        current chapter text. This keeps long-tail context recoverable without forcing
-        users to re-add terms manually.
-        """
         if not original_text:
             return 0
 
@@ -370,32 +421,28 @@ class ContextEngine:
         )
         archived_entries = db.execute(archived_stmt).scalars().all()
 
-        restored_count = 0
+        restored_ids: set[int] = set()
+        now_utc = datetime.now(timezone.utc)
         for entry in archived_entries:
-            if entry.original_term and entry.original_term in original_text:
+            if entry.original_term and ContextEngine._term_matches_text(entry.original_term, original_text):
                 entry.is_archived = False
-                restored_count += 1
+                entry.usage_count = (entry.usage_count or 0) + 1
+                entry.last_used_at = now_utc
+                if entry.id is not None:
+                    restored_ids.add(entry.id)
 
-        if restored_count:
+        if restored_ids:
             db.commit()
-            ContextEngine.enforce_context_limit(db, thread_id)
+            ContextEngine.enforce_context_limit(db, thread_id, protected_ids=restored_ids)
 
-        return restored_count
+        return len(restored_ids)
 
     @staticmethod
-    def enforce_context_limit(db: Session, thread_id: int):
-        """
-        Enforce global max_context_terms limit on active glossary entries of a thread.
-        Locked entries are protected. Surplus active entries are archived (is_archived = True)
-        and compressed (notes = None) using Least Frequently Used (usage_count ASC)
-        with Least Recently Used (last_used_at ASC) as a tiebreaker.
-        """
-        # 1. Fetch global limit setting
+    def enforce_context_limit(db: Session, thread_id: int, protected_ids: set[int] | None = None):
         gs_stmt = select(GlobalSetting)
         gs = db.execute(gs_stmt).scalar_one_or_none()
         limit = gs.max_context_terms if gs else 50
 
-        # 2. Get active entries for this thread
         active_stmt = (
             select(LorebookEntry)
             .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
@@ -406,44 +453,36 @@ class ContextEngine:
         if len(active_entries) <= limit:
             return
 
-        # 3. surplus count
         surplus_count = len(active_entries) - limit
+        protected = protected_ids or set()
 
-        # 4. Filter unlocked active entries
-        evictable = [e for e in active_entries if not e.is_locked]
+        evictable = [
+            e for e in active_entries
+            if not e.is_locked and (e.id not in protected)
+        ]
 
-        # 5. Sort by usage_count ASC, then last_used_at/created_at ASC
         def sort_key(e):
-            timestamp = e.last_used_at or e.created_at
+            timestamp = getattr(e, "last_used_at", None) or getattr(e, "created_at", None)
             timestamp_val = timestamp.timestamp() if timestamp else 0
-            return (e.usage_count, timestamp_val, e.id)
+            return (e.usage_count or 0, timestamp_val, e.id or 0)
 
         evictable.sort(key=sort_key)
 
-        # 6. Evict top surplus entries
         evict_list = evictable[:surplus_count]
         for entry in evict_list:
             entry.is_archived = True
-            entry.notes = None  # Compress by deleting notes context
         db.commit()
 
     @staticmethod
     def strip_translator_notes(text: str) -> str:
-        """
-        Bersihkan bagian 'Translator Notes', 'Notes', dan 'Footnotes' dari teks terjemahan cerita
-        sehingga pengguna mendapatkan teks prosa murni 100%.
-        Mendukung pembersihan catatan baik di akhir, tengah, maupun di awal teks (jika AI salah urutan).
-        """
         if not text:
             return ""
-        import re
 
         cleaned = text.strip()
 
-        # 1. Cek apakah ada catatan penerjemah di AWAL teks (sebelum cerita)
         start_header_pattern = re.compile(
-            r"^(?:[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*|[-—*_#]*\s*Footnotes?[:\s]*)", 
-            re.IGNORECASE
+            r"^(?:[-—*_#]*\s*Translato(?:r|ion)['’]?s?\s*Notes?\s*[:\n]|[-—*_#]*\s*Glossary\s*[:\n]|[-—*_#]*\s*New\s+Terms\s*[:\n]|[-—*_#]*\s*Footnotes?\s*[:\n])",
+            re.IGNORECASE,
         )
         if start_header_pattern.match(cleaned):
             lines = cleaned.split("\n")
@@ -455,7 +494,7 @@ class ContextEngine:
                 if not l_strip:
                     continue
                 if in_notes_header:
-                    if start_header_pattern.match(l_strip):
+                    if start_header_pattern.match(l_strip + "\n"):
                         continue
                     if l_strip.startswith(("-", "*", "•", "—")) or "→" in l_strip or "->" in l_strip:
                         continue
@@ -465,20 +504,17 @@ class ContextEngine:
             if story_start_idx != -1:
                 cleaned = "\n".join(lines[story_start_idx:]).strip()
             else:
-                # Teks HANYA berisi catatan penerjemah tanpa ada cerita
                 return ""
 
-        # 2. Cek apakah ada catatan penerjemah di AKHIR / TENGAH teks (setelah cerita)
         header_pattern = re.compile(
-            r"(\n\s*[-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]?|\n\s*[-—*_#]*\s*Glossary[:\s]?|\n\s*[-—*_#]*\s*New Terms[:\s]?|\n\s*[-—*_#]*\s*Footnotes?[:\s]?)", 
-            re.IGNORECASE
+            r"(?:\n[ \t]*[-—*_#]*[ \t]*(?:Translato(?:r|ion)['’]?s?[ \t]+Notes?|Glossary|New[ \t]+Terms|Footnotes?)(?:[ \t]*:[ \t]*[-—*_#]*|[ \t]+[-—*_#]+)[ \t]*(?:\n|$)|\n[ \t]*###+[ \t]*Translato(?:r|ion)['’]?s?[ \t]+Notes?[ \t]*(?:\n|$)|\n[ \t]*[-—*_#]*[ \t]*Notes?[ \t]*:[ \t]*(?:\n|$))",
+            re.IGNORECASE,
         )
         matches = list(header_pattern.finditer(cleaned))
         if matches:
             first_match = matches[0]
             cleaned = cleaned[:first_match.start()].strip()
 
-        # Bersihkan sisa-sisa formatting markdown di ujung teks
         while True:
             prev_len = len(cleaned)
             cleaned = cleaned.rstrip(" \t\n\r*•-—#_")
@@ -535,6 +571,59 @@ class ContextEngine:
         return text
 
     @staticmethod
+    def strip_ai_conversational_wrappers(text: str) -> str:
+        """Strip AI conversational preambles/postambles and stray truncation sentinels."""
+        if not text:
+            return ""
+        import re
+        cleaned = text.replace("[[TRUNCATED]]", "").replace("[[PROHIBITED]]", "").strip()
+        preamble_re = re.compile(
+            r"^(?:sure[,!.]?\s+|tentu[,!.]?\s+|baik[,!.]?\s+)?"
+            r"(?:here\s+(?:is|are)\s+the\s+(?:[a-z]+\s+)*translation[^\n]*[:\uff1a]|"
+            r"berikut\s+(?:adalah|ini)\s+(?:hasil\s+)?terjemahan[^\n]*[:\uff1a]|"
+            r"ini\s+adalah\s+hasil\s+terjemahan[^\n]*[:\uff1a])\s*\n+",
+            re.IGNORECASE,
+        )
+        cleaned = preamble_re.sub("", cleaned, count=1).strip()
+
+        postamble_re = re.compile(
+            r"\n+\s*(?:[-\u2014*_]{2,}\s*(?:end\s+of\s+translation|akhir\s+terjemahan)\s*[-\u2014*_]*|"
+            r"(?:i\s+hope\s+this\s+translation\s+helps|let\s+me\s+know\s+if\s+you\s+need\s+any\s+(?:further\s+)?adjustments|"
+            r"semoga\s+terjemahan\s+ini\s+membantu)[^\n]*)\s*$",
+            re.IGNORECASE,
+        )
+        cleaned = postamble_re.sub("", cleaned).strip()
+        return cleaned
+
+    @staticmethod
+    def strip_inline_bilingual_notes(text: str) -> str:
+        """
+        Strip inline dictionary/Pinyin/TL notes injected by LLMs inside prose
+        while preserving visual kaomoji like (\u2299_\u2299) and translated stage reactions like (keringat dingin).
+        """
+        if not text:
+            return ""
+        import re
+        cleaned = re.sub(
+            r"\s*\(\s*(?:Pinyin|Hanzi|Kanji|Hangul|Raw|TL|TN|T/N|TL\s*Note|Translator['\u2019]?s?\s*Note|Catatan\s*Penerjemah)\s*[:\uff1a][^)\n]{1,150}\)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\s*\[\s*(?:TL|TN|T/N|TL\s*Note|Translator['\u2019]?s?\s*Note|Catatan\s*Penerjemah)\s*[:\uff1a][^\]\n]{1,150}\]",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"(?<=[A-Za-z0-9])\s*\(\s*[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u3040-\u309f\u30a0-\u30ff]{1,25}\s*\)",
+            "",
+            cleaned,
+        )
+        return cleaned
+
+    @staticmethod
     def clean_final_translation(text: str, always_hide_thoughts: bool = True) -> str:
         if not text:
             return ""
@@ -542,13 +631,14 @@ class ContextEngine:
         cleaned = text
         if always_hide_thoughts:
             cleaned = ContextEngine.strip_thinking_blocks(cleaned)
-        
+
         # Fallback: if stripping thoughts removed EVERYTHING, the AI might have put the translation inside <think>
         if not cleaned.strip():
             cleaned = text
 
         cleaned = ContextEngine.strip_translator_notes(cleaned)
-        
+        cleaned = ContextEngine.strip_ai_conversational_wrappers(cleaned)
+
         # If stripping translator notes resulted in empty string, it means the output had ONLY translator notes
         # (no actual story translated). We do NOT restore the notes as if they were story prose.
         if not cleaned.strip():
@@ -557,31 +647,26 @@ class ContextEngine:
         cleaned = HallucinationDetector.strip_repetitive_character_loops(cleaned)
         cleaned = HallucinationDetector.strip_garbled_hallucination_lines(cleaned)
         cleaned = HallucinationDetector.strip_word_soup_hallucinations(cleaned)
+        cleaned = ContextEngine.strip_inline_bilingual_notes(cleaned)
         cleaned = re.sub(r"[\u200b\u200c\u200d\u200e\u200f\ufeff\u2060\u2000-\u200a]", "", cleaned)
-        
+
         return cleaned.strip()
 
     @staticmethod
     def enforce_glossary_locking(db: Session, thread_id: int | None, text: str) -> str:
-        """
-        Kunci istilah glosarium secara deterministik pasca-terjemahan.
-        Mengambil entri aktif dari thread, menyusun aturan penguncian (termasuk pinyin alias),
-        dan menimpa istilah yang membangkang pada hasil terjemahan.
-        """
         if not text or not thread_id:
             return text
         from services.glossary_lock import build_glossary_lock_rules, apply_glossary_lock
-        from sqlalchemy import select
-        from database import LorebookEntry
-        
+
         entries_stmt = (
             select(LorebookEntry)
-            .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)
+            .where(LorebookEntry.thread_id == thread_id)
+            .order_by(LorebookEntry.is_archived.asc(), desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count))
         )
         entries = db.execute(entries_stmt).scalars().all()
         if not entries:
             return text
-            
+
         valid_entries = [e for e in entries if not ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term)]
         rules = build_glossary_lock_rules(valid_entries)
         return apply_glossary_lock(text, rules)
@@ -594,13 +679,6 @@ class ContextEngine:
         chapter_index: int | None = None,
         glossary_data: dict | None = None,
     ):
-        """
-        Cari bagian 'Translator Notes' di output AI terus simpan istilah barunya ke database.
-        Mendukung pemisah kayak :, ->, →, atau —
-        """
-        import re
-        from sqlalchemy import select, func
-
         if glossary_data is not None:
             data_dict = glossary_data
         elif isinstance(full_text, dict):
@@ -614,68 +692,74 @@ class ContextEngine:
             if not isinstance(full_text, str) or not full_text:
                 return
 
-            # Cari header semacam "Translator Notes:", "Translation Notes:", "Glossary:", dsb.
+            cleaned_source = ContextEngine.strip_thinking_blocks(full_text)
+            if not cleaned_source.strip():
+                cleaned_source = full_text
+
             header_pattern = re.compile(
-                r"([-—*_#]*\s*Translato(?:r|ion)['s]*\s*Notes?[:\s]*|[-—*_#]*\s*Glossary[:\s]*|[-—*_#]*\s*New Terms[:\s]*)",
+                r"(?:^|\n)[ \t]*[-—*_#]*[ \t]*(?:Translato(?:r|ion)['’]?s?[ \t]+Notes?|Glossary|New[ \t]+Terms)(?:[ \t]*:[ \t]*[-—*_#]*|[ \t]+[-—*_#]+|[ \t]*\n)",
                 re.IGNORECASE,
             )
-            match = header_pattern.search(full_text)
-            if not match:
+            matches = list(header_pattern.finditer(cleaned_source))
+            if not matches:
                 return
-            notes_section = full_text[match.end():].strip()
+            notes_section = cleaned_source[matches[-1].end():].strip()
             lines = notes_section.split("\n")
+
         new_entries = []
+        created_entry_objs: list[LorebookEntry] = []
         gender_updates = []
         seen_terms = set()
-        
-        # Kata kunci yang mengindikasikan teks tersebut hanyalah header, instruksi, atau catatan meta dari AI
+        now_utc = datetime.now(timezone.utc)
+
         garbage_keywords = [
             "final list", "final output", "as requested", "translator note", "translator's note",
             "notes", "summary", "no new terms", "no terms found", "note:", "notes:", "important note",
             "appears to be", "chapter title", "section title", "chapter heading", "author's note"
         ]
-        
+
         for line in lines:
             line = line.strip()
-            if not line or len(line) < 3: continue
-            
-            # Cek pakai separator apa
+            if not line or len(line) < 3:
+                continue
+
             separator = None
-            for sep in ["→", "->", ":", "—"]: 
+            for sep in ["→", "->", ":", "—"]:
                 if sep in line:
                     separator = sep
                     break
-            
+
             if separator:
                 parts = line.split(separator, 1)
                 raw_term = parts[0].strip(" \t\n\r*•-“”\"'")
-                raw_term = re.sub(r"\*\*$", "", raw_term).strip(" \t\n\r*•-“”\"'").strip()
-                
+                raw_term = re.sub(r"^\d+[\.\)]\s*", "", raw_term).strip(" \t\n\r*•-“”\"'")
+                raw_term = re.sub(r"\*\*|__", "", raw_term).strip(" \t\n\r*•-“”\"'").strip()
+
                 desc = parts[1].strip(" \t\n\r*•-“”\"'")
                 desc = re.sub(r"\*\*$", "", desc).strip(" \t\n\r*•-“”\"'").strip()
-                
+
                 if not raw_term or not desc:
                     continue
-                
-                # Abaikan kalau AI cuma bilang "tidak ada istilah baru" atau deskripsi kosong
+
                 skip_keywords = ["not present", "not found", "bukan di bab ini", "tidak ada", "n/a", "unknown"]
                 if any(kw in desc.lower() for kw in skip_keywords):
                     continue
 
-                # Dukung pemisahan term berganda dengan garis miring (e.g. 夏茵 / 夏恩 / 莎恩 -> Shain)
-                subterms = [st.strip(" \t\n\r*•-“”\"'") for st in raw_term.split("/") if st.strip(" \t\n\r*•-“”\"'")]
+                raw_term_normalized = ContextEngine.normalize_original_term(raw_term)
+                subterms = [
+                    ContextEngine.normalize_original_term(st)
+                    for st in raw_term_normalized.split("/")
+                    if ContextEngine.normalize_original_term(st)
+                ]
                 if not subterms:
-                    subterms = [raw_term]
+                    subterms = [raw_term_normalized]
 
                 for term in subterms:
-                    # Term asli MANDAT harus mengandung setidaknya satu karakter Asia Timur (Hanzi, Hangul, atau Kana)
-                    # ATAU merupakan pinyin/romanized term yang valid (2+ Latin words, maks 30 chars).
-                    # Ini mencegah kalimat Bahasa Inggris panjang tersimpan, tapi mengizinkan
-                    # istilah Asia Timur atau nama pinyin/romanized seperti "Ye Xiu", "Meng Hao", "Sung Jinwoo".
                     east_asian_pattern = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f\u3040-\u309f\u30a0-\u30ff]")
                     has_source_script = bool(east_asian_pattern.search(term))
-                    # Pinyin/Latin heuristic: 2-4 short words, each capitalized, total <= 30 chars
-                    pinyin_pattern = re.compile(r"^[A-Z][a-z]{0,8}(\s[A-Z][a-z]{0,8}){0,3}$")
+                    pinyin_pattern = re.compile(
+                        r"^[A-Z][a-z]{1,10}(?:-[A-Za-z][a-z]{1,10})?(?:\s+[A-Z][a-z]{1,10}(?:-[A-Za-z][a-z]{1,10})?){1,3}$"
+                    )
                     is_valid_pinyin = bool(pinyin_pattern.match(term)) and len(term) <= GLOSSARY_TERM_MAX_LENGTH
                     if not has_source_script and not is_valid_pinyin:
                         continue
@@ -684,35 +768,27 @@ class ContextEngine:
 
                     if len(term) >= GLOSSARY_MIN_TERM_LENGTH:
                         term_clean = term.lower()
-                        
-                        # Skip jika term mengandung emoji atau simbol aneh (seperti checklist, tanda seru lingkaran, dll.)
+
                         if re.match(r"^[\u2700-\u27BF\uE000-\uF8FF\u2011-\u26FF\U00010000-\U0010FFFF]|✅|✔|❌|✨|⭐|◆|◇|■|□|▲|▼", term):
                             continue
-                            
-                        # Skip jika term merupakan metadata / teks instruksi AI atau ampas
+
                         if any(gk in term_clean for gk in garbage_keywords) or ContextEngine.is_garbage_lorebook_entry(term, desc):
                             continue
-                            
-                        # Cegah duplikasi di dalam respon AI yang sama (internal deduplication)
+
                         if term_clean in seen_terms:
                             continue
                         seen_terms.add(term_clean)
-                        
-                        # Cek dulu di basis data biar gak dobel (case-insensitive & trim spaces)
+
                         exists_stmt = select(LorebookEntry).where(
                             LorebookEntry.thread_id == thread_id,
                             func.lower(func.trim(LorebookEntry.original_term)) == term_clean
                         )
                         exists = db.execute(exists_stmt).scalars().first()
 
-                        # Strip trailing punctuation sebelum cek kurung tutup
                         desc_check = desc.rstrip('.!;,。！ ')
                         has_paren = "(" in desc_check and desc_check.endswith(")")
                         p_start = desc_check.rfind("(") if has_paren else -1
 
-                        # Parse token gender dari parenthetical (Step 3), e.g. "(MALE — Protagonist, ...)".
-                        # Berlaku apa pun jenis entry-nya (prompt sudah scoping person-only).
-                        # Token TIDAK di-strip dari notes — biarkan apa adanya (Step 4 yang rendering).
                         gender = None
                         if has_paren:
                             ctx = desc_check[p_start + 1:-1].strip()
@@ -720,12 +796,10 @@ class ContextEngine:
                             if gender_match:
                                 cand_gender = gender_match.group(1).upper()
                                 cand_trans = exists.translated_term if exists else desc_check[:p_start].strip()
-                                # Pastikan bukan nama kota, wilayah, sekte, jurus, atau benda non-manusia
                                 if not ContextEngine.is_non_human_term(term, cand_trans, desc):
                                     gender = cand_gender
 
                         if not exists:
-                            # Pisahkan antara arti translasi sama catatannya (kalau ada tanda kurung)
                             final_translated = desc
                             final_notes = f"Auto-extracted: {term}"
 
@@ -733,7 +807,8 @@ class ContextEngine:
                                 final_translated = desc_check[:p_start].strip()
                                 final_notes = f"{desc_check[p_start+1:-1].strip()} (Auto-extracted)"
 
-                            # CRITICAL FIX: Re-validate final_translated after stripping parenthetical notes!
+                            final_translated = re.sub(r"\*\*|__", "", final_translated).strip(" \t\n\r*•-“”\"'")
+
                             if not final_translated or ContextEngine.is_garbage_lorebook_entry(term, final_translated):
                                 continue
 
@@ -743,47 +818,95 @@ class ContextEngine:
                                 translated_term=final_translated,
                                 notes=final_notes,
                                 gender=gender,
+                                usage_count=1,
+                                last_used_at=now_utc,
                             )
                             db.add(new_entry)
+                            created_entry_objs.append(new_entry)
                             new_entries.append(f"{term} -> {final_translated}")
-                        elif gender and exists.gender is None:
-                            # Backfill satu-satunya untuk entri existing (sebelumnya tidak pernah
-                            # di-update sama sekali): isi gender bila masih NULL, jangan sentuh
-                            # translated_term/notes/field lain, dan jangan pernah timpa yang sudah ada.
-                            exists.gender = gender
-                            gender_updates.append(f"{term} -> {gender}")
-        
-        if new_entries or gender_updates:
+                        else:
+                            if exists.is_archived:
+                                exists.is_archived = False
+                                exists.usage_count = (exists.usage_count or 0) + 1
+                                exists.last_used_at = now_utc
+                                created_entry_objs.append(exists)
+                            if gender and exists.gender is None:
+                                exists.gender = gender
+                                gender_updates.append(f"{term} -> {gender}")
+
+        if new_entries or gender_updates or created_entry_objs:
             db.commit()
-        if new_entries:
-            print(f"[LOREBOOK] Berhasil menyimpan {len(new_entries)} istilah baru untuk utas {thread_id}: {new_entries}")
-            ContextEngine.enforce_context_limit(db, thread_id)
+        if new_entries or created_entry_objs:
+            protected_ids = {e.id for e in created_entry_objs if e.id is not None}
+            if new_entries:
+                print(f"[LOREBOOK] Berhasil menyimpan {len(new_entries)} istilah baru untuk utas {thread_id}: {new_entries}")
+            ContextEngine.enforce_context_limit(db, thread_id, protected_ids=protected_ids)
         if gender_updates:
             print(f"[LOREBOOK] Backfill gender {len(gender_updates)} entri untuk utas {thread_id}: {gender_updates}")
 
     @staticmethod
-    async def extract_glossary_pass(db: Session, thread_id: int, original_text: str, lm_url: str, model: str | None = None, target_lang: str = "English"):
-        """Dedicated pass to extract names/terms BEFORE translation."""
+    async def extract_glossary_pass(
+        db: Session,
+        thread_id: int,
+        original_text: str,
+        lm_url: str,
+        model: str | None = None,
+        target_lang: str = "English",
+        max_input_chars: int | None = None,
+    ):
+        """Dedicated pass to extract names/terms BEFORE translation, aware of existing thread glossary."""
         from services.ai.factory import AIProviderFactory
-        from database import GlobalSetting
-        from sqlalchemy import select
 
         source_lang = ContextEngine.detect_source_language(original_text)
         sys_prompt = build_glossary_extraction_prompt(target_lang, source_lang=source_lang)
 
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
-            sample_size = gs.extract_sample_size if gs else 1000
+            base_sample_size = gs.extract_sample_size if gs else 1000
+            chapter_sample_limit = max_input_chars if max_input_chars is not None else max(base_sample_size * 6, 6000)
+
+            if len(original_text) <= chapter_sample_limit:
+                sampled_text = original_text
+            else:
+                head_n = int(chapter_sample_limit * 0.45)
+                mid_n = int(chapter_sample_limit * 0.25)
+                tail_n = chapter_sample_limit - head_n - mid_n
+                mid_idx = (len(original_text) - mid_n) // 2
+                sampled_text = (
+                    original_text[:head_n]
+                    + "\n...\n"
+                    + original_text[mid_idx : mid_idx + mid_n]
+                    + "\n...\n"
+                    + original_text[-tail_n:]
+                )
+
+            existing_entries = db.execute(
+                select(LorebookEntry)
+                .where(LorebookEntry.thread_id == thread_id)
+                .order_by(desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count), LorebookEntry.id)
+                .limit(60)
+            ).scalars().all()
+            if existing_entries:
+                existing_lines = [
+                    f"- {e.original_term} → {e.translated_term}"
+                    for e in existing_entries
+                    if not ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term)
+                ]
+                if existing_lines:
+                    sys_prompt += (
+                        "\n\n[EXISTING GLOSSARY — DO NOT RE-EXTRACT THESE TERMS; ALIGN NEW DERIVATIVE TERMS WITH THESE]:\n"
+                        + "\n".join(existing_lines)
+                    )
 
             provider = AIProviderFactory.get_provider(base_url=lm_url, model=model, db_session=db)
             messages = [
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": f"Extract terms from this text:\n\n{original_text[:sample_size]}"},
+                {"role": "user", "content": f"Extract NEW terms from this text:\n\n{sampled_text}"},
             ]
 
             response = await provider.chat_completion(messages=messages, temperature=0.2)
-            # Use existing logic to save
-            ContextEngine.auto_save_glossary(db, thread_id, response)
+            cleaned_response = ContextEngine.strip_thinking_blocks(response or "")
+            ContextEngine.auto_save_glossary(db, thread_id, cleaned_response)
             print(f"[EXTRACT] AI glossary extraction completed for thread {thread_id}")
         except Exception as e:
             print(f"[WARN] [EXTRACT] AI glossary extraction failed: {e}")
@@ -880,6 +1003,4 @@ class ContextEngine:
 
         except Exception as e:
             print(f"[WARN] [RELATIONSHIPS] AI relationship extraction failed: {e}")
-            return 0
-            print(f"[WARN] [RELATIONSHIPS] Extraction failed: {e}")
             return 0

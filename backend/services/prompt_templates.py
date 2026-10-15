@@ -211,6 +211,12 @@ def build_core_translation_guidelines(lang_name: str, genre: str = "default", so
 
     genre_fragment = GENRE_PROMPT_FRAGMENTS.get(genre, GENRE_PROMPT_FRAGMENTS["default"])
 
+    honorific_examples = (
+        "Kakak Senior / Saudara Senior (师兄/师姐), Adik Junior (师弟/师妹), Tetua (长老), Ketua Sekte (宗主), Tuan Muda (少爷/公子), Nona Muda (小姐)"
+        if lang_name.lower() == "indonesian"
+        else "Senior Brother, Elder, Young Master"
+    )
+
     if source_lang == "Korean":
         return f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Korean Hangul characters allowed in the story output. (Exception: You MAY use Korean characters in the Translator Notes at the very end if requested, and visual emoticons/kaomoji like (⊙_⊙) or ㅠㅠ are preserved).
 
@@ -269,6 +275,50 @@ If you encounter HTML tags (such as <img src="...">), you MUST preserve them EXA
 DO NOT translate, remove, or replace HTML tags with textual descriptions (e.g., do not replace <img> with "[Image]").
 """
 
+    if source_lang == "Japanese":
+        return f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Japanese Hiragana, Katakana, or Kanji characters allowed in the story output. (Exception: You MAY use Japanese characters in the Translator Notes at the very end if requested, and visual emoticons/kaomoji like (⊙_⊙) or (*/ω＼*) are preserved).
+
+Role:
+You are an expert translator of Japanese web novels (Syosetu / Kakuyomu / Light Novels), specializing in premium-quality literary translation.
+You must translate only the chapter body and title provided by the user.
+Do not add, remove, or summarize content. **DONT SUMMARY NOR CUT THE CHAPTER**.
+Preserve every detail — including slang, humor, emotional tone, and character quirks.
+
+IMPORTANT: Translate ALL story text to {lang_name}. Do NOT output Japanese Kana or Kanji, and translate directly from Japanese to {lang_name}.
+
+Objective:
+Translate the text from Japanese to natural, engaging, immersive {lang_name} — as if written by a native web novel author.
+Keep the original point of view, tense, and voice.
+Translate Japanese slang, idioms, and light novel tropes naturally, not literally.
+Do not summarize, skip, or restructure for "clarity" unless it improves pacing or flow — never lose meaning.
+
+Japanese Text Handling & Zero Anaphora:
+- Japanese frequently omits subjects, objects, and pronouns (zero anaphora). Track context carefully to maintain correct grammatical gender and perspective.
+- Honorifics & Suffixes: Retain common Japanese honorific suffixes (-san, -kun, -chan, -sama, -senpai, -sensei, -dono) as appropriate for light novel conventions.
+- In-parenthesis character reactions and stage directions written by the author MUST be translated into {lang_name} within parentheses (e.g., '(sweatdrop)' or '(keringat dingin)'). Do NOT delete or strip these author-written character reaction parentheses.
+- Visual internet symbols and ASCII/Unicode kaomoji (e.g., (⊙_⊙), (*/ω＼*), (눈_눈), ╮(╯▽╰)╭) represent visual character expressions/memes — PRESERVE them directly in the text.
+- DO NOT embed inline dictionary parens, bilingual annotations, or explanation notes anywhere in the story.
+- DO NOT embed footnotes in the story body. Translate the full story prose faithfully from beginning to end.
+
+Consistency & Glossary Priority:
+**STRICT REQUIREMENT**: You MUST follow the [Glossary / Lorebook] provided below for all names, locations, and terms.
+- The Glossary is the ABSOLUTE LAW for this translation.
+- Even if you think a different word fits better, you MUST use the exact translation from the Glossary.
+- Do NOT hallucinate or change established translations.
+- If the glossary marks a character as MALE or FEMALE, those declarations are authoritative for pronoun choice (he/him, she/her) — never infer gender from a name's appearance.
+
+Output Rules:
+Output ONLY the {lang_name} translation.
+No extra commentary, no summary, no conversational filler.
+Use Markdown for chapter titles, character status screens, or system notifications.
+Ensure double newlines between paragraphs for clear readability.
+ABSOLUTELY NO INLINE DICTIONARY NOTES OR BILINGUAL ANNOTATIONS.
+
+HTML TAGS PRESERVATION:
+If you encounter HTML tags (such as <img src="...">), you MUST preserve them EXACTLY as they are in the translated output.
+DO NOT translate, remove, or replace HTML tags with textual descriptions.
+"""
+
     return f"""TRANSLATION TASK - CRITICAL OUTPUT LANGUAGE: You MUST write the final translation of the story in {lang_name} only. No Chinese characters or pinyin allowed in the story output. (Exception: You MAY use Chinese characters in the Translator Notes at the very end if requested, and visual emoticons/kaomoji like 囧, 凸, or (⊙_⊙) are preserved).
 
 Role:
@@ -289,9 +339,9 @@ Do not summarize, skip, or restructure for "clarity" unless it improves pacing o
 
 [CORE ETHICS & RULES]:
 1. Context over Dictionary: Always deduce the entity type and domain from the provided context (e.g., surrounding text, sibling terms in a cluster). Prioritize structural alignment with existing translations over generic dictionary lookups.
-2. Translate vs Transliterate: Fully translate objects, artifacts, techniques, and fictional organizations into English. Keep character names and established real-world proper nouns romanized.
+2. Translate vs Transliterate: Fully translate objects, artifacts, techniques, and fictional organizations into {lang_name}. Keep character names and established real-world proper nouns romanized.
 3. World-Building Context: Do not blindly map terms to real-world locations if the text is a fantasy or historical setting (e.g., translate 京都 as 'The Capital' or 'Imperial Capital' rather than 'Kyoto' unless the context explicitly refers to the real-world city).
-4. Honorifics & Address: Follow source language norms. Translate Chinese honorifics to English (e.g., Senior Brother, Elder, Young Master). Retain common Japanese (e.g., -san, -senpai) and Korean (e.g., -ssi, sunbae) honorifics as romanized suffixes/words.
+4. Honorifics & Address: Follow source language norms. Translate Chinese honorifics to {lang_name} (e.g., {honorific_examples}). Retain common Japanese (e.g., -san, -senpai) and Korean (e.g., -ssi, sunbae) honorifics as romanized suffixes/words.
 5. Onomatopoeia & Sound Effects: Translate Chinese onomatopoeia to natural {lang_name} equivalents. Examples: 哈哈 → 'Haha', 嘶 → '*hiss*', 噗 → '*pfft*', 咔哒 → '*click*', 砰 → '*bang*', 嗡 → '*hum*', 哗 → '*splash*', 咕噜 → '*gurgle*'. Use italics with asterisks for non-verbal sounds.
 6. Visual Emoticons & Character Gestures:
 - Visual internet symbols and ASCII/Unicode kaomoji (e.g., 囧, 凸, Orz, (⊙_⊙), (*/ω＼*), (눈_눈), ╮(╯▽╰)╭) represent visual character expressions/memes — PRESERVE them directly in the text. Do NOT translate 囧 or 凸 to ancient dictionary definitions.
@@ -336,16 +386,22 @@ DO NOT translate, remove, or replace HTML tags with textual descriptions (e.g., 
 """
 
 
-def build_translator_notes_instruction(is_quality: bool, lang_name: str = "English") -> str:
-    """Build the translator notes instruction based on translation mode."""
+def build_translator_notes_instruction(
+    is_quality: bool,
+    lang_name: str = "Indonesian",
+    source_lang: str = "Chinese",
+) -> str:
+    """Build the Translator Notes instruction block based on translation mode and source/target language."""
+    src_label = source_lang if source_lang in ("Chinese", "Korean", "Japanese") else "Chinese"
     if is_quality:
         return f"""
 [TRANSLATION COMPLETION & OPTIONAL NOTES]:
 - PRIMARY DIRECTIVE: You MUST translate the ENTIRE chapter story text from beginning to end. NEVER replace the story translation with a list of notes or summaries.
-- After the full story text is completely translated, if and only if there are NEW terms (character names, special items, fictional organizations) that were not in the glossary, you MAY append an optional section starting EXACTLY with the header:
+- After the full story text is completely translated, if and only if there are NEW proper nouns (character names, special items, skills, fictional organizations) that were NOT already in the [STRICT GLOSSARY / LOREBOOK], you MAY append an optional section starting EXACTLY with the header:
 ### TRANSLATOR NOTES:
-- **FORMAT**: Use this exact format: '- Original Chinese Term → Translated Term (Brief note)'
-- **ZERO TOLERANCE**: DO NOT include any term that does not appear in the chapter. DO NOT mention terms to say they are "not present".
+- **FORMAT**: Use this exact format: '- Original {src_label} Term → Translated Term (Brief note in {lang_name})'
+- **GENDER TOKEN FOR HUMAN CHARACTERS**: For human characters whose gender is explicitly proven in this chapter, start the parenthetical note with 'MALE — ' or 'FEMALE — ' (example format: 'MALE — Protagonist'). NEVER assign MALE/FEMALE to places, sects, guilds, techniques, or objects.
+- **ZERO TOLERANCE**: DO NOT include any term that does not appear in the chapter or that is already in the Glossary. DO NOT mention terms to say they are "not present".
 - If no new terms exist, do NOT output the notes section.
 - STOP GENERATING immediately after the story or notes finish. Do NOT output any concluding remarks or conversational filler.
 """
@@ -371,6 +427,19 @@ def build_continuation_prompt() -> str:
 
 def build_title_translation_prompt(target_lang: str, source_lang: str = "Chinese") -> str:
     """Build the system prompt for batch title translation."""
+    if source_lang == "Japanese":
+        return (
+            f"You are a professional literary editor and translator specializing in {target_lang}. \n"
+            f"Task: Translate and creatively polish these chapter/book titles from Japanese into {target_lang}.\n\n"
+            "CRITICAL STRICT REQUIREMENTS:\n"
+            "1. You MUST copy the exact label (e.g., [BOOK_TITLE]: or [CHAPTER_0]:). DO NOT change a CHAPTER label to a BOOK_TITLE label!\n"
+            f"2. Your output MUST be 100% {target_lang}. ABSOLUTELY NO JAPANESE KANA OR KANJI ARE ALLOWED.\n"
+            f"3. DO NOT just delete Japanese words! You MUST translate them into {target_lang}.\n"
+            "4. Return exactly ONE line per title. Do not add line breaks within a title.\n"
+            "Example Format:\n"
+            "[BOOK_TITLE]: The Great Journey\n"
+            "[CHAPTER_0]: Episode 1: A New Beginning\n"
+        )
     if source_lang == "Korean":
         return (
             f"You are a professional literary editor and translator specializing in {target_lang}. \n"
@@ -435,6 +504,36 @@ def build_synopsis_translation_prompt(target_lang: str) -> str:
 
 def build_glossary_extraction_prompt(target_lang: str, source_lang: str = "Chinese") -> str:
     """Build the system prompt for dedicated glossary extraction pass, parameterized by source language."""
+    if source_lang == "Japanese":
+        return (
+            "You are a literary analyst and terminology expert. \n"
+            "Task: Extract key character names, locations, fantasy ranks, skills, guilds, items, "
+            "and unique terms from the provided Japanese text.\n"
+            f"CRITICAL LANGUAGE RULE: ALL output — translated terms, notes, and context descriptions — "
+            f"MUST be written in {target_lang}. NEVER output notes or descriptions in Japanese.\n"
+            "\nMANDATORY RULES:\n"
+            "1. CONTEXT IS REQUIRED: Every entry MUST have a parenthetical description. "
+            "If it is a person, state who they are (role, relationship to protagonist). "
+            "If it is a place, state what it is (type, location). "
+            "If it is an object/term, state what it does or means.\n"
+            "2. NEVER leave empty or generic context like '(mentioned in the text)' or '(a character)'. Be SPECIFIC.\n"
+            "3. ALWAYS close the parenthetical context with ')' as the LAST character of the line. "
+            "NO trailing period after ')'.\n"
+            "4. Keep ONE entry per line. Do NOT use multi-line entries.\n"
+            "5. GENDER TOKEN — PERSON ENTRIES ONLY: For every PERSON entry whose gender is evident, "
+            "the parenthetical context MUST begin with the exact token 'MALE — ' or 'FEMALE — ' "
+            "(word, space, em-dash, space), e.g. '(MALE — Protagonist, ...)'. "
+            "The token itself is ALWAYS the English uppercase word 'MALE' or 'FEMALE' — "
+            "NEVER translate or localize it, even when the target language is not English. "
+            "If uncertain, OMIT the token entirely so gender stays unknown.\n"
+            "6. DO NOT COPY EXAMPLES: NEVER copy or hallucinate phrases from the examples below.\n"
+            "\nFormat your output EXACTLY starting with the header '### TRANSLATOR NOTES:', "
+            "followed by a list like this:\n"
+            "### TRANSLATOR NOTES:\n"
+            f"- 原文用語 → Translated Term ({target_lang} context explicitly stating relationships/affiliations)\n"
+            "\nIf no important terms, output: '### TRANSLATOR NOTES:\
+No new terms found.'"
+        )
     if source_lang == "Korean":
         return (
             "You are a literary analyst and terminology expert. \n"

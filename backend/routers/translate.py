@@ -112,15 +112,20 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     ai_url = await get_lm_url(req.lm_url, db)
     target_lang = req.target_lang if req.target_lang != "Indonesian" else (gs.target_language if gs else "Indonesian")
     selected_model = resolve_active_model(gs, req.model)
+    translation_mode = gs.translation_mode if gs else "quality"
 
     provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model, db_session=db)
-    system_prompt = ContextEngine.build_translation_prompt(db, req.thread_id, target_lang, req.text, model=selected_model)
+    system_prompt = ContextEngine.build_translation_prompt(
+        db, req.thread_id, target_lang, req.text, model=selected_model, translation_mode=translation_mode
+    )
     max_tokens = get_chapter_translation_max_tokens(gs)
 
     import re
     image_pattern = re.compile(r"(!\[.*?\]\(.*?\))")
     protected_images = image_pattern.findall(req.text)
     protected_text = req.text
+    # Normalize repeating symbol bursts before feeding into LLM
+    protected_text = re.sub(r"([□■•�■-◿])\1{3,}", r"\1\1\1", protected_text)
     for i, img_md in enumerate(protected_images):
         protected_text = protected_text.replace(img_md, f"\n❖IMAGE_{i}❖\n")
 
@@ -153,6 +158,8 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
         resolved_thread_id = req.thread_id
         resolved_chapter_id = req.chapter_id
 
+        from services.fidelity_checker import verify_translation_fidelity
+
         if req.chapter_id:
             chapter = db.execute(select(Chapter).where(Chapter.id == req.chapter_id)).scalar_one_or_none()
             if chapter:
@@ -161,6 +168,8 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
                 clean_translation = ContextEngine.enforce_glossary_locking(db, resolved_thread_id, clean_translation)
                 chapter.content_translated = clean_translation
                 chapter.translation_status = "done"
+                fidelity = verify_translation_fidelity(chapter.content_original or "", clean_translation, chapter_id=chapter.id)
+                chapter.fidelity_warning = " | ".join(fidelity["warnings"]) if fidelity.get("is_suspicious") and fidelity.get("warnings") else None
                 db.commit()
         elif req.thread_id:
             thread = db.execute(select(Thread).where(Thread.id == req.thread_id)).scalar_one_or_none()
@@ -181,6 +190,9 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
                 translation_status="done",
             )
             db.add(chapter)
+            db.flush()
+            fidelity = verify_translation_fidelity(req.text, clean_translation, chapter_id=chapter.id)
+            chapter.fidelity_warning = " | ".join(fidelity["warnings"]) if fidelity.get("is_suspicious") and fidelity.get("warnings") else None
             db.commit()
             db.refresh(chapter)
             resolved_chapter_id = chapter.id
@@ -204,6 +216,9 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
                 translation_status="done",
             )
             db.add(chapter)
+            db.flush()
+            fidelity = verify_translation_fidelity(req.text, clean_translation, chapter_id=chapter.id)
+            chapter.fidelity_warning = " | ".join(fidelity["warnings"]) if fidelity.get("is_suspicious") and fidelity.get("warnings") else None
             db.commit()
             db.refresh(chapter)
             resolved_chapter_id = chapter.id
