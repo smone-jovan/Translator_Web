@@ -1,7 +1,14 @@
 {
   "name": "translator-web",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
+  "description": "ReadOmni AI — Self-hosted AI-powered web novel reader & translator with Desktop Control Hub, Adaptive DOM scraper, and 3-Layer Glossary Studio.",
+  "author": "SMONE (https://github.com/smone-jovan)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smone-jovan/Translator_Web.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
