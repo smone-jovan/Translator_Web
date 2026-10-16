@@ -776,8 +776,19 @@ def update_style_guide(thread_id: int, payload: StyleGuideUpdate, db: Session = 
 
 
 @router.get("/threads/{thread_id}/chapters/{chapter_id}", response_model=ChapterContent)
-async def get_chapter(thread_id: int, chapter_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Get single chapter with full content."""
+async def get_chapter(
+    thread_id: int,
+    chapter_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    track: bool = True,
+):
+    """Get single chapter with full content.
+
+    track=False is a side-effect-free read (used by the offline cache to download many
+    chapters): the reading-position bookmark is left untouched and no prefetch/translation
+    is queued.
+    """
     stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
     chapter = db.execute(stmt).scalar_one_or_none()
 
@@ -787,17 +798,22 @@ async def get_chapter(thread_id: int, chapter_id: int, background_tasks: Backgro
     # Update bookmark (Background history)
     bookmark_stmt = select(UserBookmark).where(UserBookmark.thread_id == thread_id)
     bookmark = db.execute(bookmark_stmt).scalars().first()
-    if not bookmark:
-        bookmark = UserBookmark(thread_id=thread_id, chapter_id=chapter_id, scroll_progress=0.0)
-        db.add(bookmark)
+    if not track:
+        current_scroll_progress = (
+            bookmark.scroll_progress if bookmark and bookmark.chapter_id == chapter_id else 0.0
+        )
     else:
-        # If opening a new/different chapter, reset the scroll progress to 0
-        if bookmark.chapter_id != chapter_id:
-            bookmark.chapter_id = chapter_id
-            bookmark.scroll_progress = 0.0
-    db.commit()
+        if not bookmark:
+            bookmark = UserBookmark(thread_id=thread_id, chapter_id=chapter_id, scroll_progress=0.0)
+            db.add(bookmark)
+        else:
+            # If opening a new/different chapter, reset the scroll progress to 0
+            if bookmark.chapter_id != chapter_id:
+                bookmark.chapter_id = chapter_id
+                bookmark.scroll_progress = 0.0
+        db.commit()
 
-    current_scroll_progress = bookmark.scroll_progress
+        current_scroll_progress = bookmark.scroll_progress
 
     # --- ON-DEMAND READ SCRAPING ---
     if not chapter.content_original and getattr(chapter, "source_url", None):
@@ -857,7 +873,7 @@ async def get_chapter(thread_id: int, chapter_id: int, background_tasks: Backgro
     target_lang = gs.target_language if gs else "Indonesian"
     model = resolve_active_model(gs)
     ai_url = resolve_active_base_url(gs)
-    prefetch_on = gs.prefetch_enabled == 1 if gs else False
+    prefetch_on = (gs.prefetch_enabled == 1 if gs else False) and track
 
     ws = get_db_workspace(db)
 

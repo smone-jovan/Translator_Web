@@ -221,6 +221,7 @@ Translator_Web/
 | [ADRs](docs/decisions/) | 115 architectural decision records (ADR-004 to ADR-118) |
 | [Configuration Guide](docs/Configuration_setting.md) | Detailed setup and multi-device sync instructions |
 | [Implementation Plan](docs/implementation_plan.md) | Historical task definitions & acceptance criteria |
+| [Ghost Mode Security Notes](docs/ghost-mode-security.md) | Known limitation: the Ghost PIN hides the UI but does not protect `ghost.db` from other devices on the LAN |
 
 ---
 
@@ -265,6 +266,8 @@ Under Section 4(d) of the Apache License 2.0, any public deployment, redistribut
 ## Privacy
 
 This application is **100% self-hosted**. All novels, reading bookmarks, dual-workspace databases (`app.db` and `ghost.db`), cached illustrations, and glossary contexts remain local to your machine. No telemetry or analytics are collected.
+
+> **Ghost Mode note:** the Ghost PIN is a UI privacy screen, not access control. Any device on the same network can read the ghost workspace by calling the API directly. Run the app only on networks you trust. See [Ghost Mode Security Notes](docs/ghost-mode-security.md).
 
 ---
 

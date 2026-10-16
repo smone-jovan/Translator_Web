@@ -4,11 +4,39 @@ import os
 # Ensure backend root is on sys.path so imports like `database`, `services` resolve
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import ipaddress
+import socket
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from database import Base, GlobalSetting, Chapter, Thread, UserBookmark
+
+
+_REAL_GETADDRINFO = socket.getaddrinfo
+_FAKE_PUBLIC_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def hermetic_dns(monkeypatch):
+    """
+    Keep the suite offline-safe: validate_external_url() resolves hostnames before any
+    (mocked) HTTP call, so unit tests used to fail without internet. Hostnames resolve to a
+    fixed public IP; IP literals and localhost keep real behaviour. Tests that need a specific
+    resolution still monkeypatch socket.getaddrinfo themselves, which overrides this.
+    """
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else host
+        if not name or name == "localhost":
+            return _REAL_GETADDRINFO(host, port, *args, **kwargs)
+        try:
+            ipaddress.ip_address(name)
+            return _REAL_GETADDRINFO(host, port, *args, **kwargs)
+        except ValueError:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_FAKE_PUBLIC_IP, port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
 @pytest.fixture

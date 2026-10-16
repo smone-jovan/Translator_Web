@@ -6,6 +6,8 @@ import { getApiUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { syncEngineLoadMode, ENGINE_LOAD_MODE_EVENT } from '@/lib/settingsSync';
+import OfflineCachePanel from '@/components/OfflineCachePanel';
+import type { ThreadDetail } from './types';
 
 interface SettingsOverlayProps {
   fontSize: number;
@@ -23,6 +25,8 @@ interface SettingsOverlayProps {
   onClose: () => void;
   mobileMode?: boolean;
   threadId?: number;
+  offlineThread?: ThreadDetail | null;
+  offlineStartIndex?: number | null;
 }
 
 export default function SettingsOverlay({
@@ -41,6 +45,8 @@ export default function SettingsOverlay({
   onClose,
   mobileMode = false,
   threadId,
+  offlineThread,
+  offlineStartIndex,
 }: SettingsOverlayProps) {
   const [styleGuide, setStyleGuide] = useState('');
   const [isSavingGuide, setIsSavingGuide] = useState(false);
@@ -263,6 +269,13 @@ export default function SettingsOverlay({
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Pocket Offline Cache (per-thread) */}
+          {offlineThread && (
+            <div className="pt-3 border-t border-[var(--border)]">
+              <OfflineCachePanel thread={offlineThread} currentIndex={offlineStartIndex} compact />
             </div>
           )}
 

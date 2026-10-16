@@ -1,8 +1,8 @@
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from database import GlobalSetting
+from database import GlobalSetting, get_db_workspace
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.scrapers.base import ScrapedNovelMetadata
@@ -23,6 +23,17 @@ class MetadataScraperEngine:
             "sfacg": SFACGAdapter(),
             "novalpie": NovalpieAdapter(),
         }
+
+    def _get_adapter(self, source: str, workspace: Optional[str] = None, db_session: Session | None = None):
+        """
+        Returns the adapter for `source`. NovalpieAdapter reads per-workspace auth/concurrency
+        from GlobalSetting, so it is built per call with the request's workspace (CLAUDE.md
+        invariant #2) instead of reusing the shared instance bound to the process-global default.
+        """
+        ws = workspace or (get_db_workspace(db_session) if db_session is not None else None)
+        if source == "novalpie" and ws:
+            return NovalpieAdapter(workspace=ws)
+        return self.adapters.get(source)
 
     async def clean_title_with_ai(
         self,
@@ -69,7 +80,8 @@ class MetadataScraperEngine:
         source: str = "novelupdates",
         search_by: str = "original",
         include_cover: bool = True,
-        db_session: Session = None
+        db_session: Session = None,
+        workspace: Optional[str] = None,
     ) -> List[ScrapedNovelMetadata]:
         """
         Coordinates title cleaning and triggers the chosen scraper adapter to return candidates.
@@ -99,7 +111,7 @@ class MetadataScraperEngine:
             print(f"✨ [Engine] Raw query: '{query}' -> Cleaned query: '{cleaned_query}'")
 
         # 4. Trigger active adapter
-        adapter = self.adapters.get(active_source)
+        adapter = self._get_adapter(active_source, workspace=workspace, db_session=db_session)
         if not adapter:
             return []
 
@@ -111,7 +123,8 @@ class MetadataScraperEngine:
         source: str = "novelupdates",
         search_by: str = "original",
         include_cover: bool = True,
-        db_session: Session = None
+        db_session: Session = None,
+        workspace: Optional[str] = None,
     ) -> ScrapedNovelMetadata:
         """
         Coordinates title cleaning and triggers the chosen scraper adapter.
@@ -141,7 +154,7 @@ class MetadataScraperEngine:
             print(f"✨ [Engine] Raw query: '{query}' -> Cleaned query: '{cleaned_query}'")
 
         # 4. Trigger active adapter
-        adapter = self.adapters.get(active_source)
+        adapter = self._get_adapter(active_source, workspace=workspace, db_session=db_session)
         if not adapter:
             return ScrapedNovelMetadata(
                 success=False,
