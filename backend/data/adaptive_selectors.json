@@ -1,39 +1,55 @@
 {
   "novalpie.cc::chapter_content": {
-    "tag": "article",
-    "id_tokens": [],
+    "tag": "div",
+    "id_tokens": [
+      "chapter"
+    ],
     "class_tokens": [
-      "reader",
-      "content"
+      "chapter",
+      "item"
     ],
-    "attr_names": [],
-    "parent_tag": "[document]",
-    "parent_class_tokens": [],
-    "grandparent_tag": "",
-    "depth": 1,
-    "top_child_tags": [
-      "p",
-      "img",
-      "h2",
-      "div"
+    "attr_names": [
+      "data-chapter-id",
+      "data-chapter-title",
+      "data-v-d85bbecc"
     ],
-    "len_bucket": "medium",
-    "link_density": 0.0,
-    "p_count": 7,
-    "br_count": 0
-  },
-  "novalpie.cc::chapter_title": {
-    "tag": "h2",
-    "id_tokens": [],
-    "class_tokens": [],
-    "attr_names": [],
     "parent_tag": "article",
     "parent_class_tokens": [
       "reader",
       "content"
     ],
-    "grandparent_tag": "[document]",
-    "depth": 2,
+    "grandparent_tag": "main",
+    "depth": 10,
+    "top_child_tags": [
+      "div"
+    ],
+    "len_bucket": "long",
+    "link_density": 0.0,
+    "p_count": 0,
+    "br_count": 274
+  },
+  "novalpie.cc::chapter_title": {
+    "tag": "h2",
+    "id_tokens": [],
+    "class_tokens": [
+      "text",
+      "xl",
+      "font",
+      "bold",
+      "gray"
+    ],
+    "attr_names": [
+      "data-v-d85bbecc"
+    ],
+    "parent_tag": "div",
+    "parent_class_tokens": [
+      "chapter",
+      "separator",
+      "text",
+      "center"
+    ],
+    "grandparent_tag": "div",
+    "depth": 12,
     "top_child_tags": [],
     "len_bucket": "short",
     "link_density": 0.0,

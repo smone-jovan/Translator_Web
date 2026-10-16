@@ -718,6 +718,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                                         if isinstance(user_obj, dict):
                                             user_obj["role"] = "admin"
                                             user_obj["is_adult"] = True
+                                            user_obj["is_adult_verified"] = 1
                                             user_obj["created_at"] = "2020-01-01T00:00:00.000000Z"
                                         route.fulfill(response=resp, body=json.dumps(data))
                                         return
