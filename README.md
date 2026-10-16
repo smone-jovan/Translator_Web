@@ -176,6 +176,7 @@ Translator_Web/
 | [SDLC](docs/SDLC.md) | Software development lifecycle & Categorized ADR Index |
 | [ADRs](docs/decisions/) | 115 architectural decision records (ADR-004 to ADR-118) |
 | [Implementation Plan](docs/implementation_plan.md) | Task definitions & acceptance criteria |
+| [Ghost Mode Security Notes](docs/ghost-mode-security.md) | Known limitation: the Ghost PIN hides the UI but does not protect `ghost.db` from other devices on the LAN |
 
 ---
 
@@ -217,6 +218,8 @@ Under Section 4(d) of the Apache License 2.0, any public deployment, redistribut
 ## Privacy
 
 This application is **100% self-hosted**. No data leaves your network unless you explicitly configure a cloud AI provider. No analytics, no tracking, no external APIs.
+
+> **Ghost Mode note:** the Ghost PIN is a UI privacy screen, not access control. Any device on the same network can read the ghost workspace by calling the API directly. Run the app only on networks you trust. See [Ghost Mode Security Notes](docs/ghost-mode-security.md).
 
 ---
 

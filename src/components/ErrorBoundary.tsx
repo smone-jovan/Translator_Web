@@ -1,6 +1,7 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getWorkspaceStorageKey } from '@/lib/api';
 
 interface Props {
   children: ReactNode;
@@ -31,6 +32,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   handleResetSession = () => {
     try {
+      // ADR-118: the app session key is workspace-scoped; also drop the pre-ADR-118 legacy key.
+      localStorage.removeItem(getWorkspaceStorageKey('readomni_app_session_v1'));
       localStorage.removeItem('readomni_app_session_v1');
       sessionStorage.clear();
     } catch { /* ignore */ }

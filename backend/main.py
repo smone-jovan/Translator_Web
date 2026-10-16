@@ -110,6 +110,9 @@ async def serve_images(rest_of_path: str):
     base_dir = Path("uploads/images").resolve()
     try:
         cleaned_rel = rest_of_path.lstrip("/\\")
+        # Drive-letter paths (C:/...) are absolute on Windows; reject them on every OS for consistency.
+        if len(cleaned_rel) >= 2 and cleaned_rel[1] == ":" and cleaned_rel[0].isalpha():
+            raise HTTPException(status_code=403, detail="Access denied")
         candidate = (base_dir / cleaned_rel).resolve()
         is_safe = candidate.is_relative_to(base_dir)
     except Exception:

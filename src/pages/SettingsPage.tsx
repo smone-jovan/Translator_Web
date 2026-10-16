@@ -35,6 +35,7 @@ import { getApiUrl, clearWorkspaceSessionCache } from "@/lib/api";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/use-confirm";
 import ApiKeyManager from "@/components/ApiKeyManager";
+import OfflineCachePanel from "@/components/OfflineCachePanel";
 import {
   getStoredEngineLoadMode,
   syncEngineLoadMode,
@@ -2443,6 +2444,11 @@ export default function SettingsPage() {
                   </span>
                 </Button>
               </div>
+            </div>
+
+            {/* Pocket Offline Cache (IndexedDB on this device) */}
+            <div className="pt-5 border-t border-[var(--border)]">
+              <OfflineCachePanel />
             </div>
           </CardContent>
         </Card>

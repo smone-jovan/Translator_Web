@@ -529,7 +529,8 @@ async def scrape_metadata(
         source=req.source,
         search_by=req.search_by,
         include_cover=req.include_cover,
-        db_session=db
+        db_session=db,
+        workspace=get_db_workspace(db),
     )
 
     if not result.success:
@@ -594,7 +595,8 @@ async def scrape_candidates_route(
         source=req.source,
         search_by=req.search_by,
         include_cover=req.include_cover,
-        db_session=db
+        db_session=db,
+        workspace=get_db_workspace(db),
     )
 
     if not results:

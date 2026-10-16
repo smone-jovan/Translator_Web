@@ -9,6 +9,7 @@ import {
   Sparkles,
   Eraser,
   Wand2,
+  WifiOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,12 @@ import ChapterGrid from "@/components/reader/ChapterGrid";
 import ThreadImageGallery from "@/components/reader/ThreadImageGallery";
 import ChapterReader from "@/components/reader/ChapterReader";
 import type { ThreadDetail, ChapterContent } from "@/components/reader/types";
+import {
+  getOfflineChapter,
+  getOfflineThread,
+  isServerUnreachableStatus,
+  refreshOfflineChapterIfCached,
+} from "@/lib/offlineStorage";
 
 interface ReaderPageProps {
   threadId: number;
@@ -112,6 +119,10 @@ export default function ReaderPage({
     null
   );
   const [loadingContent, setLoadingContent] = useState(false);
+  // Pocket Offline Cache: true while content is being served from IndexedDB
+  const [isOffline, setIsOffline] = useState(false);
+  // Guards the offline thread fallback against stale (slower) failed polls
+  const threadRequestIdRef = useRef(0);
   const [translatedText, setTranslatedText] = useState("");
   const [isTranslating, setIsTranslating] = useState(false);
   const [showChapterList, setShowChapterList] = useState(
@@ -353,26 +364,13 @@ export default function ReaderPage({
       // On silent refresh (polling), skip if tab is hidden unless forced
       if (opts?.silent && !opts?.force && document.hidden) return;
 
-      try {
-        const res = await fetch(
-          getApiUrl(`/api/threads/${threadId}?t=${Date.now()}`),
-          {
-            cache: "no-store",
-          }
-        );
-        if (!res.ok) throw new Error("Network response not ok");
-        const data: ThreadDetail = await res.json();
-        setThread(data);
-        if (data.last_read_id) setLastReadId(data.last_read_id);
-
-        // Cache to sessionStorage for fast restore after mobile screen-off reload
-        try {
-          sessionStorage.setItem(
-            CACHE_KEY,
-            JSON.stringify({ data, ts: Date.now() })
-          );
-        } catch {
-          /* quota exceeded — ignore */
+      const applyThreadData = (data: ThreadDetail, keepLoaded = false) => {
+        // keepLoaded: an offline snapshot must not overwrite fresher data already on screen
+        if (keepLoaded) {
+          setThread((prev) => prev ?? data);
+        } else {
+          setThread(data);
+          if (data.last_read_id) setLastReadId(data.last_read_id);
         }
 
         // Only restore chapter index ONCE on initial load if not yet chosen/handled
@@ -399,8 +397,46 @@ export default function ReaderPage({
           }
           initialReaderSessionRef.current = null;
         }
+      };
+
+      const requestId = ++threadRequestIdRef.current;
+      let networkFailed = false;
+      try {
+        const res = await fetch(
+          getApiUrl(`/api/threads/${threadId}?t=${Date.now()}`),
+          {
+            cache: "no-store",
+          }
+        ).catch((err) => {
+          networkFailed = true;
+          throw err;
+        });
+        if (!res.ok) {
+          networkFailed = isServerUnreachableStatus(res.status);
+          throw new Error("Network response not ok");
+        }
+        const data: ThreadDetail = await res.json();
+        applyThreadData(data);
+        setIsOffline(false);
+
+        // Cache to sessionStorage for fast restore after mobile screen-off reload
+        try {
+          sessionStorage.setItem(
+            CACHE_KEY,
+            JSON.stringify({ data, ts: Date.now() })
+          );
+        } catch {
+          /* quota exceeded — ignore */
+        }
       } catch (err) {
         console.error("Failed to fetch thread:", err);
+        // Server unreachable (not an HTTP error): fall back to the chapter list saved offline
+        if (!networkFailed) return;
+        const offlineThread = await getOfflineThread(threadId);
+        if (offlineThread && requestId === threadRequestIdRef.current) {
+          applyThreadData(offlineThread, true);
+          setIsOffline(true);
+        }
       }
     },
     [threadId, initialChapterId]
@@ -763,6 +799,13 @@ export default function ReaderPage({
 
   const lastFetchedStatusRef = useRef<string | null>(null);
 
+  // Header (and its Offline badge) is hidden while reading, so announce offline mode once
+  useEffect(() => {
+    if (isOffline) {
+      toast.info("Mode offline: membaca dari cache perangkat", { id: "reader-offline-mode" });
+    }
+  }, [isOffline]);
+
   // Handle Chapter Selection & Mobile Screen Wake Recovery
   useEffect(() => {
     if (!thread || selectedChapterIdx === null) return;
@@ -808,14 +851,21 @@ export default function ReaderPage({
       }
 
       setLoadingContent(true);
+      let networkFailed = false;
       try {
         const res = await fetch(
           getApiUrl(`/api/threads/${threadId}/chapters/${ch.id}`),
           {
             signal: abortController.signal,
           }
-        );
-        if (!res.ok) throw new Error("Failed to fetch chapter content");
+        ).catch((err) => {
+          networkFailed = true;
+          throw err;
+        });
+        if (!res.ok) {
+          networkFailed = isServerUnreachableStatus(res.status);
+          throw new Error("Failed to fetch chapter content");
+        }
         const data: ChapterContent = await res.json();
 
         // Only commit state if this is still the active request
@@ -826,6 +876,8 @@ export default function ReaderPage({
           setChapterContent(data);
           setTranslatedText(data.content_translated || "");
           setLastReadId(ch.id);
+          setIsOffline(false);
+          refreshOfflineChapterIfCached(threadId, data);
 
           try {
             sessionStorage.setItem(CH_CACHE_KEY, JSON.stringify(data));
@@ -844,8 +896,11 @@ export default function ReaderPage({
                   `${threadId}_${adjCh.id}`
                 );
                 if (sessionStorage.getItem(adjKey)) return;
+                // track=0: warming N±1 must not move the server-side reading position
                 fetch(
-                  getApiUrl(`/api/threads/${threadId}/chapters/${adjCh.id}`)
+                  getApiUrl(
+                    `/api/threads/${threadId}/chapters/${adjCh.id}?track=0`
+                  )
                 )
                   .then((r) => (r.ok ? r.json() : null))
                   .then((adjData) => {
@@ -868,6 +923,21 @@ export default function ReaderPage({
           if (activeRequestIdRef.current === currentRequestId) {
             lastFetchedIdRef.current = null;
             lastFetchedStatusRef.current = null;
+          }
+          // Server unreachable (not an HTTP error): serve the chapter saved offline, if any
+          if (networkFailed) {
+            const offlineData = await getOfflineChapter(threadId, ch.id);
+            if (activeRequestIdRef.current === currentRequestId) {
+              if (offlineData) {
+                setChapterContent(offlineData);
+                setTranslatedText(offlineData.content_translated || "");
+                setIsOffline(true);
+              } else {
+                toast.error("Bab ini belum disimpan untuk dibaca offline", {
+                  id: "reader-offline-missing",
+                });
+              }
+            }
           }
         }
       } finally {
@@ -1406,6 +1476,8 @@ export default function ReaderPage({
           onClose={() => setShowSettings(false)}
           mobileMode={!showChapterList}
           threadId={threadId}
+          offlineThread={thread}
+          offlineStartIndex={selectedChapterIdx}
         />
       )}
 
@@ -1429,6 +1501,15 @@ export default function ReaderPage({
           </h1>
           <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-widest flex items-center gap-2 truncate">
             {thread.chapter_count} chapters • {thread.source_type}
+            {isOffline && (
+              <span
+                className="flex items-center gap-1 text-amber-500"
+                title="Server tidak terjangkau — membaca dari cache perangkat"
+              >
+                <WifiOff className="w-2.5 h-2.5" />
+                Offline
+              </span>
+            )}
             {isTranslatingTitles && (
               <span className="flex items-center gap-1 text-[var(--accent)] animate-pulse">
                 <Loader2 className="w-2.5 h-2.5 animate-spin" />
