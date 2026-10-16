@@ -39,6 +39,7 @@ import ScrapeNUModal from "@/components/ScrapeNUModal";
 import { useConfirm } from "@/hooks/use-confirm";
 import { toast } from "sonner";
 import { syncEngineLoadMode } from "@/lib/settingsSync";
+import { clearOfflineThread } from "@/lib/offlineStorage";
 
 type FilterTab = "all" | "reading" | "unread" | "completed";
 type SortOption = "last_read" | "recent_added" | "progress" | "title";
@@ -719,8 +720,10 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     if (!isConfirmed) return;
 
     try {
-      await fetch(getApiUrl(`/api/threads/${id}`), { method: "DELETE" });
+      const res = await fetch(getApiUrl(`/api/threads/${id}`), { method: "DELETE" });
       invalidateThreadCache(id);
+      // The id may be reused by the next import; drop this device's offline copy too
+      if (res.ok) clearOfflineThread(id).catch(() => {});
       fetchThreads();
       toast.success("Book deleted successfully");
     } catch {

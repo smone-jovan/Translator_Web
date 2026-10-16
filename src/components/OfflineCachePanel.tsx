@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, Trash2, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, DESTRUCTIVE_TEXT } from "@/lib/utils";
 import { useConfirm } from "@/hooks/use-confirm";
 import type { ThreadDetail } from "@/components/reader/types";
 import {
@@ -36,7 +36,7 @@ export default function OfflineCachePanel({
   const { confirm } = useConfirm();
   const supported = isOfflineCacheSupported();
   const [count, setCount] = useState(DEFAULT_OFFLINE_CHAPTER_COUNT);
-  const [threadCached, setThreadCached] = useState(0);
+  const [cachedIds, setCachedIds] = useState<Set<number>>(new Set());
   const [stats, setStats] = useState<OfflineStats>({ chapters: 0, threads: 0, bytes: 0 });
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,12 +49,14 @@ export default function OfflineCachePanel({
     if (!supported) return;
     let cancelled = false;
     (async () => {
-      const nextStats = await getOfflineStats();
-      const nextThreadCached =
-        threadId !== undefined ? (await getOfflineChapterIds(threadId)).size : 0;
-      if (cancelled) return;
-      setStats(nextStats);
-      setThreadCached(nextThreadCached);
+      if (threadId !== undefined) {
+        // Reader mode only shows this novel's count; skip the full-store stats scan
+        const nextIds = await getOfflineChapterIds(threadId);
+        if (!cancelled) setCachedIds(nextIds);
+      } else {
+        const nextStats = await getOfflineStats();
+        if (!cancelled) setStats(nextStats);
+      }
     })();
     return () => {
       cancelled = true;
@@ -69,8 +71,14 @@ export default function OfflineCachePanel({
     );
   }
 
+  const threadCached = cachedIds.size;
   const startIndex = currentIndex ?? 0;
-  const available = thread ? selectChaptersToCache(thread, startIndex, count).length : 0;
+  const targets = thread ? selectChaptersToCache(thread, startIndex, count) : [];
+  const available = targets.length;
+  // Name the range so "next N" is unambiguous (in list mode it starts at the first chapter)
+  const firstChapterNumber =
+    thread && targets.length > 0 ? thread.chapters.indexOf(targets[0]) + 1 : null;
+  const allAlreadyCached = available > 0 && targets.every((ch) => cachedIds.has(ch.id));
 
   const handleSave = async () => {
     if (!thread || busy) return;
@@ -159,8 +167,9 @@ export default function OfflineCachePanel({
                 key={n}
                 type="button"
                 variant={count === n ? "default" : "outline"}
+                aria-pressed={count === n}
                 size="sm"
-                className="text-[10px] h-9"
+                className="text-xs h-11 sm:h-9"
                 onClick={() => setCount(n)}
                 disabled={busy}
               >
@@ -171,20 +180,27 @@ export default function OfflineCachePanel({
           <Button
             type="button"
             size="sm"
-            className="w-full text-xs h-11 gap-1.5"
+            className="w-full text-xs h-auto min-h-11 py-2 gap-1.5 whitespace-normal"
             onClick={handleSave}
-            disabled={busy}
+            disabled={busy || available === 0}
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-3.5 h-3.5 shrink-0" />
             {progress
               ? `Menyimpan ${progress.done}/${progress.total}...`
-              : `Simpan ${available} bab berikutnya`}
+              : available === 0
+                ? "Tidak ada bab terjemahan"
+                : allAlreadyCached
+                  ? `Perbarui ${available} bab mulai Bab ${firstChapterNumber} (sudah tersimpan)`
+                  : `Simpan ${available} bab mulai Bab ${firstChapterNumber}`}
           </Button>
+          <span className="sr-only" aria-live="polite">
+            {progress ? `Menyimpan bab offline ${progress.done} dari ${progress.total}` : ""}
+          </span>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="w-full text-xs h-11 gap-1.5 border-rose-500/30 text-rose-500 hover:bg-rose-500/10"
+            className={cn("w-full text-xs h-11 gap-1.5 border-rose-500/30 hover:bg-rose-500/10", DESTRUCTIVE_TEXT)}
             onClick={handleClearThread}
             disabled={busy || threadCached === 0}
           >
@@ -204,7 +220,10 @@ export default function OfflineCachePanel({
             type="button"
             variant="outline"
             size="sm"
-            className="rounded-xl h-9 gap-1.5 border-rose-500/30 text-rose-500 hover:bg-rose-500/10 font-bold text-xs w-full sm:w-auto"
+            className={cn(
+              "rounded-xl h-11 sm:h-9 gap-1.5 border-rose-500/30 hover:bg-rose-500/10 hover:border-rose-500/50 bg-[var(--card)] font-bold text-xs w-full sm:w-auto",
+              DESTRUCTIVE_TEXT
+            )}
             onClick={handleClearAll}
             disabled={busy || (stats.chapters === 0 && stats.threads === 0)}
           >

@@ -7,7 +7,7 @@
  * Isolasi workspace (CLAUDE.md invariant #3): nama database dibungkus
  * getWorkspaceStorageKey(), jadi data `main` dan `ghost` tidak pernah bercampur.
  */
-import { getApiUrl, getWorkspaceStorageKey } from "@/lib/api";
+import { getActiveWorkspace, getApiUrl, getWorkspaceStorageKey } from "@/lib/api";
 import type { ChapterContent, ThreadDetail } from "@/components/reader/types";
 
 const DB_VERSION = 1;
@@ -37,8 +37,15 @@ export interface OfflineStats {
   bytes: number;
 }
 
-export function getOfflineDbName(): string {
-  return getWorkspaceStorageKey("readomni_offline_v1");
+const DB_BASE_NAME = "readomni_offline_v1";
+
+/**
+ * Nama database untuk workspace aktif, atau untuk `workspace` yang diberikan eksplisit
+ * (dipakai proses panjang seperti cacheChaptersAhead agar tidak berpindah workspace di tengah jalan).
+ * Formatnya sama dengan getWorkspaceStorageKey(): `${base}_${workspace}`.
+ */
+export function getOfflineDbName(workspace?: string): string {
+  return workspace ? `${DB_BASE_NAME}_${workspace}` : getWorkspaceStorageKey(DB_BASE_NAME);
 }
 
 export function isOfflineCacheSupported(): boolean {
@@ -71,18 +78,29 @@ function promisify<T>(req: IDBRequest<T>): Promise<T> {
 function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    // On a request-level error tx.error is still null while the event bubbles; use the request's error
+    tx.onerror = (ev) =>
+      reject(
+        tx.error ??
+          (ev.target as IDBRequest | null)?.error ??
+          new DOMException("IndexedDB transaction failed", "UnknownError")
+      );
+    tx.onabort = () =>
+      reject(tx.error ?? new DOMException("IndexedDB transaction aborted", "AbortError"));
   });
 }
 
-function openDb(): Promise<IDBDatabase> {
+function isQuotaError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "QuotaExceededError";
+}
+
+function openDb(workspace?: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (!isOfflineCacheSupported()) {
       reject(new Error("IndexedDB tidak tersedia di browser ini"));
       return;
     }
-    const req = indexedDB.open(getOfflineDbName(), DB_VERSION);
+    const req = indexedDB.open(getOfflineDbName(workspace), DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(CHAPTER_STORE)) {
@@ -98,8 +116,11 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
-  const db = await openDb();
+async function withDb<T>(
+  fn: (db: IDBDatabase) => Promise<T>,
+  workspace?: string
+): Promise<T> {
+  const db = await openDb(workspace);
   try {
     return await fn(db);
   } finally {
@@ -124,13 +145,13 @@ export function selectChaptersToCache(
     .slice(0, Math.max(0, count));
 }
 
-export async function saveOfflineThread(thread: ThreadDetail): Promise<void> {
+export async function saveOfflineThread(thread: ThreadDetail, workspace?: string): Promise<void> {
   await withDb(async (db) => {
     const tx = db.transaction(THREAD_STORE, "readwrite");
     const record: StoredThread = { threadId: thread.id, savedAt: Date.now(), thread };
     tx.objectStore(THREAD_STORE).put(record);
     await txDone(tx);
-  });
+  }, workspace);
 }
 
 export async function getOfflineThread(threadId: number): Promise<ThreadDetail | null> {
@@ -149,7 +170,8 @@ export async function getOfflineThread(threadId: number): Promise<ThreadDetail |
 
 export async function saveOfflineChapter(
   threadId: number,
-  content: ChapterContent
+  content: ChapterContent,
+  workspace?: string
 ): Promise<void> {
   const json = JSON.stringify(content);
   await withDb(async (db) => {
@@ -164,7 +186,7 @@ export async function saveOfflineChapter(
     };
     tx.objectStore(CHAPTER_STORE).put(record);
     await txDone(tx);
-  });
+  }, workspace);
 }
 
 export async function getOfflineChapter(
@@ -189,8 +211,9 @@ export async function getOfflineChapterIds(threadId: number): Promise<Set<number
     return await withDb(async (db) => {
       const tx = db.transaction(CHAPTER_STORE, "readonly");
       const index = tx.objectStore(CHAPTER_STORE).index("threadId");
-      const recs = (await promisify(index.getAll(threadId))) as StoredChapter[];
-      return new Set(recs.map((r) => r.chapterId));
+      // Keys only (`${threadId}_${chapterId}`): avoids deserializing every chapter body
+      const keys = (await promisify(index.getAllKeys(threadId))) as IDBValidKey[];
+      return new Set(keys.map((k) => Number(String(k).split("_")[1])));
     });
   } catch {
     return new Set();
@@ -205,10 +228,33 @@ export async function refreshOfflineChapterIfCached(
   threadId: number,
   content: ChapterContent
 ): Promise<void> {
-  if (!content.content_translated?.trim() || content.translation_status === "processing") return;
+  if (!isUsableTranslation(content)) return;
   try {
     const existing = await getOfflineChapter(threadId, content.id);
     if (existing) await saveOfflineChapter(threadId, content);
+  } catch {
+    /* best effort */
+  }
+}
+
+function isUsableTranslation(content: ChapterContent): boolean {
+  return Boolean(content.content_translated?.trim()) && content.translation_status !== "processing";
+}
+
+/**
+ * Selaraskan snapshot daftar bab saat server terjangkau. Bila `created_at` berbeda, ID novel ini
+ * sudah dipakai ulang oleh novel lain (SQLite tanpa AUTOINCREMENT) sehingga cache lama dibuang.
+ * Judul sengaja tidak dipakai: rename, "Translate titles", dan scrape metadata mengubahnya secara sah.
+ */
+export async function refreshOfflineThreadIfCached(thread: ThreadDetail): Promise<void> {
+  try {
+    const existing = await getOfflineThread(thread.id);
+    if (!existing) return;
+    if (existing.created_at && thread.created_at && existing.created_at !== thread.created_at) {
+      await clearOfflineThread(thread.id);
+      return;
+    }
+    if (JSON.stringify(existing) !== JSON.stringify(thread)) await saveOfflineThread(thread);
   } catch {
     /* best effort */
   }
@@ -230,8 +276,10 @@ export async function cacheChaptersAhead(
   count: number,
   onProgress?: (done: number, total: number) => void
 ): Promise<CacheAheadResult> {
+  // Workspace tab ini (dikunci saat halaman dimuat, lihat api.ts); dipakai eksplisit untuk fetch & IndexedDB
+  const workspace = getActiveWorkspace();
   const targets = selectChaptersToCache(thread, startIndex, count);
-  await saveOfflineThread(thread);
+  await saveOfflineThread(thread, workspace);
   // Minta penyimpanan persisten agar browser (terutama Safari iOS) tidak menghapusnya diam-diam
   try {
     await navigator.storage?.persist?.();
@@ -246,14 +294,17 @@ export async function cacheChaptersAhead(
     try {
       // track=0: unduhan massal tidak boleh memindahkan posisi baca atau memicu prefetch di server
       const res = await fetch(
-        getApiUrl(`/api/threads/${thread.id}/chapters/${ch.id}?track=0`)
+        getApiUrl(`/api/threads/${thread.id}/chapters/${ch.id}?track=0`),
+        { headers: { "X-Workspace": workspace } }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ChapterContent = await res.json();
-      await saveOfflineChapter(thread.id, data);
+      // Jangan simpan bab yang terjemahannya kosong/sedang diproses (mis. setelah fix-truncated)
+      if (!isUsableTranslation(data)) throw new Error("No usable translation");
+      await saveOfflineChapter(thread.id, data, workspace);
       saved++;
     } catch (err) {
-      if (err instanceof DOMException && err.name === "QuotaExceededError") {
+      if (isQuotaError(err)) {
         // Penyimpanan perangkat penuh: bab sisanya pasti gagal juga
         failed += targets.length - i;
         onProgress?.(targets.length, targets.length);

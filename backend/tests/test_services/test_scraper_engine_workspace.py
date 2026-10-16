@@ -95,3 +95,31 @@ def test_scrape_metadata_route_passes_db_workspace_explicitly(db_session, defaul
             assert mock_scrape.call_args.kwargs.get("workspace") == "ghost"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_scrape_candidates_route_builds_novalpie_adapter_for_request_workspace(db_session, default_global_settings):
+    """Behaviour-level check: the adapter the route actually uses carries the request workspace."""
+    from main import app
+
+    db_session._workspace = "ghost"
+    thread = Thread(title="T", source_url="https://novalpie.cc/book/9")
+    db_session.add(thread)
+    db_session.commit()
+    seen = []
+
+    async def fake_candidates(self, query, **kwargs):
+        seen.append(self.workspace)
+        return []
+
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with patch.object(NovalpieAdapter, "scrape_candidates", fake_candidates):
+            with TestClient(app) as c:
+                res = c.post(f"/api/threads/{thread.id}/scrape_candidates", json={"source": "novalpie"})
+        assert res.status_code == 404  # no candidates found
+        assert seen == ["ghost"]
+    finally:
+        app.dependency_overrides.clear()

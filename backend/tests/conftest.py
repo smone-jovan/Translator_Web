@@ -39,6 +39,55 @@ def hermetic_dns(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
+@pytest.fixture(autouse=True)
+def isolated_adaptive_store(monkeypatch, tmp_path):
+    """
+    AdaptiveDOM auto-saves selector signatures to backend/data/adaptive_selectors.json, a
+    git-tracked file. Point it at a per-test temp file and start from an empty memory cache so
+    tests neither dirty the working tree nor depend on each other's learned signatures.
+    """
+    from services.scrapers import adaptive_dom
+
+    monkeypatch.setattr(adaptive_dom, "_DEFAULT_STORE_PATH", tmp_path / "adaptive_selectors.json")
+    monkeypatch.setattr(adaptive_dom, "_SIGNATURE_MEMORY_CACHE", {})
+
+
+_REAL_CONNECT = socket.socket.connect
+_REAL_CONNECT_EX = socket.socket.connect_ex
+_PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
+@pytest.fixture(autouse=True)
+def no_external_network(monkeypatch):
+    """
+    Fail closed: hermetic_dns maps hostnames to a real public IP, so a test whose HTTP mock
+    does not take effect would otherwise reach the internet. Any non-loopback TCP connect
+    raises instead; proxy variables are dropped so traffic cannot tunnel via a local proxy.
+    """
+    for var in _PROXY_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    def _guard(addr):
+        if isinstance(addr, tuple) and addr:
+            try:
+                ip = ipaddress.ip_address(str(addr[0]).split("%")[0])
+            except ValueError:
+                return
+            if not ip.is_loopback:
+                raise OSError(f"[test guard] external network access blocked: {addr!r}")
+
+    def guarded_connect(self, addr):
+        _guard(addr)
+        return _REAL_CONNECT(self, addr)
+
+    def guarded_connect_ex(self, addr):
+        _guard(addr)
+        return _REAL_CONNECT_EX(self, addr)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+
+
 @pytest.fixture
 def db_session():
     """In-memory SQLite session for isolated testing."""

@@ -274,7 +274,7 @@ class ContextEngine:
             if custom_instructions:
                 full_prompt += f"\n[Custom Instructions]:\n{custom_instructions}\n"
 
-            global_limit = gs.max_context_terms if gs else 50
+            global_limit = gs.max_context_terms if (gs and gs.max_context_terms) else 150
             effective_limit = limit if limit is not None else (global_limit if is_quality else min(10, global_limit))
 
             all_entries_stmt = (
@@ -441,7 +441,7 @@ class ContextEngine:
     def enforce_context_limit(db: Session, thread_id: int, protected_ids: set[int] | None = None):
         gs_stmt = select(GlobalSetting)
         gs = db.execute(gs_stmt).scalar_one_or_none()
-        limit = gs.max_context_terms if gs else 50
+        limit = gs.max_context_terms if (gs and gs.max_context_terms) else 150
 
         active_stmt = (
             select(LorebookEntry)

@@ -11,6 +11,14 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Text colour for destructive actions. rose-500 measured ~3.1-3.7:1 on sepia/white and on the
+ * dark-blue omni theme. rose-700 on the light themes (sepia, white), rose-300 on omni and
+ * rose-400 on the near-black themes keep it >= 4.5:1 (WCAG 1.4.3).
+ */
+export const DESTRUCTIVE_TEXT =
+  "text-rose-400 [:root[data-theme=white]_&]:text-rose-700 [:root[data-theme=sepia]_&]:text-rose-700 [:root[data-theme=omni]_&]:text-rose-300";
+
+/**
  * Basic markdown parser for rendering bold (**text**) and italic (*text*)
  * strings safely inside React elements.
  */

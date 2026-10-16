@@ -148,9 +148,15 @@ export default function App() {
           onActiveChapterChange={setOpenChapterId}
         />
         {!isReadingChapter && <BulkStatusCenter />}
+        {/* While reading, the bottom of the screen holds the thumb toolbar and the settings
+            sheet; toasts there covered Prev/List/Settings/Next and the sheet's own buttons.
+            At the top they sit below the reader's three control rows (page header 4rem + reader
+            nav 3.5rem + pane header 2.5rem = 10rem), over text only. */}
         <Toaster
           theme="system"
-          position="bottom-center"
+          position={isReadingChapter ? "top-center" : "bottom-center"}
+          offset={isReadingChapter ? { top: "10.5rem" } : undefined}
+          mobileOffset={isReadingChapter ? { top: "10.5rem" } : undefined}
           richColors
           closeButton
         />

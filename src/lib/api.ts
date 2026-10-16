@@ -4,9 +4,11 @@ export const API_BASE = "";
 export const getApiUrl = (path: string) =>
   path.startsWith("/") ? path : `/${path}`;
 
-export function getActiveWorkspace(): string {
+const WORKSPACE_STORAGE_KEY = "readomni_workspace";
+
+function readStoredWorkspace(): string {
   try {
-    const ws = localStorage.getItem("readomni_workspace");
+    const ws = localStorage.getItem(WORKSPACE_STORAGE_KEY);
     if (ws && ["main", "ghost"].includes(ws.toLowerCase())) {
       return ws.toLowerCase();
     }
@@ -14,6 +16,18 @@ export function getActiveWorkspace(): string {
     // ignore
   }
   return "main";
+}
+
+/**
+ * Workspace of THIS tab, fixed when the page loads. localStorage is shared by every tab, so
+ * re-reading it per call let a switch in another tab redirect this tab's requests and
+ * IndexedDB writes into the other workspace while it still showed the old one. The two
+ * switch flows (Sidebar, SettingsPage) write the key and reload, so they see the new value.
+ */
+const TAB_WORKSPACE = readStoredWorkspace();
+
+export function getActiveWorkspace(): string {
+  return TAB_WORKSPACE;
 }
 
 /**
@@ -94,6 +108,25 @@ export function getWorkspaceHeaders(): Record<string, string> {
   return {
     "X-Workspace": getActiveWorkspace(),
   };
+}
+
+// A workspace switch in another tab: reload this tab so it never shows one workspace while
+// talking to the other (CLAUDE.md invariant #3: clear session cache before reloading).
+if (typeof window !== "undefined") {
+  const reloadIfWorkspaceChanged = () => {
+    if (readStoredWorkspace() !== TAB_WORKSPACE) {
+      clearWorkspaceSessionCache();
+      window.location.reload();
+    }
+  };
+  window.addEventListener("storage", (e: StorageEvent) => {
+    if (e.key === WORKSPACE_STORAGE_KEY || e.key === null) reloadIfWorkspaceChanged();
+  });
+  // Frozen / back-forward-cached mobile tabs can miss the storage event
+  window.addEventListener("pageshow", reloadIfWorkspaceChanged);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") reloadIfWorkspaceChanged();
+  });
 }
 
 // Transparent fetch wrapper ensuring X-Workspace is included on all /api requests

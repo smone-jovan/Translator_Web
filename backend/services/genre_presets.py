@@ -333,6 +333,9 @@ def apply_preset(
             notes=f"{notes} (Preset: {preset['name']})",
             is_locked=bool(lock_entries),
             is_archived=False,
+            # ADR-122: unlocked preset terms must not be the first ones archived at the limit
+            usage_count=1,
+            last_used_at=func.now(),
         )
         db.add(new_entry)
         added += 1

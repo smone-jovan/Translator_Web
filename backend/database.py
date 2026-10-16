@@ -437,7 +437,7 @@ def _migrate_engine(engine, db_label: str = "database"):
             
         if 'max_context_terms' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'max_context_terms' ke dalam tabel global_settings...")
-            conn.execute(text("ALTER TABLE global_settings ADD COLUMN max_context_terms INTEGER DEFAULT 50"))
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN max_context_terms INTEGER DEFAULT 150"))
             conn.commit()
 
         if 'extract_chapter_count' not in columns_gs:

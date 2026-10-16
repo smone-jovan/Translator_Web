@@ -27,6 +27,8 @@ export interface ThreadDetail {
   synopsis?: string | null;
   author?: string | null;
   source_url?: string | null;
+  /** Immutable identity; used to detect a reused thread id in the offline cache */
+  created_at?: string | null;
 }
 
 export interface ChapterContent {

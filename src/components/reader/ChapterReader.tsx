@@ -969,19 +969,20 @@ export default function ChapterReader({
     <div className="max-w-screen-2xl mx-auto h-full flex flex-col">
       {/* Top Navigation */}
       <div
-        className={`px-4 md:px-6 flex items-center justify-between border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md transition-all duration-300 ease-in-out z-20 ${
+        className={`px-3 sm:px-4 md:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md transition-all duration-300 ease-in-out z-20 ${
           controlsVisible
             ? "h-14 py-3 border-b opacity-100"
             : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
         }`}
       >
-        <div className="flex items-center gap-2 md:gap-3">
+        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowChapterList(true)}
-            className="rounded-xl gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] px-2.5 h-8"
+            className="rounded-xl gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] px-2 sm:px-2.5 h-8 shrink-0"
             title="Kembali ke Ringkasan Bab"
+            aria-label="Kembali ke Ringkasan Bab"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">List</span>
@@ -992,8 +993,9 @@ export default function ChapterReader({
             variant="outline"
             size="sm"
             onClick={() => setIsTocOpen(true)}
-            className="rounded-xl gap-1.5 text-xs border-[var(--border)] bg-[var(--card)]/50 hover:bg-[var(--secondary)] text-[var(--foreground)] px-2.5 h-8 shadow-sm"
+            className="hidden sm:inline-flex rounded-xl gap-1.5 text-xs border-[var(--border)] bg-[var(--card)]/50 hover:bg-[var(--secondary)] text-[var(--foreground)] px-2.5 h-8 shadow-sm"
             title="Buka Daftar Isi Cepat (TOC Drawer)"
+            aria-label="Buka Daftar Isi"
           >
             <Menu className="w-3.5 h-3.5 text-[var(--primary)]" />
             <span className="hidden sm:inline font-bold">Daftar Isi</span>
@@ -1003,11 +1005,13 @@ export default function ChapterReader({
 
           <button
             onClick={() => setIsTocOpen(true)}
-            className="text-[10px] md:text-xs font-bold tracking-tight px-1.5 py-0.5 rounded-lg hover:bg-[var(--secondary)] text-[var(--foreground)] truncate max-w-[140px] sm:max-w-none cursor-pointer flex items-center gap-1 transition-colors"
+            className="text-[10px] md:text-xs font-bold tracking-tight px-1.5 py-0.5 rounded-lg hover:bg-[var(--secondary)] text-[var(--foreground)] min-w-0 max-w-[140px] sm:max-w-none overflow-hidden cursor-pointer flex items-center gap-1 transition-colors whitespace-nowrap"
             title="Pilih Bab (Table of Contents)"
+            aria-label={`Bab ${selectedChapterIdx + 1} dari ${thread.chapters.length} — pilih bab`}
           >
-            <span>BAB {selectedChapterIdx + 1}</span>
-            <span className="text-[var(--muted-foreground)] font-normal text-[9px]">
+            <span className="truncate">BAB {selectedChapterIdx + 1}</span>
+            {/* The total is dropped on the narrowest phones so the label never runs under the star */}
+            <span className="text-[var(--muted-foreground)] font-normal text-[9px] max-[359px]:hidden">
               / {thread.chapters.length}
             </span>
           </button>
@@ -1017,7 +1021,9 @@ export default function ChapterReader({
             title={
               isBookmarked ? "Hapus Bookmark" : "Bookmark Bab Ini (Shortcut: B)"
             }
-            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+            aria-label={isBookmarked ? "Hapus Bookmark" : "Bookmark Bab Ini"}
+            aria-pressed={isBookmarked}
+            className={`p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
               isBookmarked
                 ? "text-yellow-500 bg-yellow-500/10"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
@@ -1028,12 +1034,13 @@ export default function ChapterReader({
         </div>
 
         {/* Reader Controls (Display Mode) */}
-        <div className="flex items-center gap-1 bg-[var(--secondary)]/50 p-1 rounded-2xl border border-[var(--border)] scale-90 md:scale-100">
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-[var(--secondary)]/50 p-1 rounded-2xl border border-[var(--border)] shrink-0">
           <Button
             variant={displayMode === "original" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setDisplayMode("original")}
-            className={`rounded-xl text-[10px] h-7 px-2.5 sm:px-3 ${displayMode === "original" ? "shadow-sm bg-[var(--background)] font-bold" : ""}`}
+            aria-pressed={displayMode === "original"}
+            className={`rounded-xl text-[10px] h-7 px-2 sm:px-3 ${displayMode === "original" ? "shadow-sm bg-[var(--background)] font-bold" : ""}`}
           >
             ORI
           </Button>
@@ -1041,7 +1048,8 @@ export default function ChapterReader({
             variant={displayMode === "translated" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setDisplayMode("translated")}
-            className={`rounded-xl text-[10px] h-7 px-2.5 sm:px-3 ${displayMode === "translated" ? "shadow-sm bg-[var(--background)] font-bold text-[var(--primary)]" : ""}`}
+            aria-pressed={displayMode === "translated"}
+            className={`rounded-xl text-[10px] h-7 px-2 sm:px-3 ${displayMode === "translated" ? "shadow-sm bg-[var(--background)] font-bold text-[var(--primary)]" : ""}`}
           >
             TRS
           </Button>
@@ -1049,25 +1057,28 @@ export default function ChapterReader({
             variant={displayMode === "both" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setDisplayMode("both")}
-            className={`rounded-xl text-[10px] h-7 px-2.5 sm:px-3 ${displayMode === "both" ? "shadow-sm bg-[var(--background)] font-bold" : ""}`}
+            aria-pressed={displayMode === "both"}
+            className={`rounded-xl text-[10px] h-7 px-2 sm:px-3 ${displayMode === "both" ? "shadow-sm bg-[var(--background)] font-bold" : ""}`}
           >
             BOTH
           </Button>
         </div>
 
         {/* Right Controls: Appearance Popover & Chapter Navigation */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* In-Reader Appearance Popover Toggle */}
           <div className="relative">
             <Button
               variant={isAppearanceOpen ? "secondary" : "outline"}
               size="sm"
               onClick={() => setIsAppearanceOpen((prev) => !prev)}
-              className="rounded-xl border-[var(--border)] h-8 px-2.5 gap-1.5 text-xs font-bold shadow-sm"
+              className="rounded-xl border-[var(--border)] h-8 px-2 sm:px-2.5 gap-1.5 text-xs font-bold shadow-sm"
               title="Pengaturan Tampilan & Tema (Aa)"
+              aria-label="Pengaturan Tampilan & Tema"
+              aria-expanded={isAppearanceOpen}
             >
               <Palette className="w-3.5 h-3.5 text-[var(--primary)]" />
-              <span className="text-[11px] font-black">Aa</span>
+              <span className="hidden sm:inline text-[11px] font-black">Aa</span>
             </Button>
 
             {/* Appearance Popover Menu */}
@@ -1342,7 +1353,7 @@ export default function ChapterReader({
         {showOriginal && (
           <div className="flex flex-col h-full overflow-hidden bg-[var(--secondary)]/10">
             <div
-              className={`px-6 flex items-center justify-between border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
+              className={`px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
                 controlsVisible
                   ? "h-10 py-3 border-b opacity-100"
                   : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
@@ -1441,16 +1452,16 @@ export default function ChapterReader({
         {showTranslated && (
           <div className="flex flex-col h-full overflow-hidden">
             <div
-              className={`px-6 flex items-center justify-between border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
+              className={`px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
                 controlsVisible
                   ? "h-10 py-3 border-b opacity-100"
                   : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
               }`}
             >
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--accent)]">
+              <span className="hidden sm:inline text-[10px] font-black uppercase tracking-widest text-[var(--accent)]">
                 AI Translation
               </span>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 ml-auto min-w-0">
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-[var(--muted-foreground)] cursor-pointer select-none hover:text-[var(--foreground)] transition-colors">
                   <input
                     type="checkbox"
@@ -1475,7 +1486,8 @@ export default function ChapterReader({
                     }}
                     className="rounded border-[var(--border)] bg-transparent text-[var(--accent)] focus:ring-0 cursor-pointer h-3.5 w-3.5"
                   />
-                  Always Hide Thoughts
+                  <span className="hidden sm:inline">Always Hide Thoughts</span>
+                  <span className="sm:hidden">Hide Thoughts</span>
                 </label>
                 {(() => {
                   const hasTranslation =

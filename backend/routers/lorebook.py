@@ -454,6 +454,9 @@ def bulk_lorebook_action(
                     gender=_resolve_gender(item.gender, orig, trans, item.notes),
                     is_locked=bool(item.is_locked) if item.is_locked is not None else False,
                     is_archived=bool(item.is_archived) if item.is_archived is not None else False,
+                    # ADR-122: a just-imported term must not be the first one archived at the limit
+                    usage_count=1,
+                    last_used_at=datetime.now(),
                 ))
             affected += 1
         if affected > 0:

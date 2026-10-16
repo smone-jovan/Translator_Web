@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, DESTRUCTIVE_TEXT } from "@/lib/utils";
 import { getApiUrl, clearWorkspaceSessionCache } from "@/lib/api";
 import { toast } from "sonner";
 import { useConfirm } from "@/hooks/use-confirm";
@@ -2419,7 +2419,7 @@ export default function SettingsPage() {
                   size="sm"
                   onClick={fetchCacheStats}
                   disabled={isLoadingCacheStats}
-                  className="rounded-xl h-9 gap-1.5 border-[var(--border)] text-xs font-bold"
+                  className="rounded-xl h-11 sm:h-9 gap-1.5 border-[var(--border)] text-xs font-bold shrink-0"
                   title="Refresh cache statistics"
                 >
                   <RefreshCw
@@ -2436,9 +2436,13 @@ export default function SettingsPage() {
                   size="sm"
                   onClick={handleClearCache}
                   disabled={isClearingCache || cacheStats.count === 0}
-                  className="rounded-xl h-9 gap-1.5 border-rose-500/30 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/50 bg-[var(--card)] font-bold text-xs w-full sm:w-auto"
+                  className={cn(
+                    // flex-1 + min-w-0: share the row with Refresh instead of overflowing it on phones
+                    "rounded-xl h-11 sm:h-9 gap-1.5 border-rose-500/30 hover:bg-rose-500/10 hover:border-rose-500/50 bg-[var(--card)] font-bold text-xs flex-1 min-w-0 sm:flex-none",
+                    DESTRUCTIVE_TEXT
+                  )}
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
                   <span>
                     {isClearingCache ? "Clearing..." : "Clear Image Cache"}
                   </span>

@@ -121,12 +121,14 @@ def test_thread_cache_images_workflow(client, db_session):
     assert data["cached"] == 0
 
     # Start caching
-    with patch("services.image_cacher.run_thread_image_caching_job", new_callable=AsyncMock) as mock_run:
+    with patch("routers.images.run_thread_image_caching_job", new_callable=AsyncMock) as mock_run:
         post_res = client.post(f"/api/threads/{thread.id}/cache-images")
         assert post_res.status_code == 200
         post_data = post_res.json()
         assert post_data["status"] == "started"
         assert post_data["total"] == 2
+        # The router imports the job directly; the mock must be the one actually scheduled
+        mock_run.assert_called_once()
 
 
 def test_cache_stats_and_clear_endpoint(client):

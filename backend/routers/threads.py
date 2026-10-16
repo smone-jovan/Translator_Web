@@ -785,9 +785,10 @@ async def get_chapter(
 ):
     """Get single chapter with full content.
 
-    track=False is a side-effect-free read (used by the offline cache to download many
-    chapters): the reading-position bookmark is left untouched and no prefetch/translation
-    is queued.
+    track=False (used by the offline cache and N±1 warming) leaves the reading-position
+    bookmark untouched and queues no prefetch/translation. It is not fully read-only:
+    a chapter with no original text but a source_url is still scraped on demand and saved,
+    exactly as with track=True.
     """
     stmt = select(Chapter).where(Chapter.id == chapter_id, Chapter.thread_id == thread_id)
     chapter = db.execute(stmt).scalar_one_or_none()

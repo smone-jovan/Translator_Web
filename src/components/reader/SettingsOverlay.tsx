@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -49,6 +49,35 @@ export default function SettingsOverlay({
   offlineStartIndex,
 }: SettingsOverlayProps) {
   const [styleGuide, setStyleGuide] = useState('');
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Parent passes an inline onClose; keep the latest one in a ref so the listener below is
+  // registered once (re-running it on every parent render would steal focus from inputs).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Dialog behaviour: move focus into the panel once, and close on Esc (unless a confirm
+  // dialog opened from inside the panel is handling Esc itself).
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (document.querySelector('[role="alertdialog"]')) return;
+      // Esc while typing (e.g. the Style Guide textarea) only leaves the field; closing the
+      // panel there would discard unsaved text. A second Esc closes the panel.
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('textarea, input, select, [contenteditable="true"]')) {
+        target.blur();
+        panelRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      onCloseRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
   const [isSavingGuide, setIsSavingGuide] = useState(false);
 
   useEffect(() => {
@@ -101,11 +130,23 @@ export default function SettingsOverlay({
   };
 
   return (
+    <>
+    {!mobileMode && (
+      // Desktop popover: a click outside closes it (rendered outside the animated container,
+      // whose transform would otherwise anchor this fixed layer to the popover).
+      <button
+        type="button"
+        aria-label="Close settings"
+        tabIndex={-1}
+        className="fixed inset-0 z-40 cursor-default border-none bg-transparent"
+        onClick={onClose}
+      />
+    )}
     <div className={cn(
       "z-50",
       mobileMode
         ? "fixed inset-0 flex items-end bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-200"
-        : "absolute top-20 right-4 w-72 animate-in fade-in slide-in-from-top-4 duration-300"
+        : "absolute top-20 right-4 w-[min(18rem,calc(100vw-2rem))] animate-in fade-in slide-in-from-top-4 duration-300"
     )}>
       {mobileMode && (
         <button
@@ -115,13 +156,20 @@ export default function SettingsOverlay({
           onClick={onClose}
         />
       )}
-      <Card className={cn(
-        "shadow-2xl border-[var(--border)] bg-[var(--card)] backdrop-blur-xl relative",
+      <Card
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Reader settings"
+        tabIndex={-1}
+        className={cn(
+        "shadow-2xl border-[var(--border)] bg-[var(--card)] backdrop-blur-xl relative outline-none",
         mobileMode
-          ? "w-full rounded-t-3xl rounded-b-none border-b-0 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-8 duration-300"
-          : ""
+          // Bottom sheet: capped width so it doesn't span a whole desktop screen in reading mode
+          ? "w-full max-w-2xl mx-auto rounded-t-3xl rounded-b-none border-b-0 max-h-[85dvh] overflow-y-auto overscroll-contain animate-in slide-in-from-bottom-8 duration-300"
+          : "max-h-[calc(100dvh-6rem)] overflow-y-auto overscroll-contain"
       )}>
-        <CardContent className="p-6 space-y-6">
+        <CardContent className={cn("p-6 space-y-6", mobileMode && "pb-[calc(1.5rem+env(safe-area-inset-bottom))]")}>
           {mobileMode && (
             <div className="flex flex-col items-center gap-3">
               <div className="h-1.5 w-14 rounded-full bg-[var(--border)]" />
@@ -135,7 +183,7 @@ export default function SettingsOverlay({
             <div className="flex flex-col gap-2 mt-3">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono text-[var(--muted-foreground)]">12px</span>
-                <span className="text-sm font-bold text-[var(--accent)]">{fontSize}px</span>
+                <span className="text-sm font-bold text-[var(--foreground)]">{fontSize}px</span>
                 <span className="text-[10px] font-mono text-[var(--muted-foreground)]">32px</span>
               </div>
               <input 
@@ -305,9 +353,10 @@ export default function SettingsOverlay({
             </div>
           )}
 
-          <Button variant="ghost" size="sm" className="w-full text-xs h-8 mt-2" onClick={onClose}>Close</Button>
+          <Button variant="ghost" size="sm" className="w-full text-xs h-11 sm:h-9 mt-2" onClick={onClose}>Close</Button>
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }
