@@ -170,7 +170,7 @@ async def start_thread_image_cache(thread_id: int, db: Session = Depends(get_db)
 
 
 @router.get("/threads/{thread_id}/cache-images/status")
-async def get_thread_image_cache_status(thread_id: int, db: Session = Depends(get_db)):
+def get_thread_image_cache_status(thread_id: int, db: Session = Depends(get_db)):
     """
     Get current progress and cache statistics for a thread's illustrations.
     """
@@ -210,7 +210,7 @@ async def get_thread_image_cache_status(thread_id: int, db: Session = Depends(ge
 
 
 @router.get("/threads/{thread_id}/images")
-async def list_thread_images(thread_id: int, db: Session = Depends(get_db)):
+def list_thread_images(thread_id: int, db: Session = Depends(get_db)):
     """
     List all illustrations present in a thread novel, organized with chapter metadata.
     """
@@ -260,7 +260,7 @@ async def get_image_cache_stats():
 
 
 @router.post("/cache/images/clear")
-async def clear_image_cache(db: Session = Depends(get_db)):
+def clear_image_cache(db: Session = Depends(get_db)):
     """Safely delete cached images from disk and clear active image jobs for the current workspace."""
     deleted_count = 0
     freed_bytes = 0

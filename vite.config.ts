@@ -13,7 +13,9 @@ export default defineConfig({
   },
   server: {
     host: true, // Allow access from local network (mobile)
-    allowedHosts: true, // Allow .local and custom LAN hostnames for mobile devices
+    // Explicit allowlist: `true` lets any website reach the dev server via DNS rebinding.
+    // localhost and IP addresses are already allowed; add other LAN hostnames here.
+    allowedHosts: ['.local'],
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

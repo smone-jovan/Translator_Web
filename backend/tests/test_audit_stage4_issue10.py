@@ -75,7 +75,7 @@ async def test_clear_image_cache_scopes_active_jobs_by_workspace():
     db_mock = MagicMock()
     db_mock._workspace = "main"
 
-    await clear_image_cache(db=db_mock)
+    clear_image_cache(db=db_mock)  # sync `def` handler (runs in threadpool under FastAPI)
 
     # Main job must be removed, Ghost job must be preserved!
     assert ("main", 1) not in ACTIVE_IMAGE_JOBS, "Current workspace jobs should be cleared"

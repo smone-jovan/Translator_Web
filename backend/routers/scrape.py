@@ -639,7 +639,7 @@ class SaveMetadataRequest(BaseModel):
 
 
 @router.post("/threads/{thread_id}/save_metadata")
-async def save_metadata_route(
+def save_metadata_route(
     thread_id: int,
     req: SaveMetadataRequest,
     db: Session = Depends(get_db)
