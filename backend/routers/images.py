@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 import httpx
 from database import get_db, Thread, get_db_workspace, make_workspace_key, normalize_workspace
+from services.task_registry import spawn_background_task
 from services.image_cacher import (
     CACHE_DIR,
     ACTIVE_IMAGE_JOBS,
@@ -159,7 +160,7 @@ async def start_thread_image_cache(thread_id: int, db: Session = Depends(get_db)
         }
 
     # Spawn background task
-    asyncio.create_task(run_thread_image_caching_job(thread_id, urls, workspace=ws))
+    spawn_background_task(run_thread_image_caching_job(thread_id, urls, workspace=ws))
 
     return {
         "status": "started",

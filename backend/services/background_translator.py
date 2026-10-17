@@ -5,6 +5,7 @@ import time
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from database import Chapter, GlobalSetting, Thread, get_session, make_workspace_key, normalize_workspace
+from services.task_registry import spawn_background_task
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -1085,7 +1086,7 @@ class BackgroundTranslator:
                                 if getattr(batch, "is_stopped", False) == False:
                                     queue.put_nowait(cid)
 
-                            asyncio.create_task(delayed_requeue(ch_id, delay))
+                            spawn_background_task(delayed_requeue(ch_id, delay))
                         else:
                             pending_retries.pop(ch_id, None)
                             print(f"[ERROR] Batch chapter {ch_id} failed permanently: {e}")

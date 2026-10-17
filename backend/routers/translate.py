@@ -16,6 +16,7 @@ from database import get_db, LorebookEntry, Chapter, Thread, SessionLocal, Globa
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
+from services.task_registry import spawn_background_task
 
 router = APIRouter(prefix="/api", tags=["Translation"])
 
@@ -59,7 +60,7 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
     ws = get_db_workspace(db)
 
     # Start the persistent background job if needed
-    asyncio.create_task(
+    spawn_background_task(
         BackgroundTranslator.run_chapter_translation(
             chapter_id=req.chapter_id,
             thread_id=req.thread_id,
