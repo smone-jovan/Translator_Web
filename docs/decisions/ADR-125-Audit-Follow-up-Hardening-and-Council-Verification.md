@@ -83,6 +83,8 @@ Selama verifikasi, dua kesalahan pada perbaikan putaran ini sendiri juga tertang
 - Proses council + judge + bukti empiris menangkap regresi UI dan bug logika yang lolos dari typecheck, lint, dan pytest, termasuk kesalahan pada perbaikan dan rekomendasi juri sendiri.
 
 ### Negative / Residual Risks
+
+> Status dan prioritas terkini semua risiko sisa: `docs/residual-risks.md` (ADR-127).
 - "Zero bug" tidak dapat dibuktikan secara mutlak. Yang dapat dinyatakan: setelah dua putaran council + judge, semua temuan FIX-NOW sudah diperbaiki dan diverifikasi; sisanya tercatat sebagai risiko di ADR terkait.
 - Verifikasi frontend dijalankan agent; skrip E2E-nya tidak ada di repo (repo belum punya runner E2E frontend).
 - Ditemukan dan **didokumentasikan, belum diperbaiki** (di luar lingkup atau butuh keputusan/migrasi):

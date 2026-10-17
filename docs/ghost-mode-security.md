@@ -2,6 +2,8 @@
 
 Status: **diterima sebagai batasan yang disengaja** (2026-10-16). Tidak ada rencana perbaikan saat ini.
 
+> Status dan prioritas batasan di halaman ini juga dilacak di `docs/residual-risks.md` (R-01, R-04..R-06, R-11, R-12, R-21; ADR-127).
+
 ## Ringkasan
 
 PIN Ghost Mode adalah **penyamar tampilan (UI privacy)**, bukan kontrol akses. PIN mencegah orang yang meminjam perangkat Anda berpindah ke workspace `ghost` lewat antarmuka. PIN **tidak** melindungi isi `ghost.db` dari siapa pun yang bisa mengirim request HTTP langsung ke backend.

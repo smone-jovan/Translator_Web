@@ -327,6 +327,7 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-115, ADR-117 & ADR-118**: Ghost Mode Dual-DB Isolation (`app.db` vs `ghost.db`), In-Memory Compound Key Tenancy (`make_workspace_key`), and Client-Side Storage Scoping (`getWorkspaceStorageKey`).
 - **ADR-125**: Batasan PIN Ghost Mode (penyamar UI, bukan kontrol akses) didokumentasikan; verifikasi council + judge.
 - **ADR-126**: Allowlist host API key per provider dan egress proxy SSRF yang memvalidasi untuk browser scraper.
+- **ADR-127**: Register risiko sisa (`docs/residual-risks.md`) dengan prioritas P1–P3 dan aturan pemeliharaan.
 
 ### 6. Desktop Launcher & Tooling
 - **ADR-119**: Desktop Control Hub GUI & Zero-Console Launch (`pythonw.exe`, `CREATE_NO_WINDOW`).

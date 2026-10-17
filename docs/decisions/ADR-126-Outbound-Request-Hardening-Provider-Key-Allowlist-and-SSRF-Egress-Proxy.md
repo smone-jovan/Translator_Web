@@ -112,6 +112,8 @@ Temuan empiris selama pengerjaan:
 - SSRF reflektif Novel Updates tertutup.
 
 ### Negative / Residual Risks
+
+> Status dan prioritas terkini semua risiko sisa: `docs/residual-risks.md` (ADR-127).
 - `PUT /settings` masih bisa mengubah `gs.openai_url`, sehingga siapa pun yang bisa memanggil API dapat mengarahkan key OpenAI. Ini sesuai model ancaman tanpa autentikasi (`docs/ghost-mode-security.md`). Key Gemini dan OpenRouter tidak bisa dialihkan dengan cara ini.
 - URL LM Studio tetap bebas (per desain, tanpa key), jadi backend bisa diminta menghubungi host LAN apa pun lewat provider `lm_studio`.
 - DNS rebinding masih mungkin di Tier 1a (httpx) dan Tier 1b (curl_cffi): validasi lalu klien me-resolve ulang. Proxy hanya menutupnya untuk Tier 3.
