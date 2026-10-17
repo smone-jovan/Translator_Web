@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useEffectEvent, useMemo } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -615,31 +615,34 @@ export default function ChapterReader({
     setMobileToolbarVisible(nextState);
   };
 
+  // Effect Event: the scroll listener is attached once, but updateScrollUI must save
+  // progress for the chapter on screen now, not the one from the first render.
+  const onWindowScrollFrame = useEffectEvent(() => {
+    const scrollTop =
+      window.scrollY ||
+      document.documentElement.scrollTop ||
+      document.body.scrollTop;
+    const scrollHeight =
+      document.documentElement.scrollHeight - window.innerHeight;
+    const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+
+    updateScrollUI(pct, scrollTop, true);
+
+    const delta = scrollTop - lastWindowScrollTop.current;
+    evaluateDirectionalScroll(scrollTop, scrollHeight, delta);
+
+    lastWindowScrollTop.current = scrollTop;
+  });
+
   useEffect(() => {
     const handleWindowScroll = () => {
       if (loadingContentRef.current) return;
       if (scrollRafWindowId.current !== null) return;
 
       scrollRafWindowId.current = requestAnimationFrame(() => {
-        if (loadingContentRef.current) {
-          scrollRafWindowId.current = null;
-          return;
-        }
-        const scrollTop =
-          window.scrollY ||
-          document.documentElement.scrollTop ||
-          document.body.scrollTop;
-        const scrollHeight =
-          document.documentElement.scrollHeight - window.innerHeight;
-        const pct = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
-
-        updateScrollUI(pct, scrollTop, true);
-
-        const delta = scrollTop - lastWindowScrollTop.current;
-        evaluateDirectionalScroll(scrollTop, scrollHeight, delta);
-
-        lastWindowScrollTop.current = scrollTop;
         scrollRafWindowId.current = null;
+        if (loadingContentRef.current) return;
+        onWindowScrollFrame();
       });
     };
 
@@ -649,7 +652,6 @@ export default function ChapterReader({
       if (scrollRafWindowId.current !== null)
         cancelAnimationFrame(scrollRafWindowId.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Save scroll position immediately on mobile screen-lock / visibility change
