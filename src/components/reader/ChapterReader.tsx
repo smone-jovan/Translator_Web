@@ -966,10 +966,10 @@ export default function ChapterReader({
   }, [currentTranslation, alwaysHideThoughts]);
 
   return (
-    <div className="max-w-screen-2xl mx-auto h-full flex flex-col">
-      {/* Top Navigation */}
+    <div className="relative max-w-screen-2xl mx-auto h-full flex flex-col">
+      {/* Top Navigation — overlay (absolute, below the 4rem page header) so toggling it never moves the text */}
       <div
-        className={`px-3 sm:px-4 md:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md transition-all duration-300 ease-in-out z-20 ${
+        className={`absolute inset-x-0 top-16 px-3 sm:px-4 md:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md transition-all duration-300 ease-in-out z-20 ${
           controlsVisible
             ? "h-14 py-3 border-b opacity-100"
             : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
@@ -1351,9 +1351,9 @@ export default function ChapterReader({
       >
         {/* Original Content */}
         {showOriginal && (
-          <div className="flex flex-col h-full overflow-hidden bg-[var(--secondary)]/10">
+          <div className="relative flex flex-col h-full overflow-hidden bg-[var(--secondary)]/10">
             <div
-              className={`px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
+              className={`absolute inset-x-0 top-[7.5rem] z-10 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
                 controlsVisible
                   ? "h-10 py-3 border-b opacity-100"
                   : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
@@ -1372,7 +1372,7 @@ export default function ChapterReader({
             </div>
             <div
               ref={originalScrollContainerRef}
-              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 py-6 md:p-10 select-text ${fontClass}`}
+              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 pt-[11.5rem] pb-6 md:px-10 md:pt-[12.5rem] md:pb-10 select-text ${fontClass}`}
               style={{ fontSize: `${fontSize}px`, lineHeight }}
               onScroll={handleScrollOriginal}
               onPointerDown={handleReaderPointerDown}
@@ -1450,9 +1450,9 @@ export default function ChapterReader({
 
         {/* Translated Content */}
         {showTranslated && (
-          <div className="flex flex-col h-full overflow-hidden">
+          <div className="relative flex flex-col h-full overflow-hidden">
             <div
-              className={`px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
+              className={`absolute inset-x-0 top-[7.5rem] z-10 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between gap-2 border-[var(--border)] bg-[var(--background)]/50 transition-all duration-300 ease-in-out ${
                 controlsVisible
                   ? "h-10 py-3 border-b opacity-100"
                   : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
@@ -1541,7 +1541,7 @@ export default function ChapterReader({
             </div>
             <div
               ref={translatedScrollContainerRef}
-              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 py-6 md:p-10 bg-[var(--background)] select-text ${fontClass}`}
+              className={`flex-1 overflow-auto overscroll-contain [overflow-anchor:auto] px-4 pt-[11.5rem] pb-6 md:px-10 md:pt-[12.5rem] md:pb-10 bg-[var(--background)] select-text ${fontClass}`}
               style={{ fontSize: `${fontSize}px`, lineHeight }}
               onScroll={handleScrollTranslated}
               onPointerDown={handleReaderPointerDown}

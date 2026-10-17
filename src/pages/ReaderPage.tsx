@@ -1618,9 +1618,11 @@ export default function ReaderPage({
         />
       )}
 
-      {/* Header Bar */}
+      {/* Header Bar — overlays the reader (out of flow) so hiding it never moves the text */}
       <div
         className={`flex items-center gap-2 sm:gap-4 px-3 sm:px-6 border-[var(--border)] bg-[var(--background)]/80 backdrop-blur-md z-30 transition-all duration-300 ease-in-out ${
+          showChapterList ? "" : "absolute inset-x-0 top-0"
+        } ${
           showChapterList || controlsVisible
             ? "h-16 py-4 border-b opacity-100"
             : "h-0 py-0 border-b-0 opacity-0 overflow-hidden pointer-events-none"
