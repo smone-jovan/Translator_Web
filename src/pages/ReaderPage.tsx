@@ -435,7 +435,10 @@ export default function ReaderPage({
       };
       // A LAN request from mobile data can hang for a long time instead of failing;
       // show the offline snapshot meanwhile (the request keeps running and replaces it).
-      const slowTimer = window.setTimeout(serveOfflineSnapshot, OFFLINE_FALLBACK_DELAY_MS);
+      const slowTimer = window.setTimeout(
+        serveOfflineSnapshot,
+        OFFLINE_FALLBACK_DELAY_MS
+      );
       try {
         const res = await fetch(
           getApiUrl(`/api/threads/${threadId}?t=${Date.now()}`),
@@ -452,7 +455,10 @@ export default function ReaderPage({
         }
         const data: ThreadDetail = await res.json();
         window.clearTimeout(slowTimer);
-        threadSuccessIdRef.current = Math.max(threadSuccessIdRef.current, requestId);
+        threadSuccessIdRef.current = Math.max(
+          threadSuccessIdRef.current,
+          requestId
+        );
         threadLiveLoadedRef.current = true;
         applyThreadData(data);
         setIsOffline(false);
@@ -767,12 +773,17 @@ export default function ReaderPage({
         if (!res.body) throw new Error("No stream");
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
+        // An SSE event can span network chunks (final_text carries the whole chapter), so
+        // keep the incomplete last line in the buffer until the rest arrives.
+        let buffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
+          buffer += done
+            ? decoder.decode()
+            : decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = done ? "" : lines.pop() || "";
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               const dataStr = line.slice(6);
@@ -796,6 +807,7 @@ export default function ReaderPage({
               }
             }
           }
+          if (done) break;
         }
 
         // Optimistically update thread state so green dot lights up immediately
@@ -834,19 +846,59 @@ export default function ReaderPage({
   );
 
   const lastFetchedStatusRef = useRef<string | null>(null);
+  // Chapter request still running. Every poll re-creates `thread` and re-runs the effect
+  // below; restarting this request each time meant a slow chapter (on-demand scrape) never
+  // finished loading while the server kept scraping it again.
+  const inflightChapterRef = useRef<{
+    id: number;
+    status: string | null;
+    controller: AbortController;
+    reusable: boolean;
+  } | null>(null);
+
+  const abortInflightChapter = () => {
+    inflightChapterRef.current?.controller.abort();
+    inflightChapterRef.current = null;
+    toast.dismiss(SLOW_TOAST_ID);
+  };
+
+  // Recovery paths: forget the loaded markers and never wait on a request that may hang
+  const forceChapterRefetch = () => {
+    lastFetchedIdRef.current = null;
+    lastFetchedStatusRef.current = null;
+    const inflight = inflightChapterRef.current;
+    if (inflight) inflightChapterRef.current = { ...inflight, reusable: false };
+  };
+
+  useEffect(() => () => inflightChapterRef.current?.controller.abort(), []);
 
   // Header (and its Offline badge) is hidden while reading, so announce offline mode once
   useEffect(() => {
     if (isOffline) {
-      toast.info("Mode offline: membaca dari cache perangkat", { id: "reader-offline-mode" });
+      toast.info("Mode offline: membaca dari cache perangkat", {
+        id: "reader-offline-mode",
+      });
     }
   }, [isOffline]);
 
   // Handle Chapter Selection & Mobile Screen Wake Recovery
   useEffect(() => {
-    if (!thread || selectedChapterIdx === null) return;
-    const ch = thread.chapters[selectedChapterIdx];
-    if (!ch) return;
+    const ch =
+      thread && selectedChapterIdx !== null
+        ? thread.chapters[selectedChapterIdx]
+        : undefined;
+    const inflight = inflightChapterRef.current;
+    if (
+      inflight &&
+      (!ch ||
+        inflight.id !== ch.id ||
+        inflight.status !== (ch.translation_status ?? null) ||
+        !inflight.reusable ||
+        inflight.controller.signal.aborted)
+    ) {
+      abortInflightChapter();
+    }
+    if (!thread || selectedChapterIdx === null || !ch) return;
 
     const CH_CACHE_KEY = getWorkspaceStorageKey(
       "readomni_chapter_cache",
@@ -863,8 +915,17 @@ export default function ReaderPage({
       return;
     }
 
+    // This chapter's request is still running: let it finish instead of restarting it
+    if (inflightChapterRef.current) return;
+
     const abortController = new AbortController();
     const currentRequestId = ++activeRequestIdRef.current;
+    inflightChapterRef.current = {
+      id: ch.id,
+      status: ch.translation_status ?? null,
+      controller: abortController,
+      reusable: true,
+    };
 
     // Chapter whose text is on screen when this request starts (for the offline-miss revert)
     const previousContentId = chapterContent?.id ?? null;
@@ -897,7 +958,8 @@ export default function ReaderPage({
       let httpStatus: number | null = null;
       const serveOfflineChapter = async (): Promise<boolean> => {
         const offlineData = await getOfflineChapter(threadId, ch.id);
-        if (!offlineData || activeRequestIdRef.current !== currentRequestId) return false;
+        if (!offlineData || activeRequestIdRef.current !== currentRequestId)
+          return false;
         if (networkSettled && !networkFailed) return false; // live data already arrived
         setChapterContent(offlineData);
         setTranslatedText(offlineData.content_translated || "");
@@ -911,7 +973,12 @@ export default function ReaderPage({
       // Slow/hanging network (e.g. LAN address over mobile data): show the saved copy meanwhile
       const slowTimer = window.setTimeout(async () => {
         const served = await serveOfflineChapter();
-        if (served || networkSettled || activeRequestIdRef.current !== currentRequestId) return;
+        if (
+          served ||
+          networkSettled ||
+          activeRequestIdRef.current !== currentRequestId
+        )
+          return;
         if (shownForThisChapter) {
           // A session copy of this chapter is already rendered but hidden behind the spinner:
           // reveal it while waiting (a late live response still replaces it).
@@ -921,12 +988,17 @@ export default function ReaderPage({
         // Nothing to show yet. This is often just a slow server (e.g. on-demand scraping), so
         // inform rather than alarm; mention offline only for novels saved for offline reading.
         const usesOffline = (await getOfflineThread(threadId)) !== null;
-        if (networkSettled || activeRequestIdRef.current !== currentRequestId) return;
+        if (networkSettled || activeRequestIdRef.current !== currentRequestId)
+          return;
         toast.info(
-          usesOffline ? "Bab ini belum disimpan untuk dibaca offline" : "Server lambat — masih memuat bab…",
+          usesOffline
+            ? "Bab ini belum disimpan untuk dibaca offline"
+            : "Server lambat — masih memuat bab…",
           {
             id: SLOW_TOAST_ID,
-            description: usesOffline ? "Server lambat atau tidak terjangkau; masih menunggu…" : undefined,
+            description: usesOffline
+              ? "Server lambat atau tidak terjangkau; masih menunggu…"
+              : undefined,
           }
         );
       }, OFFLINE_FALLBACK_DELAY_MS);
@@ -935,7 +1007,8 @@ export default function ReaderPage({
       const revertToPreviousChapter = () => {
         const prevIdx =
           previousContentId !== null
-            ? (thread?.chapters.findIndex((c) => c.id === previousContentId) ?? -1)
+            ? (thread?.chapters.findIndex((c) => c.id === previousContentId) ??
+              -1)
             : -1;
         if (prevIdx >= 0) {
           setSelectedChapterIdx(prevIdx);
@@ -1043,12 +1116,17 @@ export default function ReaderPage({
           ) {
             // Server answered with an error (e.g. 404 deleted, 500): say so and keep the
             // previous chapter's text from being shown under this chapter's number.
-            toast.error(`Gagal memuat bab (HTTP ${httpStatus})`, { id: "reader-chapter-error" });
+            toast.error(`Gagal memuat bab (HTTP ${httpStatus})`, {
+              id: "reader-chapter-error",
+            });
             revertToPreviousChapter();
           }
         }
       } finally {
         window.clearTimeout(slowTimer);
+        if (inflightChapterRef.current?.controller === abortController) {
+          inflightChapterRef.current = null;
+        }
         // Only clear loading if this is still the active request
         if (activeRequestIdRef.current === currentRequestId) {
           setLoadingContent(false);
@@ -1057,10 +1135,7 @@ export default function ReaderPage({
     };
 
     fetchContent();
-    return () => {
-      abortController.abort();
-      toast.dismiss(SLOW_TOAST_ID);
-    };
+    // No abort on cleanup: the next run aborts the request only when it is no longer wanted
   }, [selectedChapterIdx, threadId, thread]);
 
   // While offline, retry as soon as the device signals the network/server may be back.
@@ -1071,10 +1146,13 @@ export default function ReaderPage({
   useEffect(() => {
     if (!isOffline) return;
     const retry = () => {
-      if (document.visibilityState === "hidden" || offlineRetryInFlightRef.current) return;
+      if (
+        document.visibilityState === "hidden" ||
+        offlineRetryInFlightRef.current
+      )
+        return;
       offlineRetryInFlightRef.current = true;
-      lastFetchedIdRef.current = null;
-      lastFetchedStatusRef.current = null;
+      forceChapterRefetch();
       fetchThread({ silent: true, force: true }).finally(() => {
         offlineRetryInFlightRef.current = false;
       });
@@ -1101,8 +1179,7 @@ export default function ReaderPage({
         const ch = thread.chapters[selectedChapterIdx];
         if (ch && (!chapterContent || chapterContent.id !== ch.id)) {
           // Force reset lastFetchedIdRef to trigger fetchContent
-          lastFetchedIdRef.current = null;
-          lastFetchedStatusRef.current = null;
+          forceChapterRefetch();
           fetchThread({ silent: true });
         }
       }
@@ -1654,7 +1731,9 @@ export default function ReaderPage({
               </span>
             )}
             {/* On the narrowest phones the Offline badge takes this line's room; hide the count there */}
-            <span className={`truncate min-w-0 ${isOffline ? "max-[359px]:hidden" : ""}`}>
+            <span
+              className={`truncate min-w-0 ${isOffline ? "max-[359px]:hidden" : ""}`}
+            >
               {thread.chapter_count} chapters • {thread.source_type}
             </span>
             {isTranslatingTitles && (
