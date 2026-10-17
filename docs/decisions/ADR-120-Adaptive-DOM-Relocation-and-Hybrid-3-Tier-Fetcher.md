@@ -36,7 +36,7 @@ Commit `0bbadc4` (Issue #9) menetapkan hierarki scraper 3 tingkat di CLAUDE.md (
 
 ### 4. Hybrid 3-Tier Fetcher `fetch_html_adaptive()` (`backend/routers/scrape.py`, dipakai juga oleh `toc.py`)
 1. **Tier 1a**: `create_safe_async_client` (validasi SSRF + hook redirect).
-2. **Tier 1b**: `curl_cffi` dengan impersonasi `chrome120`, dipakai saat Tier 1a mendapat 403/429/503, HTML kosong, atau halaman challenge. `curl_cffi` mengikuti redirect sendiri (`allow_redirects=True`); hanya **URL akhir** yang divalidasi ulang dengan `validate_external_url` (`scrape.py:241-247`). Lihat Residual Risks.
+2. **Tier 1b**: `curl_cffi` dengan impersonasi `chrome120`, dipakai saat Tier 1a mendapat 403/429/503, HTML kosong, atau halaman challenge. Redirect diikuti manual lewat `follow_redirects_safely`, dan setiap hop divalidasi sebelum diminta (ADR-126).
 3. **Tier 3**: `StealthyNovelAdapter.fetch_stealth_page(solve_cloudflare=True, disable_resources=True)` dengan `workspace` eksplisit, dipakai saat masih challenge atau halaman SPA kosong (probe markdown kurang dari 50 karakter).
 - `html_to_markdown()` memilih kontainer konten via `AdaptiveDOM.select_one(...)`.
 
@@ -58,5 +58,5 @@ Commit `0bbadc4` (Issue #9) menetapkan hierarki scraper 3 tingkat di CLAUDE.md (
 - Solver Turnstile berbasis klik bersifat *best effort* dan bisa berhenti bekerja bila Cloudflare mengubah widget-nya.
 
 ### Residual Risks (terverifikasi council 2026-10-17, belum diperbaiki)
-- **SSRF via hop redirect (Tier 1b & Tier 3)**: jaminan per-hop ADR-115 hanya berlaku untuk `create_safe_async_client` (Tier 1a). Tier 1b memvalidasi URL akhir setelah `curl_cffi` mengikuti redirect, dan Tier 3 hanya memeriksa `page.url` setelah navigasi (`stealth_base.py:116-118`); subresource tidak diperiksa sama sekali. Server jahat bisa membuat backend *meminta* host internal pada hop perantara (blind SSRF), meski kontennya tidak dikembalikan. **Tindak lanjut:** `curl_cffi` dengan `allow_redirects=False` + loop manual yang memvalidasi tiap hop (maks. 5), dan validasi per-request di Tier 3 lewat `page.route`.
+- ~~**SSRF via hop redirect (Tier 1b & Tier 3)**~~ — **ditutup di ADR-126.** Tier 1b kini mengikuti redirect secara manual dan memvalidasi tiap hop sebelum diminta. Tier 3 dilindungi egress proxy lokal yang memvalidasi IP setiap koneksi browser, ditambah guard CDP `Fetch`. Rencana awal "validasi lewat `page.route`" terbukti tidak cukup karena `page.route` tidak dipanggil untuk hop redirect.
 - **Store signature global & dilacak git**: `adaptive_selectors.json` satu file untuk seluruh proses, tidak dipisah per workspace. Domain yang di-scrape dari workspace `ghost` ikut tercatat di file yang sama dengan `main` (lihat `docs/ghost-mode-security.md`). Tindak lanjut sama dengan poin `.local.json` di atas, ditambah pemisahan per workspace.

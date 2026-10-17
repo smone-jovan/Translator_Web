@@ -264,6 +264,16 @@
 - **Verification**: 392 tes backend lulus tanpa jaringan (dengan penjaga koneksi), typecheck dan lint bersih, 8 cek E2E offline + 7 cek E2E per perbaikan, buka-dingin 12/12, dan audit responsif 320–1920 px di 6 tema.
 - **Status**: Finished.
 
+## Phase 32: Outbound Request Hardening (COMPLETE)
+- **Goal**: Menutup dua risiko keamanan sisa ADR-125: API key terkirim ke URL pilihan klien, dan SSRF lewat hop redirect di Tier 1b/Tier 3.
+- **Implementation**:
+  - Allowlist hostname per provider untuk API key (`is_trusted_provider_url`) di resolver, factory, dan `/translate`.
+  - Redirect manual tervalidasi untuk curl_cffi (`follow_redirects_safely`).
+  - Egress proxy lokal yang memvalidasi IP setiap koneksi browser Tier 3 (fail closed), dengan guard CDP `Fetch` sebagai lapisan kedua.
+  - Penutupan SSRF reflektif lama di adapter Novel Updates (ADR-126).
+- **Verification**: 471 tes backend lulus, termasuk 12 vektor serangan di browser sungguhan, uji mutasi proxy, dan probe tepi proxy dengan resolver asli. Review independen putaran pertama menghasilkan temuan yang kemudian diperbaiki; putaran kedua tidak selesai (lihat ADR-126).
+- **Status**: Finished.
+
 ---
 
 ## 🏛️ 3.1 Categorized Architectural Decision Records (ADR Index)
@@ -316,6 +326,7 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-029**: Multi-Provider Cloud LLM Swapping (Gemini, OpenAI, OpenRouter).
 - **ADR-115, ADR-117 & ADR-118**: Ghost Mode Dual-DB Isolation (`app.db` vs `ghost.db`), In-Memory Compound Key Tenancy (`make_workspace_key`), and Client-Side Storage Scoping (`getWorkspaceStorageKey`).
 - **ADR-125**: Batasan PIN Ghost Mode (penyamar UI, bukan kontrol akses) didokumentasikan; verifikasi council + judge.
+- **ADR-126**: Allowlist host API key per provider dan egress proxy SSRF yang memvalidasi untuk browser scraper.
 
 ### 6. Desktop Launcher & Tooling
 - **ADR-119**: Desktop Control Hub GUI & Zero-Console Launch (`pythonw.exe`, `CREATE_NO_WINDOW`).

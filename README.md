@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.0.0-2DD4BF?style=flat-square)](#)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-392%20passed-brightgreen?style=flat-square)](#contributing)
+[![Tests](https://img.shields.io/badge/tests-471%20passed-brightgreen?style=flat-square)](#contributing)
 [![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python)](#)
 [![React](https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](#license--attribution)
@@ -73,7 +73,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese, Japanese, and Korean we
 | **Scraping** | AdaptiveDOM, Playwright/Patchright Stealth, httpx, curl-cffi, BeautifulSoup4 |
 | **EPUB & NLP** | EbookLib, pypinyin |
 | **Launcher** | Python Tkinter Desktop Control Hub (Windows DWM Dark Mode) & CLI |
-| **Testing** | pytest (392 backend tests, hermetic: no network needed), TypeScript strict typecheck & ESLint |
+| **Testing** | pytest (471 backend tests, hermetic: no network needed), TypeScript strict typecheck & ESLint |
 
 ---
 
@@ -196,7 +196,7 @@ Translator_Web/
 │   │   ├── hallucination_detector.py # N-gram phrase loop & word-soup detector
 │   │   ├── image_cacher.py     # Asynchronous chapter illustration caching
 │   │   └── cleaner_tools.py    # TXT/EPUB cleanup pipelines
-│   └── tests/                  # 392 pytest unit & integration tests
+│   └── tests/                  # 471 pytest unit & integration tests
 ├── src/
 │   ├── pages/                  # 6 pages (Library, Reader, Translate, ContextLibrary, Bookmarks, Settings)
 │   ├── components/             # Modals, 2D RelationshipGraph, FidelityHub, reader controls & shadcn UI

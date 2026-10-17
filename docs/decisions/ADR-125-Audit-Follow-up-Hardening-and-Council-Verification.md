@@ -86,8 +86,7 @@ Selama verifikasi, dua kesalahan pada perbaikan putaran ini sendiri juga tertang
 - "Zero bug" tidak dapat dibuktikan secara mutlak. Yang dapat dinyatakan: setelah dua putaran council + judge, semua temuan FIX-NOW sudah diperbaiki dan diverifikasi; sisanya tercatat sebagai risiko di ADR terkait.
 - Verifikasi frontend dijalankan agent; skrip E2E-nya tidak ada di repo (repo belum punya runner E2E frontend).
 - Ditemukan dan **didokumentasikan, belum diperbaiki** (di luar lingkup atau butuh keputusan/migrasi):
-  - SSRF lewat hop redirect di Tier 1b/Tier 3 (ADR-120).
-  - API key bisa terkirim ke URL pilihan klien untuk provider `openai` (ADR-122).
+  - ~~SSRF lewat hop redirect di Tier 1b/Tier 3 (ADR-120)~~ dan ~~API key terkirim ke URL pilihan klien (ADR-122)~~: ditutup di ADR-126, bersama SSRF reflektif lama di adapter Novel Updates.
   - Kolom `auto_extracted` fantom (ADR-123).
   - Cookie Novalpie global dan file AdaptiveDOM yang dibagi kedua workspace (`docs/ghost-mode-security.md`, ADR-120).
   - Pemanggil non-stream kehilangan sinyal terpotong (ADR-121).
