@@ -1060,7 +1060,9 @@ class BackgroundTranslator:
                             is_per_minute = "perminute" in err_str or "per minute" in err_str or "requestsperminute" in err_str
                             is_daily_quota = is_quota_limit and not is_per_minute and any(d in err_str for d in ["perday", "per day", "requestsperday", "daily"])
 
-                            from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key, QuotaExhaustedError
+                            # Do not re-import QuotaExhaustedError here: binding it inside worker() makes it a
+                            # local name, so the isinstance check above would raise UnboundLocalError.
+                            from services.ai.secrets import rotate_api_key, mark_key_exhausted, get_active_api_key
                             with get_session(ws) as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 if gs_fresh and gs_fresh.llm_provider:
