@@ -38,10 +38,10 @@ class TranslateResponse(BaseModel):
 from services.background_translator import BackgroundTranslator, translation_queues
 
 async def get_lm_url(req_lm_url: str | None, db: Session) -> str:
-    if req_lm_url:
-        return req_lm_url.rstrip("/")
+    # URL dari klien selalu lewat resolver: untuk provider cloud hanya host tepercaya
+    # yang diterima, agar API key tidak terkirim ke URL pilihan klien (ADR-126).
     gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
-    return resolve_active_base_url(gs)
+    return resolve_active_base_url(gs, req_lm_url)
 
 @router.post("/translate/stream")
 async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db)):

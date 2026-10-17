@@ -237,16 +237,17 @@ async def fetch_html_adaptive(
     if needs_escalation:
         try:
             from curl_cffi.requests import AsyncSession
+            from services.security import follow_redirects_safely
+            # Redirect diikuti manual: setiap hop divalidasi SEBELUM diminta (ADR-126).
             async with AsyncSession(
                 impersonate="chrome120",
                 headers=_DEFAULT_BROWSER_HEADERS,
                 timeout=25.0,
-                allow_redirects=True,
+                allow_redirects=False,
             ) as cf_session:
-                cf_resp = await cf_session.get(url)
-                cf_final_url = str(getattr(cf_resp, "url", "") or url)
-                if cf_final_url != url:
-                    validate_external_url(cf_final_url)
+                cf_resp, cf_final_url = await follow_redirects_safely(
+                    lambda u: cf_session.get(u, allow_redirects=False), url
+                )
                 if cf_resp.status_code == 200 and cf_resp.text and not _is_cloudflare_challenge(cf_resp.text):
                     html_text = cf_resp.text
                     final_url = cf_final_url
@@ -265,8 +266,10 @@ async def fetch_html_adaptive(
         try:
             from services.scrapers.stealth_base import StealthyNovelAdapter
             stealth = StealthyNovelAdapter(workspace=workspace, adaptive_domain=url)
+            # strict_ssrf: URL berasal dari pengguna, jadi pakai jalur Playwright native yang
+            # memvalidasi setiap request browser (hop redirect + subresource), bukan Scrapling.
             page = await stealth.fetch_stealth_page(
-                url, solve_cloudflare=True, disable_resources=True, timeout_ms=45000
+                url, solve_cloudflare=True, disable_resources=True, timeout_ms=45000, strict_ssrf=True
             )
             page_html = getattr(page, "html", "") or (page.get_all_text() if hasattr(page, "get_all_text") else "")
             if page_html and not _is_cloudflare_challenge(page_html):

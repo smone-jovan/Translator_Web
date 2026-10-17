@@ -1,6 +1,56 @@
+from urllib.parse import urlparse
+
 from database import GlobalSetting
 
 DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS = 22000
+
+# Host resmi provider cloud. API key hanya boleh dikirim ke host ini (atau, khusus OpenAI,
+# ke `gs.openai_url` yang dikonfigurasi pemilik). Lihat ADR-126.
+OFFICIAL_PROVIDER_HOSTS = {
+    "gemini": "generativelanguage.googleapis.com",
+    "openrouter": "openrouter.ai",
+    "openai": "api.openai.com",
+}
+OFFICIAL_PROVIDER_URLS = {
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "openai": "https://api.openai.com/v1",
+}
+
+
+def _normalize_url(url: str | None) -> str:
+    return (url or "").strip().rstrip("/")
+
+
+def is_trusted_provider_url(provider: str, url: str | None, gs: GlobalSetting | None = None) -> bool:
+    """True bila `url` boleh menerima API key `provider`.
+
+    Dicocokkan lewat hostname hasil parse (bukan substring), wajib https di port standar,
+    tanpa kredensial di URL. Untuk OpenAI, URL yang sama persis dengan `gs.openai_url`
+    (endpoint kompatibel pilihan pemilik) juga diterima.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url.strip())
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.username or parsed.password:
+        return False
+    official_host = OFFICIAL_PROVIDER_HOSTS.get(provider)
+    if (
+        official_host
+        and parsed.scheme == "https"
+        and (parsed.hostname or "").lower() == official_host
+        and port in (None, 443)
+    ):
+        return True
+    if provider == "openai" and gs is not None:
+        configured = _normalize_url(getattr(gs, "openai_url", None))
+        if configured and _normalize_url(url) == configured:
+            return True
+    return False
 
 
 def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None = None) -> str | None:
@@ -53,35 +103,24 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
 
     provider = getattr(gs, "llm_provider", "lm_studio")
     local_lm_url = (getattr(gs, "lm_url", None) or "http://localhost:1234").rstrip("/")
-    req_clean = requested_url.rstrip("/") if requested_url else None
+    req_clean = _normalize_url(requested_url) or None
 
-    def _is_local_url(u: str | None) -> bool:
-        if not u:
-            return False
-        u_low = u.lower()
-        return (
-            u.rstrip("/") == local_lm_url
-            or "localhost" in u_low
-            or "127.0.0.1" in u_low
-            or "0.0.0.0" in u_low
-        )
-
+    # Provider cloud: URL dari request hanya dipakai bila host-nya tepercaya, karena
+    # API key ikut terkirim ke URL tersebut (ADR-126).
     if provider == "gemini":
-        if req_clean and not _is_local_url(req_clean) and (
-            "googleapis.com" in req_clean.lower() or "gemini" in req_clean.lower()
-        ):
+        if is_trusted_provider_url("gemini", req_clean):
             return req_clean
-        return "https://generativelanguage.googleapis.com/v1beta/openai"
+        return OFFICIAL_PROVIDER_URLS["gemini"]
 
     if provider == "openai":
-        if req_clean and not _is_local_url(req_clean):
+        if is_trusted_provider_url("openai", req_clean, gs):
             return req_clean
-        return (getattr(gs, "openai_url", None) or "https://api.openai.com/v1").rstrip("/")
+        return _normalize_url(getattr(gs, "openai_url", None)) or OFFICIAL_PROVIDER_URLS["openai"]
 
     if provider == "openrouter":
-        if req_clean and not _is_local_url(req_clean) and "openrouter.ai" in req_clean.lower():
+        if is_trusted_provider_url("openrouter", req_clean):
             return req_clean
-        return "https://openrouter.ai/api/v1"
+        return OFFICIAL_PROVIDER_URLS["openrouter"]
 
     if req_clean:
         return req_clean

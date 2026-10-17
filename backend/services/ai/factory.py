@@ -34,18 +34,21 @@ class AIProviderFactory:
             
             provider = gs.llm_provider if gs else "lm_studio"
             from services.ai.secrets import get_active_api_key
-            
+            from services.ai.settings import OFFICIAL_PROVIDER_URLS, is_trusted_provider_url
+
             # If the user explicitly passed a custom base_url, respect it
             if base_url:
                 # If gs is present and base_url matches the setting's lm_url, do not override provider
                 if gs and base_url == gs.lm_url:
                     pass
                 else:
-                    if "generativelanguage.googleapis.com" in base_url or "gemini" in base_url.lower():
+                    # Provider cloud hanya dipilih dari URL bila host-nya tepercaya (hostname
+                    # hasil parse, bukan substring), agar API key tidak ikut ke host lain (ADR-126).
+                    if is_trusted_provider_url("gemini", base_url):
                         provider = "gemini"
-                    elif "openrouter.ai" in base_url.lower() or "openrouter" in base_url.lower():
+                    elif is_trusted_provider_url("openrouter", base_url):
                         provider = "openrouter"
-                    elif "api.openai.com" in base_url or "openai" in base_url.lower():
+                    elif is_trusted_provider_url("openai", base_url, gs):
                         provider = "openai"
                     elif "localhost" in base_url or "127.0.0.1" in base_url:
                         provider = "lm_studio"
@@ -78,9 +81,9 @@ class AIProviderFactory:
                 
                 print(f"[DEBUG] get_provider -> provider is gemini. Input model: '{model}', resolved_model: '{resolved_model}', database gemini_model: '{gs.gemini_model if gs else 'N/A'}'")
                 resolved_key = api_key or get_active_api_key("gemini", gs)
-                # Prevent sending Gemini cloud requests to local URL
-                resolved_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-                if base_url and ("googleapis.com" in base_url or "gemini" in base_url.lower()):
+                # API key hanya dikirim ke host resmi Gemini
+                resolved_url = OFFICIAL_PROVIDER_URLS["gemini"]
+                if is_trusted_provider_url("gemini", base_url):
                     resolved_url = base_url
                 return GeminiAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
 
@@ -89,8 +92,8 @@ class AIProviderFactory:
                 from services.ai.openrouter import OpenRouterAdapter
                 resolved_model = model or (gs.openrouter_model if gs else "deepseek/deepseek-chat")
                 resolved_key = api_key or get_active_api_key("openrouter", gs) or "sk-or-dummy"
-                resolved_url = "https://openrouter.ai/api/v1"
-                if base_url and "openrouter.ai" in base_url.lower():
+                resolved_url = OFFICIAL_PROVIDER_URLS["openrouter"]
+                if is_trusted_provider_url("openrouter", base_url):
                     resolved_url = base_url
                 return OpenRouterAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
                 
@@ -105,8 +108,8 @@ class AIProviderFactory:
                     resolved_model = "gpt-4o"
                 
                 resolved_key = api_key or get_active_api_key("openai", gs) or "sk-dummy"
-                resolved_url = gs.openai_url if (gs and gs.openai_url) else "https://api.openai.com/v1"
-                if base_url and ("api.openai.com" in base_url or "openai" in base_url.lower()):
+                resolved_url = gs.openai_url if (gs and gs.openai_url) else OFFICIAL_PROVIDER_URLS["openai"]
+                if is_trusted_provider_url("openai", base_url, gs):
                     resolved_url = base_url
                 return OpenAIAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
                 

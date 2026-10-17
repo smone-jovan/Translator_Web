@@ -6,7 +6,9 @@ atau Native Adaptive Playwright Fallback + Adaptive DOM Parsing.
 
 import asyncio
 from typing import Optional, List, Tuple, Callable, Any
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+from fastapi import HTTPException
 
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
 from services.scrapers.adaptive_dom import AdaptivePage
@@ -19,12 +21,85 @@ from services.scrapers.novalpie import (
     _is_cloudflare_challenge,
 )
 from services.security import validate_external_url
+from services.egress_proxy import get_egress_proxy
 
 try:
     from scrapling.fetchers import StealthyFetcher, AsyncStealthySession
     HAS_SCRAPLING = True
 except ImportError:
     HAS_SCRAPLING = False
+
+
+_SSRF_FORBIDDEN_DETAIL = "Access to private or local network resources is forbidden"
+_NON_NETWORK_SCHEMES = {"data", "blob", "about"}
+
+
+def _install_ssrf_guard(context: Any, page: Any) -> dict:
+    """
+    Lapisan kedua SSRF untuk browser (ADR-126); lapisan utamanya egress proxy yang memvalidasi.
+
+    CDP `Fetch` (requestStage=Request) menjeda dokumen awal, tiap hop redirect (yang tidak
+    terlihat oleh `page.route`), subresource, fetch/XHR, dan request Web Worker di target
+    halaman ini, lalu menggagalkan request ke host yang gagal `validate_external_url`
+    sebelum koneksi dibuat. Gunanya: kegagalan cepat dan pesan 400 yang jelas untuk navigasi
+    utama. Popup, form `target=_blank`, WebSocket, dan target lain tidak dijeda di sini;
+    jalur itu ditangani proxy. Gagal dipasang = exception (fail closed).
+    """
+    state = {"blocked": [], "blocked_document": False}
+    host_ok: dict = {}
+    cdp = context.new_cdp_session(page)
+    main_frame_id = None
+    try:
+        tree = cdp.send("Page.getFrameTree") or {}
+        main_frame_id = ((tree.get("frameTree") or {}).get("frame") or {}).get("id")
+    except Exception:
+        main_frame_id = None
+
+    def _allowed(url: str) -> bool:
+        scheme = url.split(":", 1)[0].lower()
+        if scheme in _NON_NETWORK_SCHEMES:
+            return True
+        if scheme in ("ws", "wss"):
+            url = ("https" if scheme == "wss" else "http") + url[len(scheme):]
+        elif scheme not in ("http", "https"):
+            return False
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except ValueError:
+            return False
+        if host not in host_ok:
+            try:
+                validate_external_url(url)
+                host_ok[host] = True
+            except Exception:
+                # HTTPException maupun error tak terduga (mis. UnicodeError IDNA) = tolak.
+                host_ok[host] = False
+        return host_ok[host]
+
+    def _on_paused(event: dict) -> None:
+        request_id = event.get("requestId")
+        url = (event.get("request") or {}).get("url", "")
+        allowed = False
+        try:
+            allowed = _allowed(url)
+        except Exception:
+            allowed = False
+        try:
+            if allowed:
+                cdp.send("Fetch.continueRequest", {"requestId": request_id})
+                return
+            state["blocked"].append(url)
+            is_main = main_frame_id is None or event.get("frameId") == main_frame_id
+            if event.get("resourceType") == "Document" and is_main:
+                state["blocked_document"] = True
+            cdp.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+        except Exception:
+            # Target sudah ditutup / request sudah dibatalkan.
+            pass
+
+    cdp.on("Fetch.requestPaused", _on_paused)
+    cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]})
+    return state
 
 
 class StealthyNovelAdapter(BaseScraperAdapter):
@@ -60,12 +135,19 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             has_stealth = False
 
         browser = _get_thread_browser()
+        # Lapisan utama SSRF: semua koneksi browser context ini lewat egress proxy yang
+        # me-resolve sendiri, menolak IP non-publik, dan menyambung ke IP yang sudah dicek.
+        # "<-loopback>": tanpa ini Chromium mem-bypass proxy untuk localhost/127.0.0.1.
+        egress_proxy = get_egress_proxy()
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1366, "height": 768},
+            proxy={"server": egress_proxy.server_url, "bypass": "<-loopback>"},
+            # Service worker bisa membuat request di luar jangkauan guard SSRF per halaman.
+            service_workers="block",
         )
         _inject_scrapling_stealth_scripts(context, block_webrtc=True, hide_canvas=True)
         if cookies:
@@ -76,6 +158,7 @@ class StealthyNovelAdapter(BaseScraperAdapter):
 
         try:
             page = context.new_page()
+            ssrf_guard = _install_ssrf_guard(context, page)
             if disable_resources:
                 _install_resource_shield(page, disable_resources=True)
             if has_stealth:
@@ -84,7 +167,24 @@ class StealthyNovelAdapter(BaseScraperAdapter):
                 except Exception:
                     pass
 
-            resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            proxied_before = egress_proxy.handled
+            proxy_blocked_before = egress_proxy.blocked
+            try:
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            except Exception:
+                # CONNECT (https) yang ditolak proxy muncul sebagai error jaringan biasa.
+                if ssrf_guard["blocked_document"] or egress_proxy.blocked > proxy_blocked_before:
+                    raise HTTPException(status_code=400, detail=_SSRF_FORBIDDEN_DETAIL)
+                raise
+            # http biasa yang ditolak proxy muncul sebagai respons 403 bertanda dari proxy.
+            resp_headers = getattr(resp, "headers", None) if resp is not None else None
+            proxy_refused = isinstance(resp_headers, dict) and bool(resp_headers.get("x-ssrf-blocked"))
+            if proxy_refused:
+                raise HTTPException(status_code=400, detail=_SSRF_FORBIDDEN_DETAIL)
+            if egress_proxy.handled == proxied_before:
+                # Fail closed: halaman termuat tanpa satu pun koneksi lewat proxy, berarti
+                # konfigurasi proxy per-context diabaikan dan browser menyambung langsung.
+                raise RuntimeError("SSRF egress proxy was bypassed; refusing to return the page")
             status_code = resp.status if resp else 200
 
             max_poll_s = min(20.0, max(5.0, timeout_ms / 3000.0))
@@ -140,9 +240,15 @@ class StealthyNovelAdapter(BaseScraperAdapter):
         page_action: Optional[Callable[[Any], Any]] = None,
         cookies: Optional[List[dict]] = None,
         timeout_ms: int = 60000,
+        strict_ssrf: bool = False,
     ) -> Any:
+        """
+        strict_ssrf=True: untuk URL pilihan pengguna. Scrapling tidak punya hook per-request,
+        sehingga hanya jalur Playwright native (egress proxy + guard CDP) yang menjamin setiap
+        koneksi browser divalidasi (ADR-126).
+        """
         validate_external_url(url)
-        if HAS_SCRAPLING:
+        if HAS_SCRAPLING and not strict_ssrf:
             return await StealthyFetcher.async_fetch(
                 url,
                 headless=True,

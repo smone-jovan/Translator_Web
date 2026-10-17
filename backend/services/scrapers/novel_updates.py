@@ -5,6 +5,40 @@ from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
+from services.security import follow_redirects_safely
+
+_NOVELUPDATES_HOSTS = {"novelupdates.com", "www.novelupdates.com"}
+
+
+def normalize_novelupdates_series_url(raw: str) -> str:
+    """
+    Kembalikan URL halaman seri Novel Updates yang sah, atau "" bila bukan.
+
+    Input pengguna dulu dicek dengan substring ("novelupdates.com/series/" ada di mana saja),
+    sehingga URL ke host lain ikut diambil (SSRF, ADR-126). Kini hostname hasil parse wajib
+    novelupdates.com / www.novelupdates.com dan path diawali /series/.
+    """
+    candidate = (raw or "").strip()
+    if not candidate:
+        return ""
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    try:
+        parsed = urllib.parse.urlsplit(candidate)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme not in ("http", "https")
+        or parsed.username
+        or parsed.password
+        or host not in _NOVELUPDATES_HOSTS
+        or port not in (None, 80, 443)
+        or not parsed.path.startswith("/series/")
+    ):
+        return ""
+    return urllib.parse.urlunsplit(("https", host, parsed.path, parsed.query, ""))
 
 class NovelUpdatesAdapter(BaseScraperAdapter):
     """
@@ -222,7 +256,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         # Direct URL check - extract title and use it as query
         detail_url = ""
         if "novelupdates.com/series/" in query_strip:
-            detail_url = query_strip
+            detail_url = normalize_novelupdates_series_url(query_strip)
             url_title = self._extract_title_from_url(query_strip)
             if url_title:
                 query_strip = url_title
@@ -313,7 +347,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         # Direct URL check - extract title and use it as query
         detail_url = ""
         if "novelupdates.com/series/" in query_strip:
-            detail_url = query_strip
+            detail_url = normalize_novelupdates_series_url(query_strip)
             url_title = self._extract_title_from_url(query_strip)
             if url_title:
                 query_strip = url_title
@@ -365,6 +399,23 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
             synopsis=f"No results found on Novel Updates for '{query_strip}'"
         )
 
+    async def _fetch_series_page(self, client, url: str):
+        """GET halaman seri Novel Updates; None bila URL bukan seri Novel Updates yang sah.
+
+        Redirect diikuti manual dan setiap hop divalidasi SSRF sebelum diminta (ADR-126).
+        """
+        safe_url = normalize_novelupdates_series_url(url)
+        if not safe_url:
+            print(f"[NovelUpdates] Ignoring non-Novel Updates URL: {url!r}")
+            return None
+        resp, _final_url = await follow_redirects_safely(
+            lambda u: client.get(
+                u, headers=self.headers, impersonate="chrome120", timeout=15.0, allow_redirects=False
+            ),
+            safe_url,
+        )
+        return resp
+
     async def _enhance_metadata(self, meta: ScrapedNovelMetadata, query: str):
         """Enhance basic snippet metadata by fetching the detail page directly."""
         if not meta.detail_url:
@@ -373,8 +424,8 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         try:
             print(f"[NovelUpdates] Enhancing metadata from: {meta.detail_url}")
             async with AsyncSession() as client:
-                resp = await client.get(meta.detail_url, headers=self.headers, impersonate="chrome120", timeout=15.0)
-                if resp.status_code == 200:
+                resp = await self._fetch_series_page(client, meta.detail_url)
+                if resp is not None and resp.status_code == 200:
                     detail_meta = await self._parse_html(resp.text, meta.detail_url, query, True)
                     # Merge detail_meta into meta
                     if detail_meta.cover_image:
@@ -396,8 +447,8 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         """Scrape detail page directly."""
         try:
             async with AsyncSession() as client:
-                resp = await client.get(url, headers=self.headers, impersonate="chrome120", timeout=15.0)
-                if resp.status_code == 200:
+                resp = await self._fetch_series_page(client, url)
+                if resp is not None and resp.status_code == 200:
                     return await self._parse_html(resp.text, url, query, include_cover)
         except Exception as e:
             print(f"[NovelUpdates] Detail page scrape failed: {e}")
