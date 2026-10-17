@@ -1,7 +1,7 @@
 # ADR-035: Chapter-Level AI Token Safety Cap
 
 ## Status
-Proposed
+Accepted (implementasi terverifikasi di kode, audit 2026-10-16)
 
 ## Date
 2026-05-18

@@ -243,6 +243,27 @@
   - Pelingkupan pembersihan `ACTIVE_IMAGE_JOBS` per workspace aktif pada endpoint `clear_image_cache` (ADR-118).
 - **Status**: Finished.
 
+## Phase 30: Desktop Control Hub, Adaptive Scraping, MTL Quality Guards, & Glossary Lifecycle (COMPLETE)
+- **Goal**: Menyelesaikan Issue #17 dan #20–#24: launcher tanpa konsol, scraper yang tahan perubahan struktur situs, guard kualitas MTL, siklus hidup glosarium tanpa self-eviction, dan sinkronisasi Settings ↔ Lorebook.
+- **Implementation**:
+  - Desktop Control Hub `tkinter` bertema gelap, peluncuran `pythonw.exe`, dan `CREATE_NO_WINDOW` pada seluruh subprocess (ADR-119).
+  - `AdaptiveDOM` (relokasi elemen berbasis signature), stealth scripts, resource shield, solver Turnstile aktif, XHR capture, dan fetcher hibrida 3-tier `fetch_html_adaptive` (ADR-120).
+  - Preservasi teks parsial Gemini, guard kebocoran aksara sumber, loop frasa, dan meta-komentar di Fidelity Checker, prompt sadar bahasa, serta Glossary Lock yang aman untuk URL dan klitik (ADR-121).
+  - Perbaikan Self-Eviction Paradox (`usage_count = 1`, `protected_ids`), ekstraksi bersampel Head/Mid/Tail, parsing Translator Notes yang kokoh, dan injeksi gender & relasi karakter ke prompt (ADR-122).
+  - Default `max_context_terms = 150`, rebalancing lorebook dua arah, API lorebook lengkap (`include_archived`, `stats`, `bulk`), preset dwibahasa, dan Glossary Studio yang sadar mode Fast/Quality (ADR-123).
+- **Status**: Finished.
+
+## Phase 31: Audit Follow-up, Pocket Offline Cache, & Council-Based Verification (COMPLETE)
+- **Goal**: Menutup temuan audit ADR/issue pasca-Phase 30 dan menghadirkan pembacaan offline di HP (`docs/ideas/mobile-offline-reader.md`, fase 2), diverifikasi oleh council reviewer independen dan judge.
+- **Implementation**:
+  - Propagasi workspace eksplisit di `MetadataScraperEngine`, key reset session ADR-118 di `ErrorBoundary.tsx`, test suite hermetik (`pytest-asyncio`, fixture `hermetic_dns`), dan penolakan path huruf drive di semua OS (ADR-125).
+  - Batasan PIN Ghost Mode didokumentasikan di `docs/ghost-mode-security.md` (ADR-125).
+  - Pocket Offline Cache berbasis IndexedDB per workspace, `GET …/chapters/{id}?track=0` tanpa efek samping pada posisi baca, fallback offline untuk gagal jaringan/502–504 dan jaringan menggantung (5 detik), serta tombol simpan & hapus cache di reader dan Settings (ADR-124).
+  - Perbaikan hasil council/judge putaran pertama: popover pengaturan dibatasi tinggi layar, badge Offline yang terlihat di HP dengan kontras ≥ 4,5:1, pengamanan bab yang belum disimpan, dan penanganan ID novel yang dipakai ulang (ADR-124, ADR-125).
+  - Council kedua (5 reviewer independen + judge, 2026-10-17): workspace dikunci per tab + reload lintas tab (kebocoran cache main↔ghost), toolbar reader muat di 320 px, toast tidak lagi menutupi kontrol (diverifikasi 320–1920 px), overlay pengaturan bisa ditutup dengan Esc/klik luar dan dibatasi lebarnya di desktop, tidak ada lagi toast **error** palsu saat server sekadar lambat maupun badge Offline palsu setelah pindah bab, pemulihan otomatis saat jaringan kembali, buka-dingin selalu ke bab yang diminta, kontras teks destruktif ≥ 4,5:1 di 6 tema, serta tiga bug lama (istilah glosarium baru terhapus sendiri lewat import/preset, fallback kuota 50 vs 150, tes yang menulis `adaptive_selectors.json`) (ADR-125).
+- **Verification**: 392 tes backend lulus tanpa jaringan (dengan penjaga koneksi), typecheck dan lint bersih, 8 cek E2E offline + 7 cek E2E per perbaikan, buka-dingin 12/12, dan audit responsif 320–1920 px di 6 tema.
+- **Status**: Finished.
+
 ---
 
 ## 🏛️ 3.1 Categorized Architectural Decision Records (ADR Index)
@@ -256,6 +277,8 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-113**: Media Gate & Chapter Illustration Proxy Pipeline.
 - **ADR-115 & ADR-116**: SSRF Multi-Layer Prevention (`validate_external_url`, `create_safe_async_client`) & Pure HTTP SFACG Scraper.
 - **ADR-117 (Scrapers)**: 3-Tier Scraper Hierarchy & `StealthyNovelAdapter` (`stealth_base.py`).
+- **ADR-120**: Adaptive DOM Relocation, Playwright Stealth Hardening & Hybrid 3-Tier Fetcher (`fetch_html_adaptive`).
+- **ADR-125 (Scrapers)**: Workspace eksplisit pada `MetadataScraperEngine`.
 
 ### 2. Batch Translation, Pacing & Concurrency
 - **ADR-007 & ADR-011**: Asynchronous Batch Title Translation, 50-chunking & timeout guards.
@@ -276,6 +299,8 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-106, ADR-107 & ADR-108**: Hybrid Glossary Hard-Locking, Idempotent Single-Pass Span Replacement.
 - **ADR-109 & ADR-110**: Gender Pronoun Consistency (`MALE/FEMALE`), Non-Human Classification.
 - **ADR-111**: Adaptive Multi-Language Source Detection (CJK, Korean, Japanese).
+- **ADR-121**: MTL Quality Guards — preservasi output terpotong, deteksi kebocoran aksara sumber & loop frasa.
+- **ADR-122 & ADR-123**: Siklus hidup glosarium tanpa self-eviction, ekstraksi bersampel, relasi karakter di prompt, dan sinkronisasi Settings ↔ Lorebook.
 
 ### 4. Reader UX, Scroll Geometry & Mobile Layout
 - **ADR-019**: Dynamic Client-Side Cover Engine & Canvas Compression.
@@ -284,11 +309,17 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-085**: Mobile Screen-Lock Resilience via `sessionStorage` & `visibilitychange`.
 - **ADR-096 & ADR-117**: Mobile Viewport Geometry, Pinch-to-Zoom & Safe-Area Inset Handling.
 - **ADR-105**: Safe Reader Image Component (`<SafeReaderImage>`) with Inline Retry.
+- **ADR-124**: Pocket Offline Cache (IndexedDB per workspace) untuk membaca di HP tanpa server.
 
 ### 5. Multi-Tenancy & Ghost Mode Dual-Database
 - **ADR-006 & ADR-008**: Server-Side `GlobalSetting` Configuration Storage.
 - **ADR-029**: Multi-Provider Cloud LLM Swapping (Gemini, OpenAI, OpenRouter).
 - **ADR-115, ADR-117 & ADR-118**: Ghost Mode Dual-DB Isolation (`app.db` vs `ghost.db`), In-Memory Compound Key Tenancy (`make_workspace_key`), and Client-Side Storage Scoping (`getWorkspaceStorageKey`).
+- **ADR-125**: Batasan PIN Ghost Mode (penyamar UI, bukan kontrol akses) didokumentasikan; verifikasi council + judge.
+
+### 6. Desktop Launcher & Tooling
+- **ADR-119**: Desktop Control Hub GUI & Zero-Console Launch (`pythonw.exe`, `CREATE_NO_WINDOW`).
+- **ADR-125 (Tooling)**: Test suite hermetik (`pytest-asyncio`, fixture `hermetic_dns`).
 
 ---
 

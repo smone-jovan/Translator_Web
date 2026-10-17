@@ -1,7 +1,7 @@
-# adr-012: manajemen glossary dan pipeline translasi yang kontekstual
+# ADR-053: Manajemen Glossary dan Pipeline Translasi yang Kontekstual
 
-## status
-diterima
+## Status
+Accepted (partially superseded by ADR-122 and ADR-123: batas istilah kini dapat diatur, default 150, dan istilah lama diarsipkan, bukan dihapus)
 
 ## konteks
 Pas novelnya makin panjang, kualitas translasi AI mulai berantakan karena:

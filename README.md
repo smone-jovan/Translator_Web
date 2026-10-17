@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.0.0-2DD4BF?style=flat-square)](#)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-341%20passed-brightgreen?style=flat-square)](#contributing)
+[![Tests](https://img.shields.io/badge/tests-392%20passed-brightgreen?style=flat-square)](#contributing)
 [![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python)](#)
 [![React](https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](#license--attribution)
@@ -70,10 +70,10 @@ ReadOmni AI lets you read, crawl, and translate Chinese, Japanese, and Korean we
 | **Backend** | Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic |
 | **Database** | Dual SQLite (`app.db` & `ghost.db` in WAL mode) |
 | **AI Providers** | LM Studio (Local), Google Gemini, OpenAI, OpenRouter |
-| **Scraping** | AdaptiveDOM, Playwright Stealth, Crawl4AI, curl-cffi, BeautifulSoup4 |
+| **Scraping** | AdaptiveDOM, Playwright/Patchright Stealth, httpx, curl-cffi, BeautifulSoup4 |
 | **EPUB & NLP** | EbookLib, pypinyin |
 | **Launcher** | Python Tkinter Desktop Control Hub (Windows DWM Dark Mode) & CLI |
-| **Testing** | pytest (341+ backend tests), TypeScript strict typecheck & ESLint |
+| **Testing** | pytest (392 backend tests, hermetic: no network needed), TypeScript strict typecheck & ESLint |
 
 ---
 
@@ -196,7 +196,7 @@ Translator_Web/
 │   │   ├── hallucination_detector.py # N-gram phrase loop & word-soup detector
 │   │   ├── image_cacher.py     # Asynchronous chapter illustration caching
 │   │   └── cleaner_tools.py    # TXT/EPUB cleanup pipelines
-│   └── tests/                  # 341+ pytest unit & integration tests
+│   └── tests/                  # 392 pytest unit & integration tests
 ├── src/
 │   ├── pages/                  # 6 pages (Library, Reader, Translate, ContextLibrary, Bookmarks, Settings)
 │   ├── components/             # Modals, 2D RelationshipGraph, FidelityHub, reader controls & shadcn UI
@@ -205,8 +205,8 @@ Translator_Web/
 └── docs/
     ├── overview.md             # High-level system architecture & data flows
     ├── Handoff.md              # Developer onboarding guide & Agent Playbook
-    ├── SDLC.md                 # 29-phase development lifecycle & Categorized ADR Index
-    └── decisions/              # 115 Architectural Decision Records (ADR-004 to ADR-118)
+    ├── SDLC.md                 # 31-phase development lifecycle & Categorized ADR Index
+    └── decisions/              # 122 Architectural Decision Records (ADR-004 to ADR-125)
 ```
 
 ---
@@ -217,8 +217,8 @@ Translator_Web/
 |----------|-------------|
 | [Architecture Overview](docs/overview.md) | High-level system architecture, data flows, and key entry points |
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview, and Agent Playbook |
-| [SDLC](docs/SDLC.md) | Software development lifecycle (Phases 1–29) & Categorized ADR Index |
-| [ADRs](docs/decisions/) | 115 architectural decision records (ADR-004 to ADR-118) |
+| [SDLC](docs/SDLC.md) | Software development lifecycle (Phases 1–31) & Categorized ADR Index |
+| [ADRs](docs/decisions/) | 122 architectural decision records (ADR-004 to ADR-125) |
 | [Configuration Guide](docs/Configuration_setting.md) | Detailed setup and multi-device sync instructions |
 | [Implementation Plan](docs/implementation_plan.md) | Historical task definitions & acceptance criteria |
 | [Ghost Mode Security Notes](docs/ghost-mode-security.md) | Known limitation: the Ghost PIN hides the UI but does not protect `ghost.db` from other devices on the LAN |

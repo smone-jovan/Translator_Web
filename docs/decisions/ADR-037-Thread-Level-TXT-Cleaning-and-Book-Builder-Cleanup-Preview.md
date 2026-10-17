@@ -1,7 +1,7 @@
 # ADR-037: Thread-Level TXT Cleaning and Book Builder Cleanup Preview
 
 ## Status
-Proposed
+Accepted (implementasi terverifikasi di kode, audit 2026-10-16)
 
 ## Date
 2026-05-19

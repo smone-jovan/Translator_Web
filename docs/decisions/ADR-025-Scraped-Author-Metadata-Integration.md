@@ -1,5 +1,8 @@
 # ADR-025: Scraped Author Metadata Integration
 
+## Status
+Accepted (implementasi terverifikasi di kode, audit 2026-10-16)
+
 ## Context & Problem Statement
 When importing novels from external platforms (such as Novel Updates or SFACG), the scraper retrieved titles, genres, synopses, and covers, but lacked a formal mechanism to extract, store, and propagate the novel's author name. The `Thread` database table was already provisioned with an `author` column, but it remained unpopulated. Users had to manually input author names during book generation, and thread listings/dashboards fallback on static strings (e.g. `'Ancient Author'` or `'Unknown Author'`).
 

@@ -11,7 +11,7 @@
 ### 📋 The Technical Stack
 * **Frontend:** React 19, Vite, TailwindCSS v4 (fully customized with HSL CSS variables supporting OLED, White, Sepia, Black, and Omni themes).
 * **Backend:** FastAPI (Python 3.11+), SQLite (WAL mode enabled), SQLAlchemy ORM, Uvicorn server.
-* **Scraper Engine:** Crawl4AI (stealth crawling) & dynamic parsing.
+* **Scraper Engine:** 3-tier hybrid fetcher (httpx/`curl_cffi` → Playwright/Patchright stealth) with AdaptiveDOM parsing (tiering from Issue #9 / commit `0bbadc4` and CLAUDE.md; hardening in ADR-120).
 * **AI Core:** Swappable provider stack supporting LM Studio local OpenAI-compatible API (`http://localhost:1234`), OpenAI cloud models, Google Gemini cloud models, and OpenRouter AI (`https://openrouter.ai/api/v1`) with configurable per-chapter token safety caps, automatic thinking mode compatibility, multiple API key rotation, Quality/Fast translation mode, and auto-continue for truncated translations.
 
 ### 🔌 Sandbox Port Assignments
@@ -37,7 +37,7 @@
 │   │   ├── lorebook.py         # Thread-specific term dictionary CRUD & mappings
 │   │   ├── polish.py           # Title polishing (NDJSON streaming, HARD/SOFT mode) & TOC skip logic
 │   │   ├── relationships.py    # Character relationship graph extraction & D3 data
-│   │   ├── scrape.py           # URL crawling interface using Crawl4AI
+│   │   ├── scrape.py           # URL crawling (3-tier fetch_html_adaptive + AdaptiveDOM, ADR-120)
 │   │   ├── settings.py         # Server-side persistent settings sync & API key management
 │   │   ├── system.py           # Workspace switching (Ghost Mode) with PIN authentication (ADR-068)
 │   │   ├── threads.py          # Thread/Chapter CRUD, delete chapter, fix-truncated, batch translation, metadata scraping
@@ -108,7 +108,7 @@
 │   ├── index.css               # Central design tokens, variable scopes, animations
 │   ├── App.tsx                 # React router / page switcher
 │   └── main.tsx                # Client bootstrapper
-└── docs/                       # Architectural Decision Records (ADR-004 through ADR-118)
+└── docs/                       # Architectural Decision Records (ADR-004 through ADR-125)
 ```
 
 ---
@@ -418,7 +418,7 @@ Every code change must adhere to the highest standard of type checking and compi
 
 Here are the immediate strategic features you are tasked to build next:
 
-Recent completed platform work (ADR-034 through ADR-118):
+Recent completed platform work (ADR-034 through ADR-125):
 - ADR-034: global batch progress visibility and honest chapter failure handling
 - ADR-035: configurable chapter token safety cap with default `22K` and uncapped override
 - ADR-036: hallucination audit system with 10x repeated-word detection and chapter-level flagging
@@ -502,6 +502,14 @@ Recent completed platform work (ADR-034 through ADR-118):
 - ADR-114: Novalpie guest access verification, transient server signature desync analysis, and resilient scraper polling architecture
 - ADR-115: Defense-in-depth SSRF redirect traversal protection, strict non-global IP rejection (RFC 6598 CGNAT), dual-database compound key workspace isolation, non-destructive secret masking reconciliation, and pure request-scoped workspace resolution
 - ADR-116: Dedicated SFACG TOC & chapter scraper, async SSRF redirect event hook bugfix, zero-Playwright HTTP scraper pipeline, and Novalpie UI control isolation
+- ADR-117/118: backend security hardening, glossary lock collision fixes, mobile viewport geometry, and Ghost workspace cache/SSE tenancy isolation
+- ADR-119: Desktop Control Hub GUI (tkinter), zero-console `pythonw.exe` launch and `CREATE_NO_WINDOW` subprocess flags
+- ADR-120: AdaptiveDOM relocation engine, Playwright stealth/resource shield/Turnstile solver/XHR capture, and hybrid 3-tier `fetch_html_adaptive`
+- ADR-121: MTL quality guards — Gemini truncated-output preservation, source-script leak, phrase-loop and meta-commentary detection, URL/clitic-safe glossary lock
+- ADR-122: glossary lifecycle without self-eviction, stratified extraction, robust translator-notes parsing, gender & character-relationship prompt injection
+- ADR-123: Settings ↔ Lorebook sync (default 150 terms, bidirectional rebalancing, include_archived/stats/bulk APIs), bilingual presets, mode-aware Glossary Studio
+- ADR-124: Pocket Offline Cache (IndexedDB per workspace), side-effect-free `?track=0` chapter reads, offline/slow-network fallback in the reader
+- ADR-125: audit follow-up (workspace-explicit metadata scraper, ErrorBoundary session key, hermetic tests), Ghost PIN limitation documented, council + judge verification
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

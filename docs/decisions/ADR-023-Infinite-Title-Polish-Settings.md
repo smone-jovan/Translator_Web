@@ -1,5 +1,8 @@
 # ADR-023: Infinite Title Polish Settings & Dynamic Actions System
 
+## Status
+Accepted (implementasi terverifikasi di kode, audit 2026-10-16)
+
 ## Context & Problem Statement
 When polishing novel chapter titles in bulk (Infinite Polish feature), processing hundreds or thousands of chapters simultaneously can overload the local LLM context window or degrade performance. The system required a configurable title polish strategy that allows toggling between a safe "Soft Load" limit (50-150 titles) and an aggressive "Hard Load" (unrestricted processing).
 

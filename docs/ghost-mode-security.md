@@ -24,7 +24,15 @@ Batasan terkait:
 - PIN default `03697` dipakai bila belum diubah.
 - Tidak ada rate-limit untuk percobaan PIN.
 - PIN disimpan sebagai teks biasa di SQLite (sudah dicatat di ADR-083).
+- `GET /api/settings` menampilkan PIN dalam bentuk ter-mask (`mask_secret`); PIN yang lebih dari 8 karakter masih memperlihatkan 4 karakter pertama dan 4 terakhir.
+- Cookie `readomni_workspace` di-set dengan `httponly=False` (sengaja, karena dibaca frontend), sehingga bisa dibaca atau diubah oleh skrip di halaman.
+- Menghapus novel di server tidak menghapus salinan "Baca Offline" yang sudah tersimpan di HP lain.
 - Cache "Baca Offline" di HP disimpan per workspace (`readomni_offline_v1_ghost`). Setelah kembali ke `main`, salinan ghost tetap ada di IndexedDB browser HP dan tidak terlihat dari panel workspace `main`; hapus dulu dari workspace `ghost` bila perlu.
+- **PIN juga tersimpan polos di browser**: halaman Settings menyimpan PIN di `localStorage` (`ghost_pin`, `SettingsPage.tsx`) dan sesaat setelah diganti menampilkannya sebagai placeholder `Current PIN: …`. Orang yang meminjam perangkat dan membuka DevTools bisa membacanya.
+- **Cookie workspace berumur 30 hari** (`max_age=2592000`): perangkat yang ditinggal dalam mode `ghost` akan langsung terbuka di `ghost` saat dibuka lagi dalam 30 hari.
+- **Jejak domain ghost di file bersama**: `backend/data/adaptive_selectors.json` (AdaptiveDOM, ADR-120) satu file untuk kedua workspace dan dilacak git, sehingga domain yang di-scrape dari `ghost` ikut tercatat di sana.
+- **Cookie Novalpie bersama**: cookie login Novalpie dibaca dari `backend/.env` global sebelum pengaturan per workspace (`novalpie.py`), sehingga scraping dari `ghost` memakai akun Novalpie yang sama dengan `main`.
+- **Tab lain ikut berpindah** (sejak 2026-10-17, ADR-125): workspace setiap tab dikunci saat halaman dimuat, dan saat workspace diganti di satu tab, tab lain otomatis reload ke workspace baru. Tujuannya mencegah satu tab menampilkan data satu workspace sambil menulis ke workspace lain. Efek sampingnya: berpindah dari `ghost` ke `main` juga menutup tampilan ghost di tab lain.
 
 ## Model ancaman yang dicakup
 

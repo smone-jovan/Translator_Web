@@ -1,5 +1,8 @@
 # ADR-024: Zero-Padded Clean Title Formatting System
 
+## Status
+Accepted (implementasi terverifikasi di kode, audit 2026-10-16)
+
 ## Context & Problem Statement
 When novel chapter titles are processed or imported, they often retain noisy prefixes (e.g. `Chapter X:`, `Bab X -`, `Vol X`, `第X章`, or leading indices like `1. `, `01 - `). When these titles are polished/translated or exported to external formats such as EPUB or TXT, the inconsistent numbering patterns make the novel difficult to read, navigate, and sort properly.
 
