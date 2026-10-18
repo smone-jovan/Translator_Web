@@ -14,6 +14,7 @@ from services.scrapers.browser_stealth import (  # noqa: F401
     build_context_options,
     apply_client_hints,
     build_launch_args,
+    launch_stealth_browser,
     cloudflare_poll_step,
     inject_stealth_scripts as _inject_scrapling_stealth_scripts,
     is_cloudflare_challenge as _is_cloudflare_challenge,
@@ -181,7 +182,7 @@ def _get_thread_browser():
 
     print(f"🚀 [{engine_label}] Launching reusable Chromium browser instance for worker thread...")
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True, args=build_launch_args())
+    browser = launch_stealth_browser(pw)
     _pw_thread_local.pw = pw
     _pw_thread_local.browser = browser
     _pw_thread_local.last_used = now

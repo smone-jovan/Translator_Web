@@ -22,6 +22,15 @@ from fastapi import HTTPException
 PUBLIC_IP = "104.21.5.10"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_context_cache():
+    import services.scrapers.stealth_base as sb
+
+    sb.close_thread_contexts()
+    yield
+    sb.close_thread_contexts()
+
+
 def _dns(mapping: dict):
     def fake(host, port, *a, **k):
         name = host.decode() if isinstance(host, bytes) else host
@@ -268,6 +277,223 @@ def test_native_fetch_fails_closed_when_guard_cannot_be_installed(monkeypatch):
     page.goto.assert_not_called()
 
 
+# --- Cache context per (workspace, domain): cookie cf_clearance bertahan antar bab ----
+
+def _cache_browser(monkeypatch, proxy=None):
+    """Browser palsu yang membuat context baru tiap new_context; tiap context mencatat halamannya."""
+    import services.scrapers.stealth_base as sb
+
+    proxy = proxy or _FakeProxy()
+    created = []
+    behavior = {"goto_error": None, "uses_proxy": True}
+
+    def make_context(**kwargs):
+        context = MagicMock()
+        context.options = kwargs
+        context.pages = []
+
+        def new_page():
+            page = MagicMock()
+            page.content.return_value = "<html><body>ok</body></html>"
+
+            def goto(url, **kw):
+                if behavior["goto_error"]:
+                    raise behavior["goto_error"]
+                page.url = url
+                if behavior["uses_proxy"]:
+                    proxy.handled += 1
+                return MagicMock(status=200, headers={})
+
+            page.goto.side_effect = goto
+            context.pages.append(page)
+            return page
+
+        context.new_page.side_effect = new_page
+        created.append(context)
+        return context
+
+    browser = MagicMock()
+    browser.new_context.side_effect = make_context
+    monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
+    monkeypatch.setattr(sb, "get_egress_proxy", lambda: proxy)
+    return sb, browser, proxy, created, behavior
+
+
+def _fetch(sb, url="https://novel.example/ch1", workspace="main"):
+    return sb.StealthyNovelAdapter(workspace=workspace)._fetch_playwright_sync(
+        url, solve_cloudflare=False, disable_resources=False
+    )
+
+
+def test_native_fetch_reuses_context_for_same_workspace_and_domain(monkeypatch):
+    sb, browser, proxy, created, _ = _cache_browser(monkeypatch)
+
+    _fetch(sb, "https://novel.example/ch1")
+    _fetch(sb, "https://NOVEL.example/ch2")
+
+    assert len(created) == 1
+    context = created[0]
+    assert context.options["proxy"]["server"] == proxy.server_url  # proxy per context
+    assert context.new_page.call_count == 2
+    assert context.new_cdp_session.call_count == 2  # guard SSRF dipasang per halaman baru
+    assert all(page.close.called for page in context.pages)
+    context.close.assert_not_called()
+
+
+def test_native_fetch_closes_leftover_popups_after_each_fetch(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+    _fetch(sb)
+    popup = MagicMock()
+    created[0].pages.append(popup)  # mis. window.open() dari halaman sebelumnya
+
+    _fetch(sb, "https://novel.example/ch2")
+    popup.close.assert_called()
+
+
+def test_native_fetch_never_shares_context_across_workspaces(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+
+    _fetch(sb, workspace="main")
+    _fetch(sb, workspace="ghost")
+    _fetch(sb, workspace="main")
+
+    assert len(created) == 2
+    assert created[0].new_page.call_count == 2
+    assert created[1].new_page.call_count == 1
+
+
+def test_native_fetch_uses_separate_context_per_domain(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+
+    _fetch(sb, "https://a.example/1")
+    _fetch(sb, "https://b.example/1")
+
+    assert len(created) == 2
+
+
+def test_cached_context_expires_after_idle_ttl(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(sb, "_now", lambda: clock[0])
+
+    _fetch(sb)
+    clock[0] += sb.CONTEXT_IDLE_TTL_S + 1
+    _fetch(sb)
+
+    assert len(created) == 2
+    created[0].close.assert_called_once()
+
+
+def test_cached_context_expires_after_max_age_even_when_busy(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+    clock = [1000.0]
+    monkeypatch.setattr(sb, "_now", lambda: clock[0])
+
+    while clock[0] - 1000.0 <= sb.CONTEXT_MAX_AGE_S:
+        _fetch(sb)
+        clock[0] += sb.CONTEXT_IDLE_TTL_S - 1
+    assert len(created) == 1
+    _fetch(sb)
+
+    assert len(created) == 2
+    created[0].close.assert_called_once()
+
+
+def test_context_cache_is_bounded_and_evicts_least_recently_used(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+
+    for i in range(sb.MAX_CACHED_CONTEXTS):
+        _fetch(sb, f"https://site{i}.example/")
+    _fetch(sb, "https://site0.example/again")  # site0 jadi yang terbaru dipakai
+    _fetch(sb, "https://extra.example/")
+
+    assert len(created) == sb.MAX_CACHED_CONTEXTS + 1
+    created[1].close.assert_called_once()
+    created[0].close.assert_not_called()
+
+
+def test_cached_contexts_dropped_when_thread_browser_is_recycled(monkeypatch):
+    sb, first_browser, _, created, _ = _cache_browser(monkeypatch)
+    _fetch(sb)
+
+    second_browser = MagicMock()
+    second_browser.new_context.side_effect = first_browser.new_context.side_effect
+    monkeypatch.setattr(sb, "_get_thread_browser", lambda: second_browser)
+    _fetch(sb)
+
+    assert second_browser.new_context.call_count == 1
+    created[0].close.assert_called_once()
+
+
+def test_context_cache_is_thread_local(monkeypatch):
+    sb, _, _, created, _ = _cache_browser(monkeypatch)
+    _fetch(sb)
+
+    errors = []
+
+    def other_thread():
+        try:
+            _fetch(sb)
+            sb.close_thread_contexts()
+        except Exception as exc:  # pragma: no cover - diagnosa
+            errors.append(exc)
+
+    worker = threading.Thread(target=other_thread)
+    worker.start()
+    worker.join()
+
+    assert errors == []
+    assert len(created) == 2
+
+
+def test_failed_fetch_evicts_cached_context(monkeypatch):
+    sb, _, _, created, behavior = _cache_browser(monkeypatch)
+    _fetch(sb)
+
+    behavior["goto_error"] = RuntimeError("net::ERR_CONNECTION_RESET")
+    with pytest.raises(RuntimeError):
+        _fetch(sb)
+    created[0].close.assert_called_once()
+
+    behavior["goto_error"] = None
+    _fetch(sb)
+    assert len(created) == 2
+
+
+def test_reused_context_tolerates_proxy_tunnel_reuse_once_verified(monkeypatch):
+    """Tunnel CONNECT yang dipakai ulang tidak menambah koneksi proxy; context sudah terverifikasi."""
+    sb, _, _, created, behavior = _cache_browser(monkeypatch)
+    _fetch(sb)
+
+    behavior["uses_proxy"] = False
+    assert "ok" in _fetch(sb, "https://novel.example/ch2").html
+    assert len(created) == 1
+
+
+def test_unverified_context_fails_closed_and_is_evicted_when_proxy_bypassed(monkeypatch):
+    sb, _, _, created, behavior = _cache_browser(monkeypatch)
+    behavior["uses_proxy"] = False
+
+    with pytest.raises(RuntimeError, match="proxy"):
+        _fetch(sb)
+    created[0].close.assert_called_once()
+    with pytest.raises(RuntimeError, match="proxy"):
+        _fetch(sb)
+    assert len(created) == 2
+
+
+def test_context_recreated_when_egress_proxy_changes(monkeypatch):
+    sb, _, proxy, created, _ = _cache_browser(monkeypatch)
+    _fetch(sb)
+
+    proxy.server_url = "http://127.0.0.1:10"
+    _fetch(sb)
+
+    assert len(created) == 2
+    assert created[1].options["proxy"]["server"] == "http://127.0.0.1:10"
+    created[0].close.assert_called_once()
+
+
 def _paused_handler(monkeypatch, validator, frame_tree_main="MAIN"):
     import services.scrapers.stealth_base as sb
 
@@ -305,6 +531,112 @@ def test_guard_marks_only_main_frame_document_as_blocked_navigation(monkeypatch)
     assert state["blocked_document"] is False
     on_paused({"requestId": "r2", "request": {"url": "http://localhost/y"}, "resourceType": "Document", "frameId": "MAIN"})
     assert state["blocked_document"] is True
+
+
+def _guard_harness(monkeypatch):
+    """Guard terpasang di CDP palsu; mengembalikan (emit event, pesan per rute sessionId)."""
+    import json
+
+    import services.scrapers.stealth_base as sb
+
+    sent = []
+    handlers = {}
+    cdp = MagicMock()
+    cdp.send.side_effect = lambda method, params=None: sent.append((method, params))
+    cdp.on.side_effect = lambda name, fn: handlers.__setitem__(name, fn)
+    context = MagicMock()
+    context.new_cdp_session.return_value = cdp
+    monkeypatch.setattr(sb, "validate_external_url", _fake_validator)
+    state = sb._install_ssrf_guard(context, MagicMock())
+
+    def child_messages():
+        """Bongkar Target.sendMessageToTarget berlapis -> [(rute, pesan dalam)]."""
+        out = []
+        for method, params in sent:
+            if method != "Target.sendMessageToTarget":
+                continue
+            route, msg = (params["sessionId"],), json.loads(params["message"])
+            while msg["method"] == "Target.sendMessageToTarget":
+                route, msg = route + (msg["params"]["sessionId"],), json.loads(msg["params"]["message"])
+            out.append((route, msg))
+        return out
+
+    def from_child(route, msg):
+        """Pesan dari target anak, dibungkus receivedMessageFromTarget sesuai rute."""
+        for session_id in reversed(route[1:]):
+            msg = {"method": "Target.receivedMessageFromTarget", "params": {"sessionId": session_id, "message": json.dumps(msg)}}
+        handlers["Target.receivedMessageFromTarget"]({"sessionId": route[0], "message": json.dumps(msg)})
+
+    def reply(route, method, error=False):
+        msg_id = next(m["id"] for r, m in child_messages() if r == route and m["method"] == method)
+        from_child(route, {"id": msg_id, **({"error": {"message": "boom"}} if error else {"result": {}})})
+
+    def methods(route):
+        return [m["method"] for r, m in child_messages() if r == route]
+
+    attach = {"targetInfo": {"type": "iframe", "url": ""}, "waitingForDebugger": True}
+    return types.SimpleNamespace(
+        state=state, sent=sent, handlers=handlers, child_messages=child_messages, from_child=from_child,
+        reply=reply, methods=methods, attach=attach,
+    )
+
+
+def test_guard_holds_cross_site_iframes_at_start(monkeypatch):
+    h = _guard_harness(monkeypatch)
+    assert ("Target.setAutoAttach", {
+        "autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False, "filter": [{"type": "iframe"}],
+    }) in h.sent
+    methods = [m for m, _ in h.sent]
+    assert methods.index("Fetch.enable") < methods.index("Target.setAutoAttach")
+
+
+def test_guard_resumes_child_iframe_only_after_its_interception_is_active(monkeypatch):
+    h = _guard_harness(monkeypatch)
+    h.handlers["Target.attachedToTarget"]({"sessionId": "C1", **h.attach})
+    assert h.methods(("C1",)) == ["Fetch.enable"]
+
+    h.reply(("C1",), "Fetch.enable")
+    assert h.methods(("C1",)) == ["Fetch.enable", "Target.setAutoAttach"]
+
+    h.reply(("C1",), "Target.setAutoAttach")
+    assert h.methods(("C1",))[-1] == "Runtime.runIfWaitingForDebugger"
+
+
+@pytest.mark.parametrize("failing", ["Fetch.enable", "Target.setAutoAttach"])
+def test_guard_keeps_child_iframe_paused_when_it_cannot_be_guarded(monkeypatch, failing):
+    h = _guard_harness(monkeypatch)
+    h.handlers["Target.attachedToTarget"]({"sessionId": "C1", **h.attach})
+    if failing == "Target.setAutoAttach":
+        h.reply(("C1",), "Fetch.enable")
+    h.reply(("C1",), failing, error=True)
+    assert "Runtime.runIfWaitingForDebugger" not in h.methods(("C1",))
+
+
+def test_guard_filters_requests_inside_nested_child_iframes(monkeypatch):
+    h = _guard_harness(monkeypatch)
+    h.handlers["Target.attachedToTarget"]({"sessionId": "C1", **h.attach})
+    h.from_child(("C1",), {"method": "Target.attachedToTarget", "params": {"sessionId": "G1", **h.attach}})
+    assert h.methods(("C1", "G1")) == ["Fetch.enable"]
+
+    for request_id, url in (("r1", "http://localhost/leak"), ("r2", "http://public.example/ok")):
+        h.from_child(("C1", "G1"), {"method": "Fetch.requestPaused", "params": {
+            "requestId": request_id, "request": {"url": url}, "resourceType": "Image", "frameId": "G-FRAME",
+        }})
+    grandchild = [m for r, m in h.child_messages() if r == ("C1", "G1")]
+    assert {"method": "Fetch.failRequest", "params": {"requestId": "r1", "errorReason": "BlockedByClient"}} in [
+        {k: m[k] for k in ("method", "params")} for m in grandchild
+    ]
+    assert ("Fetch.continueRequest", {"requestId": "r2"}) in [(m["method"], m["params"]) for m in grandchild]
+
+
+def test_child_iframe_document_block_is_not_a_blocked_navigation(monkeypatch):
+    h = _guard_harness(monkeypatch)
+    h.handlers["Target.attachedToTarget"]({"sessionId": "C1", **h.attach})
+    h.from_child(("C1",), {"method": "Fetch.requestPaused", "params": {
+        "requestId": "r1", "request": {"url": "http://localhost/x"}, "resourceType": "Document", "frameId": "C-FRAME",
+    }})
+    assert "Fetch.failRequest" in h.methods(("C1",))
+    assert h.state["blocked_document"] is False
 
 
 def test_validate_external_url_turns_idna_errors_into_400(monkeypatch):
@@ -460,6 +792,12 @@ class _Server:
                     self._redirect(f"http://127.0.0.1:{port}/page")
                 elif self.path.startswith("/v/"):
                     self._html(_attack_page(self.path[3:], port))
+                elif self.path == "/set-cookie":
+                    self._html("<html><body><p>challenge lolos</p></body></html>", ["cf_clearance=solved; Path=/"])
+                elif self.path == "/echo-cookie":
+                    self._html(f"<html><body><p>cookie=[{self.headers.get('Cookie') or ''}]</p></body></html>")
+                elif self.path == "/frame-nest":
+                    self._html(f'<html><body><iframe src="http://other-site.test:{port}/frame"></iframe></body></html>')
                 elif self.path == "/frame":
                     self._html(
                         f'<html><body><img src="http://localhost:{port}/leak-frame.png">'
@@ -473,9 +811,11 @@ class _Server:
 
             do_GET = do_POST = _any
 
-            def _html(self, body):
+            def _html(self, body, set_cookies=()):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
+                for cookie in set_cookies:
+                    self.send_header("Set-Cookie", cookie)
                 self.end_headers()
                 self.wfile.write(body.encode())
 
@@ -497,6 +837,7 @@ class _Server:
 _VECTORS = [
     "fetch", "worker_fetch", "worker_ws", "plain_ws", "wsstream", "sharedworker",
     "popup", "form_blank", "spec_prefetch", "link_prefetch", "beacon", "cross_site_iframe",
+    "nested_cross_site_iframe",
 ]
 
 
@@ -521,6 +862,7 @@ def _attack_page(vector: str, port: int) -> str:
         "spec_prefetch": f'<script type="speculationrules">{{"prefetch":[{{"source":"list","urls":["{leak}"]}}]}}</script>',
         "link_prefetch": f'<link rel="prefetch" href="{leak}">',
         "cross_site_iframe": f'<iframe src="http://cross-site.test:{port}/frame"></iframe>',
+        "nested_cross_site_iframe": f'<iframe src="http://cross-site.test:{port}/frame-nest"></iframe>',
     }.get(vector, "")
     return f"<html><body><p>halaman penyerang</p>{extra}<script>{js}</script></body></html>"
 
@@ -534,20 +876,25 @@ def _fake_validator(url: str) -> None:
 @pytest.fixture
 def real_browser(monkeypatch, egress_proxy):
     try:
-        from playwright.sync_api import sync_playwright
+        # Mesin yang sama dengan produksi (novalpie._get_thread_browser): Patchright bila ada.
+        try:
+            from patchright.sync_api import sync_playwright
+        except ImportError:
+            from playwright.sync_api import sync_playwright
         pw = sync_playwright().start()
     except Exception as exc:  # pragma: no cover - lingkungan tanpa Playwright
         pytest.skip(f"Playwright tidak tersedia: {exc}")
+    from services.scrapers.browser_stealth import build_launch_args, launch_stealth_browser
+
     try:
         # PW_CHROMIUM_EXECUTABLE: opsional, untuk lingkungan yang versi Chromium-nya tidak
         # cocok dengan paket playwright terpasang.
-        exe = os.environ.get("PW_CHROMIUM_EXECUTABLE") or None
-        browser = pw.chromium.launch(
-            headless=True,
-            executable_path=exe,
-            # Sama dengan browser thread-local produksi (novalpie._get_thread_browser).
-            args=["--disable-features=IsolateOrigins,site-per-process"],
-        )
+        exe = os.environ.get("PW_CHROMIUM_EXECUTABLE")
+        if exe:
+            browser = pw.chromium.launch(headless=True, executable_path=exe, args=build_launch_args())
+        else:
+            # Sama dengan browser thread-local produksi: Chromium penuh, site isolation aktif.
+            browser = launch_stealth_browser(pw)
     except Exception as exc:  # pragma: no cover - Chromium belum terpasang
         pw.stop()
         pytest.skip(f"Chromium tidak bisa dijalankan: {exc}")
@@ -556,6 +903,7 @@ def real_browser(monkeypatch, egress_proxy):
     monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
     monkeypatch.setattr(sb, "validate_external_url", _fake_validator)
     yield sb
+    sb.close_thread_contexts()
     browser.close()
     pw.stop()
 
@@ -587,6 +935,23 @@ def test_real_browser_blocks_private_subresources_but_returns_page(real_browser)
         assert "halaman publik" in page.html
         assert page.url == f"http://127.0.0.1:{server.port}/page"
         assert _no_internal_hits(server), server.hits
+    finally:
+        server.close()
+
+
+def test_real_browser_keeps_cookies_per_workspace_domain_but_never_across_workspaces(real_browser):
+    server = _Server()
+    base = f"http://127.0.0.1:{server.port}"
+
+    def fetch(workspace, path):
+        return real_browser.StealthyNovelAdapter(workspace=workspace)._fetch_playwright_sync(
+            base + path, solve_cloudflare=False, timeout_ms=15000
+        )
+
+    try:
+        assert "challenge lolos" in fetch("main", "/set-cookie").html
+        assert "cookie=[cf_clearance=solved]" in fetch("main", "/echo-cookie").html
+        assert "cookie=[]" in fetch("ghost", "/echo-cookie").html
     finally:
         server.close()
 
@@ -624,6 +989,84 @@ def test_real_browser_attack_page_cannot_reach_private_host(real_browser, vector
         assert "halaman penyerang" in page.html
         if vector == "cross_site_iframe":
             assert "cross-site.test/frame" in server.hits  # iframe publik lintas situs tetap dimuat
+        if vector == "nested_cross_site_iframe":
+            assert "other-site.test/frame" in server.hits
         assert _no_internal_hits(server), server.hits
     finally:
         server.close()
+
+
+@pytest.mark.parametrize("vector, frame_hit", [
+    ("cross_site_iframe", "cross-site.test/frame"),
+    ("nested_cross_site_iframe", "other-site.test/frame"),
+])
+def test_real_browser_cdp_guard_covers_cross_site_iframes_without_proxy(monkeypatch, real_browser, vector, frame_hit):
+    """
+    Lapisan CDP berdiri sendiri: proxy dibuat meloloskan semua host. Di Chromium penuh iframe
+    lintas-situs adalah target OOPIF terpisah; guard harus tetap menjeda request-nya.
+    """
+    import services.egress_proxy as ep
+
+    monkeypatch.setattr(ep, "resolve_public_ip", lambda host, port: "127.0.0.1")
+    server = _Server()
+    try:
+        page = real_browser.StealthyNovelAdapter()._fetch_playwright_sync(
+            f"http://127.0.0.1:{server.port}/v/{vector}",
+            solve_cloudflare=False,
+            disable_resources=True,
+            page_action=lambda p: p.wait_for_timeout(1500),
+            timeout_ms=15000,
+        )
+        assert "halaman penyerang" in page.html
+        assert frame_hit in server.hits  # iframe tetap dimuat, bukan sekadar macet
+        assert _no_internal_hits(server), server.hits
+    finally:
+        server.close()
+
+
+_NAVIGATING = "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+
+
+def test_native_fetch_retries_content_while_page_navigates_after_challenge(monkeypatch):
+    proxy = _FakeProxy()
+
+    def goto(*a, **k):
+        proxy.handled += 1
+        return MagicMock(status=200)
+
+    sb, _, _, page, _, _ = _mock_browser(monkeypatch, goto=goto, proxy=proxy)
+    # Redirect pasca-challenge: content() gagal sesaat, lalu halaman tujuan siap.
+    page.content.side_effect = [RuntimeError(_NAVIGATING), "<html><body>bab</body></html>", "<html><body>bab</body></html>"]
+
+    result = sb.StealthyNovelAdapter()._fetch_playwright_sync("https://public.example/x", disable_resources=False)
+    assert "bab" in result.html
+
+
+def test_native_fetch_does_not_retry_unrelated_content_errors(monkeypatch):
+    proxy = _FakeProxy()
+
+    def goto(*a, **k):
+        proxy.handled += 1
+        return MagicMock(status=200)
+
+    sb, _, _, page, _, _ = _mock_browser(monkeypatch, goto=goto, proxy=proxy)
+    page.content.side_effect = RuntimeError("Target page, context or browser has been closed")
+
+    with pytest.raises(RuntimeError, match="closed"):
+        sb.StealthyNovelAdapter()._fetch_playwright_sync("https://public.example/x", disable_resources=False)
+    assert page.content.call_count == 1
+
+
+def test_native_fetch_gives_up_when_page_keeps_navigating(monkeypatch):
+    proxy = _FakeProxy()
+
+    def goto(*a, **k):
+        proxy.handled += 1
+        return MagicMock(status=200)
+
+    sb, _, _, page, _, _ = _mock_browser(monkeypatch, goto=goto, proxy=proxy)
+    page.content.side_effect = RuntimeError(_NAVIGATING)
+
+    with pytest.raises(RuntimeError, match="navigating"):
+        sb.StealthyNovelAdapter()._fetch_playwright_sync("https://public.example/x", disable_resources=False)
+    assert page.content.call_count == sb.CONTENT_NAVIGATION_RETRIES

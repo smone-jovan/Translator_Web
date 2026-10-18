@@ -10,10 +10,14 @@ import random
 import re
 import sys
 import time
+import weakref
 from typing import Any, Dict, List, Optional
 
 FALLBACK_CHROME_MAJOR = 148
 STEALTH_LOCALE = "zh-CN"
+# Chromium penuh dalam mode headless baru. Tanpa channel, Playwright memakai
+# chromium-headless-shell: plugins=0, window.chrome undefined, WebGL SwiftShader.
+STEALTH_CHANNEL = "chromium"
 _VIEWPORT = {"width": 1920, "height": 1080}
 
 # (token UA, navigator.platform, platform Client Hints, platformVersion)
@@ -30,12 +34,37 @@ else:
         "X11; Linux x86_64", "Linux x86_64", "Linux", ""
     )
 
-# Subset aman dari STEALTH_ARGS Scrapling. Sengaja TANPA --disable-features/--enable-features
-# lain: Chromium hanya memakai kemunculan terakhir, dan flag IsolateOrigins di bawah wajib
-# bertahan agar iframe lintas-situs tetap di target yang dijaga guard CDP SSRF (ADR-126).
+# Salinan `disabledFeatures` di chromiumSwitches Playwright/Patchright (dijaga tes drift).
+# Chromium hanya memakai --disable-features TERAKHIR, dan args kita ditaruh setelah flag
+# bawaan, jadi daftar ini harus ikut disebut ulang agar tidak aktif kembali.
+PLAYWRIGHT_DEFAULT_DISABLED_FEATURES = (
+    "AvoidUnnecessaryBeforeUnloadCheckSync",
+    "BoundaryEventDispatchTracksNodeRemoval",
+    "DestroyProfileOnBrowserClose",
+    "DialMediaRouteProvider",
+    "GlobalMediaControls",
+    "HttpsUpgrades",
+    "LensOverlay",
+    "MediaRouter",
+    "PaintHolding",
+    "ThirdPartyStoragePartitioning",
+    "Translate",
+    "AutoDeElevate",
+    "RenderDocument",
+    "OptimizationHints",
+    "msForceBrowserSignIn",
+    "msEdgeUpdateLaunchServicesPreferredVersion",
+)
+# IsolateOrigins hanya berlaku di headless shell; Chromium penuh tetap memakai site isolation,
+# sehingga iframe lintas-situs menjadi target OOPIF yang dijaga guard CDP lewat auto-attach
+# (stealth_base, ADR-126).
+_STEALTH_DISABLED_FEATURES = ("IsolateOrigins", "site-per-process")
+
+# Subset aman dari STEALTH_ARGS Scrapling. Sengaja TANPA --enable-features dan hanya SATU
+# --disable-features (gabungan daftar bawaan + milik kita).
 _BASE_LAUNCH_ARGS = (
     "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
+    "--disable-features=" + ",".join(PLAYWRIGHT_DEFAULT_DISABLED_FEATURES + _STEALTH_DISABLED_FEATURES),
     "--disable-infobars",
     "--no-first-run",
     "--no-default-browser-check",
@@ -86,6 +115,22 @@ def build_launch_args(locale: str = STEALTH_LOCALE) -> List[str]:
     return args
 
 
+# Browser hasil fallback ke headless shell; hanya mereka yang masih butuh override Client Hints.
+_HEADLESS_SHELL_BROWSERS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def launch_stealth_browser(pw: Any) -> Any:
+    """Chromium penuh bila terpasang; headless shell hanya sebagai fallback agar scraping tetap jalan."""
+    args = build_launch_args()
+    try:
+        return pw.chromium.launch(headless=True, channel=STEALTH_CHANNEL, args=args)
+    except Exception as exc:
+        print(f"⚠️ [Stealth] Chromium penuh tidak tersedia ({exc}); fallback ke headless shell.")
+    browser = pw.chromium.launch(headless=True, args=args)
+    _HEADLESS_SHELL_BROWSERS.add(browser)
+    return browser
+
+
 def _browser_full_version(browser: Any) -> str:
     version = getattr(browser, "version", None)
     if isinstance(version, str) and re.match(r"\d+\.", version):
@@ -131,9 +176,13 @@ def build_ua_metadata(browser: Any) -> Dict[str, Any]:
 
 def apply_client_hints(context: Any, page: Any, browser: Any, locale: str = STEALTH_LOCALE) -> None:
     """
-    Opsi `user_agent` Playwright tidak menyentuh navigator.userAgentData / header Sec-CH-UA,
-    sehingga brand 'HeadlessChrome' tetap bocor. Override per halaman via CDP, sebelum goto.
+    Hanya untuk headless shell: di sana opsi `user_agent` Playwright tidak menyentuh
+    navigator.userAgentData / Sec-CH-UA, sehingga brand 'HeadlessChrome' bocor. Override per
+    halaman via CDP, sebelum goto. Chromium penuh sudah bersih dan dibiarkan native: override
+    di sana mengubah urutan brand GREASE dan membuat navigator.languages halaman != Worker.
     """
+    if browser not in _HEADLESS_SHELL_BROWSERS:
+        return
     try:
         cdp = context.new_cdp_session(page)
         cdp.send(
@@ -167,6 +216,9 @@ def inject_stealth_scripts(context: Any) -> None:
 
 CF_MAX_SOLVE_ATTEMPTS = 3
 CF_RETRY_INTERVAL_S = 3.0
+# Tunggu singkat (≈ satu interval polling) agar loop polling Tier 2/3 tidak molor; iframe yang
+# belum terlihat dicoba lagi di poll berikutnya.
+CF_IFRAME_VISIBLE_TIMEOUT_MS = 400
 _CF_CTYPES = ("non-interactive", "managed", "interactive")
 _CF_BLOCKING_MARKERS = (
     "Just a moment...",
@@ -217,7 +269,16 @@ def _click_box(page: Any, box: Optional[dict]) -> bool:
     return True
 
 
+def _wait_visible(element: Any) -> bool:
+    try:
+        element.wait_for_element_state("visible", timeout=CF_IFRAME_VISIBLE_TIMEOUT_MS)
+        return True
+    except Exception:
+        return False
+
+
 def try_solve_cloudflare_turnstile(page: Any, challenge_type: Optional[str] = None) -> bool:
+    """True hanya bila klik benar-benar dikirim ke iframe/widget challenge yang terlihat."""
     if challenge_type == "non-interactive":
         return False  # Challenge JS selesai sendiri; klik justru mengganggu.
     try:
@@ -226,10 +287,13 @@ def try_solve_cloudflare_turnstile(page: Any, challenge_type: Optional[str] = No
             if not any(k in frame_url for k in _CF_FRAME_HINTS):
                 continue
             try:
-                if _click_box(page, frame.frame_element().bounding_box()):
+                element = frame.frame_element()
+                if not _wait_visible(element):
+                    continue  # Masih dirender / tersembunyi: klik sekarang akan meleset.
+                if _click_box(page, element.bounding_box()):
                     return True
             except Exception:
-                pass
+                continue
             try:
                 frame.locator("input[type='checkbox']").first.click(timeout=1200, delay=random.randint(100, 200))
                 return True
@@ -239,7 +303,7 @@ def try_solve_cloudflare_turnstile(page: Any, challenge_type: Optional[str] = No
         for iframe_sel in _CF_IFRAME_SELECTORS:
             try:
                 el = page.query_selector(iframe_sel)
-                if el and _click_box(page, el.bounding_box()):
+                if el and _wait_visible(el) and _click_box(page, el.bounding_box()):
                     return True
             except Exception:
                 continue
@@ -263,8 +327,7 @@ def cloudflare_poll_step(page: Any, raw_html: str, state: Dict[str, Any], *, sol
         return False
     if ctype == "embedded":
         if solve and not state["embedded_done"]:
-            state["embedded_done"] = True
-            try_solve_cloudflare_turnstile(page, challenge_type=ctype)
+            state["embedded_done"] = bool(try_solve_cloudflare_turnstile(page, challenge_type=ctype))
         return False
     if not solve or ctype == "non-interactive":
         return True
@@ -272,7 +335,8 @@ def cloudflare_poll_step(page: Any, raw_html: str, state: Dict[str, Any], *, sol
     now = time.monotonic()
     last = state["last_click"]
     if state["attempts"] < CF_MAX_SOLVE_ATTEMPTS and (last is None or now - last >= CF_RETRY_INTERVAL_S):
-        state["attempts"] += 1
-        state["last_click"] = now
-        try_solve_cloudflare_turnstile(page, challenge_type=ctype)
+        # Hanya klik nyata yang dihitung: iframe yang belum muncul tidak menghabiskan jatah.
+        if try_solve_cloudflare_turnstile(page, challenge_type=ctype):
+            state["attempts"] += 1
+            state["last_click"] = now
     return True

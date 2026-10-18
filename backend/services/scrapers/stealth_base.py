@@ -5,11 +5,17 @@ atau Native Adaptive Playwright Fallback + Adaptive DOM Parsing.
 """
 
 import asyncio
+import json
+import threading
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Optional, List, Tuple, Callable, Any
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
 
+from database import normalize_workspace
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
 from services.scrapers.adaptive_dom import AdaptivePage
 from services.scrapers.novalpie import (
@@ -38,6 +44,184 @@ except ImportError:
 _SSRF_FORBIDDEN_DETAIL = "Access to private or local network resources is forbidden"
 _GOOGLE_REFERER = "https://www.google.com/"
 _NON_NETWORK_SCHEMES = {"data", "blob", "about"}
+# Redirect pasca-challenge Cloudflare membuat page.content() gagal sesaat ("page is navigating").
+CONTENT_NAVIGATION_RETRIES = 5
+_CONTENT_RETRY_DELAY_MS = 250
+_FETCH_ALL_REQUESTS = {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]}
+# Non-flatten: Playwright Python tidak bisa mengirim ke sessionId anak, jadi pesan ke OOPIF
+# lewat Target.sendMessageToTarget. Worker/popup sengaja tidak di-attach (ditangani proxy).
+_HOLD_CHILD_IFRAMES = {
+    "autoAttach": True, "waitForDebuggerOnStart": True, "flatten": False, "filter": [{"type": "iframe"}],
+}
+# Cache context per (workspace, domain) agar cookie cf_clearance bertahan antar bab.
+# Idle TTL sama dengan recycle browser thread-local (novalpie._get_thread_browser, 5 menit).
+CONTEXT_IDLE_TTL_S = 300.0
+CONTEXT_MAX_AGE_S = 1800.0
+MAX_CACHED_CONTEXTS = 4
+_now = time.monotonic
+# Browser thread-local, jadi cache context juga thread-local: tanpa lock, tak pernah lintas thread.
+_context_local = threading.local()
+
+
+@dataclass
+class _CachedContext:
+    context: Any
+    browser: Any
+    proxy_url: str
+    created: float
+    last_used: float
+    # Konfigurasi proxy per-context tidak berubah: cukup dibuktikan sekali. Fetch berikutnya
+    # bisa memakai ulang tunnel CONNECT lama sehingga tidak menambah hitungan koneksi proxy.
+    proxy_verified: bool = False
+
+
+def _context_cache_key(workspace: Optional[str], url: str) -> Tuple[str, str]:
+    """Key bergaya make_workspace_key: context tidak pernah dibagi antar workspace main/ghost."""
+    return (normalize_workspace(workspace), (urlparse(url).hostname or "").lower())
+
+
+def _thread_contexts() -> "OrderedDict[Tuple[str, str], _CachedContext]":
+    entries = getattr(_context_local, "entries", None)
+    if entries is None:
+        entries = _context_local.entries = OrderedDict()
+    return entries
+
+
+def _close_quietly(target: Any) -> None:
+    try:
+        target.close()
+    except Exception:
+        pass
+
+
+def _evict_context(key: Tuple[str, str]) -> None:
+    entry = _thread_contexts().pop(key, None)
+    if entry is not None:
+        _close_quietly(entry.context)
+
+
+def close_thread_contexts() -> None:
+    """Tutup semua context ter-cache milik thread ini."""
+    for key in list(_thread_contexts()):
+        _evict_context(key)
+
+
+def _acquire_context(browser: Any, key: Tuple[str, str], proxy_url: str) -> _CachedContext:
+    now = _now()
+    entries = _thread_contexts()
+    for cached_key, cached in list(entries.items()):
+        # Browser di-recycle (idle/putus) = context lamanya ikut mati bersama browser itu.
+        if (
+            cached.browser is not browser
+            or now - cached.last_used > CONTEXT_IDLE_TTL_S
+            or now - cached.created > CONTEXT_MAX_AGE_S
+            or (cached_key == key and cached.proxy_url != proxy_url)
+        ):
+            _evict_context(cached_key)
+
+    entry = entries.get(key)
+    if entry is None:
+        # Lapisan utama SSRF: semua koneksi browser context ini lewat egress proxy yang
+        # me-resolve sendiri, menolak IP non-publik, dan menyambung ke IP yang sudah dicek.
+        # "<-loopback>": tanpa ini Chromium mem-bypass proxy untuk localhost/127.0.0.1.
+        context = browser.new_context(
+            **build_context_options(browser),
+            proxy={"server": proxy_url, "bypass": "<-loopback>"},
+            # Service worker bisa membuat request di luar jangkauan guard SSRF per halaman.
+            service_workers="block",
+        )
+        try:
+            _inject_scrapling_stealth_scripts(context)
+        except Exception:
+            _close_quietly(context)
+            raise
+        entry = entries[key] = _CachedContext(context, browser, proxy_url, created=now, last_used=now)
+        while len(entries) > MAX_CACHED_CONTEXTS:
+            _evict_context(next(iter(entries)))
+    entries.move_to_end(key)
+    entry.last_used = now
+    return entry
+
+
+def _release_context(key: Tuple[str, str], entry: _CachedContext, keep: bool) -> None:
+    # Halaman (termasuk popup sisa) selalu ditutup; context hanya disimpan bila fetch sukses.
+    try:
+        pages = list(entry.context.pages)
+    except Exception:
+        pages = []
+    for page in pages:
+        _close_quietly(page)
+    if not keep and _thread_contexts().get(key) is entry:
+        _evict_context(key)
+
+
+class _ChildFrameGuard:
+    """
+    Chromium penuh menjalankan iframe lintas-situs sebagai target OOPIF sendiri, di luar
+    jangkauan `Fetch` milik halaman. Auto-attach di sesi guard menahan tiap OOPIF (dan
+    turunannya) sebelum jalan; target baru dilanjutkan setelah Fetch.enable dan auto-attach
+    untuk turunannya sukses. Gagal di langkah mana pun = target tetap tertahan (fail closed).
+    """
+
+    def __init__(self, cdp: Any, on_paused: Callable[[Callable[[str, dict], None], dict], None]):
+        self._cdp = cdp
+        self._on_paused = on_paused
+        self._last_id = 0
+        self._on_success: dict = {}
+
+    def install(self) -> None:
+        self._cdp.on("Target.attachedToTarget", lambda ev: self._hold((ev.get("sessionId"),)))
+        self._cdp.on(
+            "Target.receivedMessageFromTarget",
+            lambda ev: self._receive((ev.get("sessionId"),), ev.get("message")),
+        )
+        self._cdp.send("Target.setAutoAttach", _HOLD_CHILD_IFRAMES)
+
+    def _send(self, route: tuple, method: str, params: Optional[dict] = None, on_success=None) -> None:
+        """Kirim ke target anak di ujung `route` (sessionId berlapis, dari yang terluar)."""
+        self._last_id += 1
+        msg_id = self._last_id
+        if on_success is not None:
+            self._on_success[msg_id] = on_success
+        message = {"id": msg_id, "method": method, "params": params or {}}
+        for session_id in reversed(route[1:]):
+            self._last_id += 1
+            message = {
+                "id": self._last_id,
+                "method": "Target.sendMessageToTarget",
+                "params": {"sessionId": session_id, "message": json.dumps(message)},
+            }
+        try:
+            self._cdp.send("Target.sendMessageToTarget", {"sessionId": route[0], "message": json.dumps(message)})
+        except Exception:
+            self._on_success.pop(msg_id, None)  # target sudah hilang; tetap tertahan
+
+    def _hold(self, route: tuple) -> None:
+        def resume() -> None:
+            self._send(route, "Runtime.runIfWaitingForDebugger")
+
+        self._send(
+            route, "Fetch.enable", _FETCH_ALL_REQUESTS,
+            on_success=lambda: self._send(route, "Target.setAutoAttach", _HOLD_CHILD_IFRAMES, on_success=resume),
+        )
+
+    def _receive(self, route: tuple, raw: Optional[str]) -> None:
+        try:
+            msg = json.loads(raw or "")
+        except ValueError:
+            return
+        if "id" in msg:
+            on_success = self._on_success.pop(msg["id"], None)
+            if on_success is not None and "error" not in msg:
+                on_success()
+            return
+        method, params = msg.get("method"), msg.get("params") or {}
+        if method == "Target.receivedMessageFromTarget":
+            self._receive(route + (params.get("sessionId"),), params.get("message"))
+        elif method == "Target.attachedToTarget":
+            self._hold(route + (params.get("sessionId"),))
+        elif method == "Fetch.requestPaused":
+            self._on_paused(lambda m, p: self._send(route, m, p), params)
 
 
 def _install_ssrf_guard(context: Any, page: Any) -> dict:
@@ -46,9 +230,9 @@ def _install_ssrf_guard(context: Any, page: Any) -> dict:
 
     CDP `Fetch` (requestStage=Request) menjeda dokumen awal, tiap hop redirect (yang tidak
     terlihat oleh `page.route`), subresource, fetch/XHR, dan request Web Worker di target
-    halaman ini, lalu menggagalkan request ke host yang gagal `validate_external_url`
-    sebelum koneksi dibuat. Gunanya: kegagalan cepat dan pesan 400 yang jelas untuk navigasi
-    utama. Popup, form `target=_blank`, WebSocket, dan target lain tidak dijeda di sini;
+    halaman ini serta di setiap iframe OOPIF (`_ChildFrameGuard`), lalu menggagalkan request
+    ke host yang gagal `validate_external_url` sebelum koneksi dibuat. Gunanya: kegagalan
+    cepat dan pesan 400 yang jelas untuk navigasi utama. Popup, form `target=_blank`, WebSocket, dan target lain tidak dijeda di sini;
     jalur itu ditangani proxy. Gagal dipasang = exception (fail closed).
     """
     state = {"blocked": [], "blocked_document": False}
@@ -82,7 +266,7 @@ def _install_ssrf_guard(context: Any, page: Any) -> dict:
                 host_ok[host] = False
         return host_ok[host]
 
-    def _on_paused(event: dict) -> None:
+    def _on_paused(event: dict, send: Callable[[str, dict], Any] = cdp.send, main_target: bool = True) -> None:
         request_id = event.get("requestId")
         url = (event.get("request") or {}).get("url", "")
         allowed = False
@@ -92,20 +276,32 @@ def _install_ssrf_guard(context: Any, page: Any) -> dict:
             allowed = False
         try:
             if allowed:
-                cdp.send("Fetch.continueRequest", {"requestId": request_id})
+                send("Fetch.continueRequest", {"requestId": request_id})
                 return
             state["blocked"].append(url)
-            is_main = main_frame_id is None or event.get("frameId") == main_frame_id
+            is_main = main_target and (main_frame_id is None or event.get("frameId") == main_frame_id)
             if event.get("resourceType") == "Document" and is_main:
                 state["blocked_document"] = True
-            cdp.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+            send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
         except Exception:
             # Target sudah ditutup / request sudah dibatalkan.
             pass
 
     cdp.on("Fetch.requestPaused", _on_paused)
-    cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]})
+    cdp.send("Fetch.enable", _FETCH_ALL_REQUESTS)
+    _ChildFrameGuard(cdp, lambda send, event: _on_paused(event, send, main_target=False)).install()
     return state
+
+
+def _page_content(page: Any) -> str:
+    for _ in range(CONTENT_NAVIGATION_RETRIES - 1):
+        try:
+            return page.content()
+        except Exception as exc:
+            if "is navigating" not in str(exc):
+                raise
+        page.wait_for_timeout(_CONTENT_RETRY_DELAY_MS)
+    return page.content()
 
 
 class StealthyNovelAdapter(BaseScraperAdapter):
@@ -141,23 +337,17 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             has_stealth = False
 
         browser = _get_thread_browser()
-        # Lapisan utama SSRF: semua koneksi browser context ini lewat egress proxy yang
-        # me-resolve sendiri, menolak IP non-publik, dan menyambung ke IP yang sudah dicek.
-        # "<-loopback>": tanpa ini Chromium mem-bypass proxy untuk localhost/127.0.0.1.
         egress_proxy = get_egress_proxy()
-        context = browser.new_context(
-            **build_context_options(browser),
-            proxy={"server": egress_proxy.server_url, "bypass": "<-loopback>"},
-            # Service worker bisa membuat request di luar jangkauan guard SSRF per halaman.
-            service_workers="block",
-        )
-        _inject_scrapling_stealth_scripts(context)
+        cache_key = _context_cache_key(self.workspace, url)
+        entry = _acquire_context(browser, cache_key, egress_proxy.server_url)
+        context = entry.context
         if cookies:
             try:
                 context.add_cookies(cookies)
             except Exception:
                 pass
 
+        keep_context = False
         try:
             page = context.new_page()
             ssrf_guard = _install_ssrf_guard(context, page)
@@ -184,10 +374,11 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             proxy_refused = isinstance(resp_headers, dict) and bool(resp_headers.get("x-ssrf-blocked"))
             if proxy_refused:
                 raise HTTPException(status_code=400, detail=_SSRF_FORBIDDEN_DETAIL)
-            if egress_proxy.handled == proxied_before:
+            if egress_proxy.handled == proxied_before and not entry.proxy_verified:
                 # Fail closed: halaman termuat tanpa satu pun koneksi lewat proxy, berarti
                 # konfigurasi proxy per-context diabaikan dan browser menyambung langsung.
                 raise RuntimeError("SSRF egress proxy was bypassed; refusing to return the page")
+            entry.proxy_verified = True
             status_code = resp.status if resp else 200
 
             max_poll_s = min(20.0, max(5.0, timeout_ms / 3000.0))
@@ -195,7 +386,7 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             elapsed = 0.0
             cf_state = new_cloudflare_state()
             while elapsed < max_poll_s:
-                raw_html = page.content()
+                raw_html = _page_content(page)
                 if cloudflare_poll_step(page, raw_html, cf_state, solve=solve_cloudflare):
                     page.wait_for_timeout(int(poll_interval * 1000))
                     elapsed += poll_interval
@@ -214,22 +405,21 @@ class StealthyNovelAdapter(BaseScraperAdapter):
                 except Exception:
                     pass
 
-            raw_html = page.content()
+            raw_html = _page_content(page)
             final_url = page.url or url
             if final_url and final_url != url:
                 validate_external_url(final_url)
 
-            return AdaptivePage(
+            result = AdaptivePage(
                 html=raw_html,
                 url=final_url,
                 domain=self.adaptive_domain or final_url,
                 status=status_code,
             )
+            keep_context = True
+            return result
         finally:
-            try:
-                context.close()
-            except Exception:
-                pass
+            _release_context(cache_key, entry, keep_context)
 
     async def fetch_stealth_page(
         self,
