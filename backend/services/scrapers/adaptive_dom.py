@@ -36,10 +36,10 @@ def _extract_domain(url_or_domain: Optional[str]) -> str:
     if "://" in raw:
         try:
             host = urllib.parse.urlparse(raw).hostname or raw
-            return host.lstrip("www.") or "default"
+            return host.removeprefix("www.") or "default"
         except Exception:
             return raw
-    return raw.lstrip("www.") or "default"
+    return raw.removeprefix("www.") or "default"
 
 
 def _normalize_tokens(values: Iterable[str]) -> List[str]:

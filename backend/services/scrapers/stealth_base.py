@@ -17,8 +17,13 @@ from services.scrapers.novalpie import (
     _get_thread_browser,
     _inject_scrapling_stealth_scripts,
     _install_resource_shield,
-    _try_solve_cloudflare_turnstile,
-    _is_cloudflare_challenge,
+)
+from services.scrapers.browser_stealth import (
+    apply_client_hints,
+    build_context_options,
+    cloudflare_poll_step,
+    is_patchright_object,
+    new_cloudflare_state,
 )
 from services.security import validate_external_url
 from services.egress_proxy import get_egress_proxy
@@ -31,6 +36,7 @@ except ImportError:
 
 
 _SSRF_FORBIDDEN_DETAIL = "Access to private or local network resources is forbidden"
+_GOOGLE_REFERER = "https://www.google.com/"
 _NON_NETWORK_SCHEMES = {"data", "blob", "about"}
 
 
@@ -140,16 +146,12 @@ class StealthyNovelAdapter(BaseScraperAdapter):
         # "<-loopback>": tanpa ini Chromium mem-bypass proxy untuk localhost/127.0.0.1.
         egress_proxy = get_egress_proxy()
         context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1366, "height": 768},
+            **build_context_options(browser),
             proxy={"server": egress_proxy.server_url, "bypass": "<-loopback>"},
             # Service worker bisa membuat request di luar jangkauan guard SSRF per halaman.
             service_workers="block",
         )
-        _inject_scrapling_stealth_scripts(context, block_webrtc=True, hide_canvas=True)
+        _inject_scrapling_stealth_scripts(context)
         if cookies:
             try:
                 context.add_cookies(cookies)
@@ -159,9 +161,10 @@ class StealthyNovelAdapter(BaseScraperAdapter):
         try:
             page = context.new_page()
             ssrf_guard = _install_ssrf_guard(context, page)
+            apply_client_hints(context, page, browser)
             if disable_resources:
                 _install_resource_shield(page, disable_resources=True)
-            if has_stealth:
+            if has_stealth and not is_patchright_object(page):
                 try:
                     sync_stealth(page, pure_js=True)
                 except Exception:
@@ -170,7 +173,7 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             proxied_before = egress_proxy.handled
             proxy_blocked_before = egress_proxy.blocked
             try:
-                resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms, referer=_GOOGLE_REFERER)
             except Exception:
                 # CONNECT (https) yang ditolak proxy muncul sebagai error jaringan biasa.
                 if ssrf_guard["blocked_document"] or egress_proxy.blocked > proxy_blocked_before:
@@ -190,11 +193,10 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             max_poll_s = min(20.0, max(5.0, timeout_ms / 3000.0))
             poll_interval = 0.5
             elapsed = 0.0
+            cf_state = new_cloudflare_state()
             while elapsed < max_poll_s:
                 raw_html = page.content()
-                if _is_cloudflare_challenge(raw_html):
-                    if solve_cloudflare:
-                        _try_solve_cloudflare_turnstile(page)
+                if cloudflare_poll_step(page, raw_html, cf_state, solve=solve_cloudflare):
                     page.wait_for_timeout(int(poll_interval * 1000))
                     elapsed += poll_interval
                     continue

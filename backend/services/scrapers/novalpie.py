@@ -4,12 +4,23 @@ import time
 import atexit
 import asyncio
 import json
-import random
 from typing import Optional, List, Tuple, Dict, Any
 import httpx
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
 from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.adaptive_dom import AdaptiveDOM
+# Alias lama tetap di-export dari modul ini (dipakai stealth_base.py, routers/scrape.py, tes).
+from services.scrapers.browser_stealth import (  # noqa: F401
+    build_context_options,
+    apply_client_hints,
+    build_launch_args,
+    cloudflare_poll_step,
+    inject_stealth_scripts as _inject_scrapling_stealth_scripts,
+    is_cloudflare_challenge as _is_cloudflare_challenge,
+    is_patchright_object,
+    new_cloudflare_state,
+    try_solve_cloudflare_turnstile as _try_solve_cloudflare_turnstile,
+)
 
 _pw_thread_local = threading.local()
 _all_active_browsers = []
@@ -170,15 +181,7 @@ def _get_thread_browser():
 
     print(f"🚀 [{engine_label}] Launching reusable Chromium browser instance for worker thread...")
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(
-        headless=True,
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-infobars",
-            "--no-sandbox",
-        ]
-    )
+    browser = pw.chromium.launch(headless=True, args=build_launch_args())
     _pw_thread_local.pw = pw
     _pw_thread_local.browser = browser
     _pw_thread_local.last_used = now
@@ -192,71 +195,6 @@ _BLOCKED_TRACKER_DOMAINS = (
     "google-analytics.com", "googletagmanager.com", "doubleclick.net",
     "facebook.net", "clarity.ms", "hm.baidu.com", "cnzz.com", "hotjar.com",
 )
-
-
-def _is_cloudflare_challenge(raw_html: str) -> bool:
-    if not raw_html:
-        return False
-    markers = (
-        "Just a moment...",
-        "cf-browser-verification",
-        "Enable JavaScript and cookies to continue",
-        "challenges.cloudflare.com/turnstile",
-        "cf-chl-widget",
-    )
-    return any(m in raw_html for m in markers)
-
-
-def _inject_scrapling_stealth_scripts(context: Any, *, block_webrtc: bool = True, hide_canvas: bool = True) -> None:
-    try:
-        script_parts = [
-            """
-            try {
-                Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-                window.chrome = window.chrome || { runtime: {}, loadTimes: function(){}, csi: function(){} };
-                Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh", "en-US", "en"] });
-                Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
-                Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
-            } catch (e) {}
-            """
-        ]
-        if block_webrtc:
-            script_parts.append(
-                """
-                try {
-                    const OrigPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-                    if (OrigPeerConnection) {
-                        window.RTCPeerConnection = function(config, constraints) {
-                            if (config && config.iceServers) { config.iceServers = []; }
-                            return new OrigPeerConnection(config, constraints);
-                        };
-                        window.RTCPeerConnection.prototype = OrigPeerConnection.prototype;
-                    }
-                } catch (e) {}
-                """
-            )
-        if hide_canvas:
-            script_parts.append(
-                """
-                try {
-                    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-                    HTMLCanvasElement.prototype.toDataURL = function() {
-                        const ctx = this.getContext("2d");
-                        if (ctx && this.width > 0 && this.height > 0) {
-                            try {
-                                const imgData = ctx.getImageData(0, 0, 1, 1);
-                                imgData.data[0] = (imgData.data[0] + 1) % 256;
-                                ctx.putImageData(imgData, 0, 0);
-                            } catch (e) {}
-                        }
-                        return origToDataURL.apply(this, arguments);
-                    };
-                } catch (e) {}
-                """
-            )
-        context.add_init_script("\n".join(script_parts))
-    except Exception:
-        pass
 
 
 def _install_resource_shield(page: Any, disable_resources: bool = True) -> None:
@@ -282,49 +220,6 @@ def _install_resource_shield(page: Any, disable_resources: bool = True) -> None:
         page.route("**/*", _route_handler)
     except Exception:
         pass
-
-
-def _try_solve_cloudflare_turnstile(page: Any) -> bool:
-    clicked = False
-    try:
-        for frame in getattr(page, "frames", []):
-            frame_url = (getattr(frame, "url", "") or "").lower()
-            if any(k in frame_url for k in ("challenges.cloudflare.com", "turnstile", "cf-chl-widget")):
-                for sel in ("input[type='checkbox']", "[role='checkbox']", ".cb-lb", "#challenge-stage input", "body"):
-                    try:
-                        loc = frame.locator(sel).first
-                        if loc and loc.count() > 0:
-                            loc.click(timeout=1200, force=True)
-                            clicked = True
-                            break
-                    except Exception:
-                        continue
-
-        if not clicked:
-            for iframe_sel in (
-                "iframe[src*='challenges.cloudflare.com']",
-                "iframe[src*='turnstile']",
-                "#turnstile-wrapper iframe",
-                ".cf-turnstile iframe",
-                "#cf-turnstile",
-                ".cf-turnstile",
-            ):
-                try:
-                    el = page.query_selector(iframe_sel)
-                    if el:
-                        box = el.bounding_box()
-                        if box and box.get("width", 0) > 20 and box.get("height", 0) > 20:
-                            target_x = box["x"] + min(28.0, box["width"] * 0.2) + random.uniform(-3.0, 3.0)
-                            target_y = box["y"] + (box["height"] / 2.0) + random.uniform(-3.0, 3.0)
-                            page.mouse.move(target_x, target_y, steps=5)
-                            page.mouse.click(target_x, target_y)
-                            clicked = True
-                            break
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    return clicked
 
 
 def _attach_xhr_chapter_capture(page: Any, chapter_id: Optional[int] = None) -> Dict[str, str]:
@@ -679,10 +574,8 @@ class NovalpieAdapter(BaseScraperAdapter):
                 last_err = None
                 for attempt in range(1, max_retries + 1):
                     browser = _get_thread_browser()
-                    context = browser.new_context(
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                    )
-                    _inject_scrapling_stealth_scripts(context, block_webrtc=True, hide_canvas=True)
+                    context = browser.new_context(**build_context_options(browser))
+                    _inject_scrapling_stealth_scripts(context)
                     auth_enabled, raw_cookie, auth_token, pw_cookies = get_novalpie_auth_config(self.workspace)
                     if auth_enabled and pw_cookies:
                         try:
@@ -706,6 +599,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                             print(f"⚠️ [Novalpie Auth] Init script injection failed: {se}")
                     try:
                         page = context.new_page()
+                        apply_client_hints(context, page, browser)
                         _install_resource_shield(page, disable_resources=True)
                         captured_xhr = _attach_xhr_chapter_capture(page, chapter_id=chapter_id)
                         if auth_enabled:
@@ -731,10 +625,12 @@ class NovalpieAdapter(BaseScraperAdapter):
                             except Exception:
                                 pass
 
-                        if has_stealth:
+                        # Patchright menambal di level driver; playwright_stealth di atasnya justru terdeteksi.
+                        js_stealth = has_stealth and not is_patchright_object(page)
+                        if js_stealth:
                             sync_stealth(page, pure_js=True)
-                        
-                        print(f"🚀 [Playwright Context] Opening tab for {target_url} (Percobaan {attempt}/{max_retries}, Stealth: {has_stealth})...")
+
+                        print(f"🚀 [Playwright Context] Opening tab for {target_url} (Percobaan {attempt}/{max_retries}, JS stealth: {js_stealth})...")
                         page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
                         
                         # Adaptive State Polling: Finish immediately when content is decrypted (~4-5s),
@@ -743,13 +639,13 @@ class NovalpieAdapter(BaseScraperAdapter):
                         poll_interval = 0.4
                         elapsed = 0.0
                         raw_html = ""
+                        cf_state = new_cloudflare_state()
 
                         while elapsed < max_poll_seconds:
                             raw_html = page.content()
 
                             # If actively in Cloudflare Turnstile challenge, keep polling and try solving
-                            if _is_cloudflare_challenge(raw_html):
-                                _try_solve_cloudflare_turnstile(page)
+                            if cloudflare_poll_step(page, raw_html, cf_state):
                                 page.wait_for_timeout(int(poll_interval * 1000))
                                 elapsed += poll_interval
                                 continue
