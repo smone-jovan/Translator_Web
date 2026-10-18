@@ -1080,7 +1080,9 @@ export default function ChapterReader({
               aria-expanded={isAppearanceOpen}
             >
               <Palette className="w-3.5 h-3.5 text-[var(--primary)]" />
-              <span className="hidden sm:inline text-[11px] font-black">Aa</span>
+              <span className="hidden sm:inline text-[11px] font-black">
+                Aa
+              </span>
             </Button>
 
             {/* Appearance Popover Menu */}
