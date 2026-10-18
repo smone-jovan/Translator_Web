@@ -820,7 +820,7 @@ async def _scrape_chapter_once(db: Session, chapter: Chapter, ws: str) -> None:
 async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> None:
     chapter_id = chapter.id
     try:
-        from services.security import validate_external_url, create_safe_async_client
+        from services.security import validate_external_url
         validate_external_url(chapter.source_url)
 
         from routers.scrape import is_domain
@@ -833,15 +833,9 @@ async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> N
             sfacg = SFACGAdapter()
             fetched_title, fetched_markdown = await sfacg.scrape_chapter_content(chapter.source_url)
         else:
-            from routers.scrape import html_to_markdown
-            async with create_safe_async_client(
-                timeout=15.0,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-            ) as client:
-                resp = await client.get(chapter.source_url)
-                resp.raise_for_status()
-
-            fetched_title, fetched_markdown = html_to_markdown(resp.text)
+            from routers.scrape import fetch_html_adaptive, html_to_markdown
+            html_text, final_url = await fetch_html_adaptive(chapter.source_url, workspace=ws)
+            fetched_title, fetched_markdown = html_to_markdown(html_text, url=final_url)
 
         is_vip = False
         if chapter.source_url and "/vip/" in chapter.source_url.lower():

@@ -5,6 +5,7 @@ Also contains URL imports and NovelUpdates/SFACG metadata scrapers.
 """
 
 import asyncio
+import codecs
 import json
 import random
 import re
@@ -84,6 +85,23 @@ AD_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Page-level containers whose class merely mentions a layout feature (e.g. WordPress
+# `has-sidebar`, `comments-open`) must survive the ad filter, or the chapter goes with them.
+_ALWAYS_KEEP_TAGS = {"html", "body"}
+_WRAPPER_TEXT_SHARE = 0.5
+_WRAPPER_MAX_LINK_SHARE = 0.5
+
+
+def _is_page_wrapper(el, page_text_len: int) -> bool:
+    """True when `el` holds most of the page's prose, so it is layout, not an ad/nav widget."""
+    if el.name in _ALWAYS_KEEP_TAGS:
+        return True
+    text_len = len(el.get_text(strip=True))
+    if text_len < page_text_len * _WRAPPER_TEXT_SHARE:
+        return False
+    link_text_len = sum(len(a.get_text(strip=True)) for a in el.find_all("a"))
+    return link_text_len < text_len * _WRAPPER_MAX_LINK_SHARE
+
 
 def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
     domain = urllib.parse.urlparse(url).hostname or "default" if url else "default"
@@ -108,6 +126,7 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
             tag.decompose()
 
     # Remove elements with ad-like classes/ids
+    page_text_len = len(soup.get_text(strip=True))
     for el in soup.find_all(True):
         if getattr(el, "attrs", None) is None:
             continue
@@ -124,7 +143,7 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         if not isinstance(el_id, str):
             el_id = str(el_id)
             
-        if AD_PATTERNS.search(classes) or AD_PATTERNS.search(el_id):
+        if (AD_PATTERNS.search(classes) or AD_PATTERNS.search(el_id)) and not _is_page_wrapper(el, page_text_len):
             el.decompose()
 
     # Try to find main content area adaptively
@@ -194,6 +213,76 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
     return title, markdown
 
 
+_HEADER_CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?([^\s;\"']+)", re.IGNORECASE)
+_META_CHARSET_RE = re.compile(rb"<meta[^>]+charset\s*=\s*[\"']?\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
+_CHARSET_SNIFF_BYTES = 4096
+# Sites labelled gb2312/gbk routinely serve GBK-only characters; GB18030 is a strict superset.
+_CHARSET_ALIASES = {"gb2312": "gb18030", "gbk": "gb18030", "x-gbk": "gb18030", "gb_2312-80": "gb18030"}
+_ASCII_BYTES = bytes(range(128))
+# Legacy CJK bytes (GBK, Big5, Shift-JIS, EUC-KR) read as UTF-8 yield ~0.65-0.9 replacement
+# chars per non-ASCII byte; genuine UTF-8 with a few corrupt bytes stays far below this.
+_MAX_UTF8_ERROR_RATIO = 0.1
+
+
+def _normalize_charset(label: Optional[str]) -> Optional[str]:
+    if not label:
+        return None
+    name = label.strip().lower()
+    try:
+        return codecs.lookup(_CHARSET_ALIASES.get(name, name)).name
+    except LookupError:
+        return None
+
+
+def _decode_lenient_utf8(content: bytes) -> Optional[str]:
+    """UTF-8 with a few corrupt bytes replaced, or None when the bytes are not UTF-8 at all."""
+    text = content.decode("utf-8", errors="replace")
+    non_ascii_len = len(content.translate(None, _ASCII_BYTES))
+    if text.count("�") <= non_ascii_len * _MAX_UTF8_ERROR_RATIO:
+        return text
+    return None
+
+
+def decode_response_html(resp) -> str:
+    """
+    Decode an HTML response (httpx or curl_cffi) using the HTTP charset, then the <meta>
+    charset, then UTF-8 / GB18030 sniffing. httpx alone falls back to UTF-8 when the header
+    omits the charset, which garbles GBK pages that declare it only in <meta>.
+    """
+    content = getattr(resp, "content", None)
+    if not isinstance(content, (bytes, bytearray)):
+        return getattr(resp, "text", "") or ""
+    content = bytes(content)
+
+    headers = getattr(resp, "headers", None)
+    content_type = (headers.get("content-type") or "") if headers is not None else ""
+    header_match = _HEADER_CHARSET_RE.search(content_type)
+    meta_match = _META_CHARSET_RE.search(content[:_CHARSET_SNIFF_BYTES])
+    declared = [
+        encoding
+        for encoding in (
+            _normalize_charset(header_match.group(1) if header_match else None),
+            _normalize_charset(meta_match.group(1).decode("ascii", "ignore") if meta_match else None),
+        )
+        if encoding
+    ]
+    for encoding in declared:
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+
+    # No usable declaration, or the bytes contradict it: sniff.
+    lenient_utf8 = _decode_lenient_utf8(content)
+    if lenient_utf8 is not None:
+        return lenient_utf8
+    try:
+        return content.decode("gb18030")
+    except UnicodeDecodeError:
+        pass
+    return content.decode(declared[0] if declared else "gb18030", errors="replace")
+
+
 def is_domain(url: str, domain: str) -> bool:
     """Check if URL host matches domain or subdomain exactly."""
     try:
@@ -201,6 +290,76 @@ def is_domain(url: str, domain: str) -> bool:
         return host == domain or host.endswith(f".{domain}")
     except Exception:
         return False
+
+
+_NEXT_LINK_EXACT_LABELS = frozenset({
+    "下一章", "下一页", "下一頁", "下一节", "下一節", "下一话", "下一話", "下页", "下章",
+    "next", "next chapter", "next page", "次へ", "次の話",
+})
+_NEXT_LINK_EXCLUDED = ("下一卷", "next volume")
+_NEXT_LINK_DECORATION_RE = re.compile(r"[\s<>«»‹›→⇒➜>\[\]【】()（）|:：.…·»]+")
+
+
+def _site_host(url: str) -> str:
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _same_site(candidate_url: str, base_url: str) -> bool:
+    """Same host, or one is a subdomain of the other (www./m. mirrors of one novel site)."""
+    a, b = _site_host(candidate_url), _site_host(base_url)
+    if not a or not b:
+        return False
+    return a == b or a.endswith(f".{b}") or b.endswith(f".{a}")
+
+
+def _normalize_next_label(text: str) -> str:
+    return _NEXT_LINK_DECORATION_RE.sub(" ", text).strip().lower()
+
+
+def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]]:
+    """
+    Find the next-chapter link of a generic chapter page as (absolute_url, link_text).
+    Priority: <link rel=next> / <a rel=next>, then exact labels (下一章, Next Chapter, ...),
+    then any link text containing 下一 / next. Next-volume links (下一卷), off-site links,
+    self links and javascript:/# anchors are never returned.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    current = urllib.parse.urldefrag(base_url)[0]
+
+    def resolve(href) -> Optional[str]:
+        href = (href or "").strip()
+        if not href or href.startswith("#") or href.lower().startswith(("javascript:", "mailto:")):
+            return None
+        candidate = urllib.parse.urldefrag(urllib.parse.urljoin(base_url, href))[0]
+        if candidate == current or not candidate.startswith(("http://", "https://")):
+            return None
+        return candidate if _same_site(candidate, base_url) else None
+
+    anchors = []
+    for a in soup.find_all("a"):
+        text = a.get_text(strip=True)
+        if any(excluded in text.lower() for excluded in _NEXT_LINK_EXCLUDED):
+            continue
+        url = resolve(a.get("href"))
+        if url:
+            anchors.append((a, url, text))
+
+    for tag in soup.find_all("link"):
+        if "next" in [r.lower() for r in (tag.get("rel") or [])]:
+            url = resolve(tag.get("href"))
+            if url:
+                return url, ""
+    for a, url, text in anchors:
+        if "next" in [r.lower() for r in (a.get("rel") or [])]:
+            return url, text
+    for _, url, text in anchors:
+        if _normalize_next_label(text) in _NEXT_LINK_EXACT_LABELS:
+            return url, text
+    for _, url, text in anchors:
+        if "下一" in text or "下页" in text or "next" in text.lower():
+            return url, text
+    return None
 
 
 async def fetch_html_adaptive(
@@ -222,7 +381,7 @@ async def fetch_html_adaptive(
         ) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            html_text = resp.text or ""
+            html_text = decode_response_html(resp)
             final_url = str(resp.url) if getattr(resp, "url", None) else url
     except httpx.HTTPStatusError as exc:
         primary_exc = exc
@@ -248,8 +407,9 @@ async def fetch_html_adaptive(
                 cf_resp, cf_final_url = await follow_redirects_safely(
                     lambda u: cf_session.get(u, allow_redirects=False), url
                 )
-                if cf_resp.status_code == 200 and cf_resp.text and not _is_cloudflare_challenge(cf_resp.text):
-                    html_text = cf_resp.text
+                cf_text = decode_response_html(cf_resp) if cf_resp.status_code == 200 else ""
+                if cf_text and not _is_cloudflare_challenge(cf_text):
+                    html_text = cf_text
                     final_url = cf_final_url
                     needs_escalation = False
         except HTTPException:
@@ -713,28 +873,15 @@ async def fetch_next_chapter(
             print(f"⚠️ [SFACG] Error resolving next chapter: {e}")
     else:
         try:
-            async with create_safe_async_client(
-                timeout=30.0,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-            ) as client:
-                resp = await client.get(chapter.source_url)
-                resp.raise_for_status()
+            current_html, current_final_url = await fetch_html_adaptive(chapter.source_url, workspace=ws)
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
 
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        links = soup.find_all('a')
-
-        for a in links:
-            text = a.get_text(strip=True)
-            if '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text:
-                href = a.get('href')
-                if href:
-                    next_url = urllib.parse.urljoin(str(resp.url), href)
-                    next_title = text
-                    break
+        next_info = find_next_chapter_link(current_html, current_final_url)
+        if next_info:
+            next_url, next_title = next_info
 
     if not next_url:
         raise HTTPException(404, "Could not find a 'Next Chapter' link on the page.")
@@ -757,18 +904,13 @@ async def fetch_next_chapter(
         parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
     else:
         try:
-            async with create_safe_async_client(
-                timeout=30.0,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-            ) as client:
-                next_resp = await client.get(next_url)
-                next_resp.raise_for_status()
+            next_html, next_final_url = await fetch_html_adaptive(next_url, workspace=ws)
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
-        parsed_title, markdown = html_to_markdown(next_resp.text)
+        parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
 
     is_vip = False
     if "/vip/" in next_url.lower():
@@ -897,33 +1039,14 @@ async def crawl_next_chapters(
                         print(f"⚠️ [SFACG] Error resolving next chapter in crawl stream: {e}")
                 else:
                     try:
-                        validate_external_url(current_url)
-                        async with create_safe_async_client(
-                            timeout=30.0,
-                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-                        ) as client:
-                            resp = await client.get(current_url)
-                            resp.raise_for_status()
+                        current_html, current_final_url = await fetch_html_adaptive(current_url, workspace=ws)
                     except Exception as e:
                         yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to fetch URL ({current_url}): {e}'})}\n\n"
                         break
 
-                    soup = BeautifulSoup(resp.text, 'html.parser')
-                    links = soup.find_all('a')
-
-                    for a in links:
-                        text = a.get_text(strip=True)
-                        rel = a.get('rel', [])
-                        is_rel_next = 'next' in rel if isinstance(rel, list) else 'next' in str(rel).lower()
-                        if is_rel_next or '下一' in text or 'next' in text.lower() or '下一章' in text or '下一页' in text or '下页' in text:
-                            href = a.get('href')
-                            if href:
-                                candidate_url = urllib.parse.urljoin(str(resp.url), href)
-                                # Avoid self loops or javascript anchors
-                                if candidate_url != current_url and not candidate_url.startswith("javascript:"):
-                                    next_url = candidate_url
-                                    next_title = text
-                                    break
+                    next_info = find_next_chapter_link(current_html, current_final_url)
+                    if next_info and next_info[0] != current_url:
+                        next_url, next_title = next_info
 
                 if not next_url:
                     yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'no_next_link', 'message': f'End of web chapters reached. Scraped {len(created_chapters)} new chapters.'})}\n\n"
@@ -958,15 +1081,8 @@ async def crawl_next_chapters(
                             sfacg = SFACGAdapter()
                             parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
                         else:
-                            validate_external_url(next_url)
-                            async with create_safe_async_client(
-                                follow_redirects=True,
-                                timeout=30.0,
-                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-                            ) as client:
-                                next_resp = await client.get(next_url)
-                                next_resp.raise_for_status()
-                            parsed_title, markdown = html_to_markdown(next_resp.text)
+                            next_html, next_final_url = await fetch_html_adaptive(next_url, workspace=ws)
+                            parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
 
                         # Check if successful content extracted
                         if markdown and len(markdown.strip()) >= 50:
