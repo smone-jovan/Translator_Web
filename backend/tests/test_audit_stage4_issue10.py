@@ -30,7 +30,8 @@ def test_novalpie_router_instantiations_pass_workspace():
 
     source_scrape = inspect.getsource(scrape_router)
     source_toc = inspect.getsource(toc_router)
-    source_threads = inspect.getsource(threads_router.get_chapter)
+    # get_chapter's on-demand scrape lives in this helper (deduplicated by _scrape_chapter_once)
+    source_threads = inspect.getsource(threads_router._scrape_chapter_on_demand)
 
     # In scrape.py, import_from_url and fetch_next_chapter should pass workspace
     assert "NovalpieAdapter(workspace=" in source_scrape, "scrape.py must pass workspace to NovalpieAdapter"

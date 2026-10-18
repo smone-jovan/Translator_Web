@@ -6,6 +6,7 @@ DELETE /api/threads/{id} — delete thread + cascade
 GET /api/threads/{id}/chapters/{chapter_id} — single chapter content
 """
 
+import asyncio
 import time
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, ConfigDict
@@ -13,7 +14,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from typing import List, Optional
 
-from database import get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark, get_db_workspace
+from database import (
+    get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark, get_db_workspace,
+    make_workspace_key,
+)
 from services.cleaner_tools import CleanerTools
 from services.hallucination_detector import HallucinationDetector
 
@@ -775,6 +779,95 @@ def update_style_guide(thread_id: int, payload: StyleGuideUpdate, db: Session = 
     return {"status": "success", "style_guide": thread.style_guide}
 
 
+# On-demand scrapes in flight, keyed by make_workspace_key(workspace, chapter_id). A concurrent
+# read of the same chapter (another tab/device, N±1 warming, offline cache) waits for the owner's
+# outcome instead of starting a second Playwright/HTTP scrape.
+_inflight_chapter_scrapes: dict[tuple[str, int], asyncio.Future] = {}
+
+
+def _mark_outcome_retrieved(outcome: asyncio.Future) -> None:
+    # With no waiters, an unread exception would be logged as "never retrieved".
+    if not outcome.cancelled():
+        outcome.exception()
+
+
+async def _scrape_chapter_once(db: Session, chapter: Chapter, ws: str) -> None:
+    key = make_workspace_key(ws, chapter.id)
+    pending = _inflight_chapter_scrapes.get(key)
+    if pending is not None:
+        # shield: one waiter being cancelled must not cancel the outcome for the others.
+        await asyncio.shield(pending)
+        # The owner committed through its own session; re-read the row through ours.
+        db.refresh(chapter)
+        return
+
+    outcome = asyncio.get_running_loop().create_future()
+    outcome.add_done_callback(_mark_outcome_retrieved)
+    _inflight_chapter_scrapes[key] = outcome
+    try:
+        await _scrape_chapter_on_demand(db, chapter, ws)
+    except HTTPException as exc:
+        outcome.set_exception(exc)
+        raise
+    finally:
+        # Clear the entry on every exit (success, failure, cancellation) so a later read retries.
+        if _inflight_chapter_scrapes.get(key) is outcome:
+            del _inflight_chapter_scrapes[key]
+        if not outcome.done():
+            outcome.set_result(None)
+
+
+async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> None:
+    chapter_id = chapter.id
+    try:
+        from services.security import validate_external_url, create_safe_async_client
+        validate_external_url(chapter.source_url)
+
+        from routers.scrape import is_domain
+        if is_domain(chapter.source_url, "novalpie.cc"):
+            from services.scrapers.novalpie import NovalpieAdapter
+            novalpie = NovalpieAdapter(workspace=ws)
+            fetched_title, fetched_markdown = await novalpie.scrape_chapter_content(chapter.source_url)
+        elif is_domain(chapter.source_url, "sfacg.com"):
+            from services.scrapers.sfacg import SFACGAdapter
+            sfacg = SFACGAdapter()
+            fetched_title, fetched_markdown = await sfacg.scrape_chapter_content(chapter.source_url)
+        else:
+            from routers.scrape import html_to_markdown
+            async with create_safe_async_client(
+                timeout=15.0,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
+            ) as client:
+                resp = await client.get(chapter.source_url)
+                resp.raise_for_status()
+
+            fetched_title, fetched_markdown = html_to_markdown(resp.text)
+
+        is_vip = False
+        if chapter.source_url and "/vip/" in chapter.source_url.lower():
+            is_vip = True
+        elif fetched_title and "VIP章节" in fetched_title:
+            is_vip = True
+        elif not fetched_markdown or len(fetched_markdown) < 50:
+            if not (chapter.source_url and (is_domain(chapter.source_url, "novalpie.cc") or is_domain(chapter.source_url, "sfacg.com"))):
+                is_vip = True
+
+        if is_vip:
+            chapter.translation_status = "vip"
+            chapter.content_original = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+        else:
+            chapter.content_original = fetched_markdown
+            if not chapter.title_original and fetched_title:
+                chapter.title_original = fetched_title
+
+        db.commit()
+        print(f"[ON-DEMAND READ] Fetched chapter {chapter_id} content from {chapter.source_url}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch on-demand chapter {chapter_id}: {e}")
+
+
 @router.get("/threads/{thread_id}/chapters/{chapter_id}", response_model=ChapterContent)
 async def get_chapter(
     thread_id: int,
@@ -816,56 +909,11 @@ async def get_chapter(
 
         current_scroll_progress = bookmark.scroll_progress
 
+    ws = get_db_workspace(db)
+
     # --- ON-DEMAND READ SCRAPING ---
     if not chapter.content_original and getattr(chapter, "source_url", None):
-        try:
-            from services.security import validate_external_url, create_safe_async_client
-            validate_external_url(chapter.source_url)
-
-            from routers.scrape import is_domain
-            ws = get_db_workspace(db)
-            if is_domain(chapter.source_url, "novalpie.cc"):
-                from services.scrapers.novalpie import NovalpieAdapter
-                novalpie = NovalpieAdapter(workspace=ws)
-                fetched_title, fetched_markdown = await novalpie.scrape_chapter_content(chapter.source_url)
-            elif is_domain(chapter.source_url, "sfacg.com"):
-                from services.scrapers.sfacg import SFACGAdapter
-                sfacg = SFACGAdapter()
-                fetched_title, fetched_markdown = await sfacg.scrape_chapter_content(chapter.source_url)
-            else:
-                from routers.scrape import html_to_markdown
-                async with create_safe_async_client(
-                    timeout=15.0,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; TranslatorBot/1.0)"},
-                ) as client:
-                    resp = await client.get(chapter.source_url)
-                    resp.raise_for_status()
-
-                fetched_title, fetched_markdown = html_to_markdown(resp.text)
-
-            is_vip = False
-            if chapter.source_url and "/vip/" in chapter.source_url.lower():
-                is_vip = True
-            elif fetched_title and "VIP章节" in fetched_title:
-                is_vip = True
-            elif not fetched_markdown or len(fetched_markdown) < 50:
-                if not (chapter.source_url and (is_domain(chapter.source_url, "novalpie.cc") or is_domain(chapter.source_url, "sfacg.com"))):
-                    is_vip = True
-
-            if is_vip:
-                chapter.translation_status = "vip"
-                chapter.content_original = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
-            else:
-                chapter.content_original = fetched_markdown
-                if not chapter.title_original and fetched_title:
-                    chapter.title_original = fetched_title
-
-            db.commit()
-            print(f"[ON-DEMAND READ] Fetched chapter {chapter_id} content from {chapter.source_url}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"[ERROR] Failed to fetch on-demand chapter {chapter_id}: {e}")
+        await _scrape_chapter_once(db, chapter, ws)
 
     # --- PREFETCH TRIGGER (ADR-009) ---
     from services.background_translator import BackgroundTranslator
@@ -875,8 +923,6 @@ async def get_chapter(
     model = resolve_active_model(gs)
     ai_url = resolve_active_base_url(gs)
     prefetch_on = (gs.prefetch_enabled == 1 if gs else False) and track
-
-    ws = get_db_workspace(db)
 
     if prefetch_on:
         # 1. Trigger background translation for CURRENT chapter if untranslated
