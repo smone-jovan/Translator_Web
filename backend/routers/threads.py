@@ -20,6 +20,7 @@ from database import (
 )
 from services.cleaner_tools import CleanerTools
 from services.hallucination_detector import HallucinationDetector
+from services.scrapers.generic_cleanup import VIP_PLACEHOLDER, is_extraction_empty, is_vip_chapter
 
 router = APIRouter(prefix="/api", tags=["Threads"])
 
@@ -836,19 +837,21 @@ async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> N
             from routers.scrape import fetch_html_adaptive, html_to_markdown
             html_text, final_url = await fetch_html_adaptive(chapter.source_url, workspace=ws)
             fetched_title, fetched_markdown = html_to_markdown(html_text, url=final_url)
+            if is_extraction_empty(fetched_markdown) and not is_vip_chapter(
+                chapter.source_url, fetched_title, fetched_markdown
+            ):
+                # Leave the chapter unfetched so the next read retries instead of locking it as VIP.
+                print(f"[ERROR] No content extracted for on-demand chapter {chapter_id} from {chapter.source_url}")
+                return
 
-        is_vip = False
-        if chapter.source_url and "/vip/" in chapter.source_url.lower():
-            is_vip = True
-        elif fetched_title and "VIP章节" in fetched_title:
-            is_vip = True
-        elif not fetched_markdown or len(fetched_markdown) < 50:
-            if not (chapter.source_url and (is_domain(chapter.source_url, "novalpie.cc") or is_domain(chapter.source_url, "sfacg.com"))):
-                is_vip = True
-
+        from routers.scrape import is_dedicated_source
+        is_vip = is_vip_chapter(
+            chapter.source_url, fetched_title, fetched_markdown,
+            inspect_content=not is_dedicated_source(chapter.source_url),
+        )
         if is_vip:
             chapter.translation_status = "vip"
-            chapter.content_original = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+            chapter.content_original = VIP_PLACEHOLDER
         else:
             chapter.content_original = fetched_markdown
             if not chapter.title_original and fetched_title:

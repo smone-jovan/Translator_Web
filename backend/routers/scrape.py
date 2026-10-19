@@ -24,6 +24,15 @@ from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resol
 from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.engine import MetadataScraperEngine
 from services.scrapers.adaptive_dom import AdaptiveDOM
+from services.scrapers.generic_cleanup import (
+    VIP_PLACEHOLDER,
+    clean_title_tag_text,
+    find_chapter_heading,
+    find_plain_heading,
+    is_extraction_empty,
+    is_vip_chapter,
+    strip_watermarks,
+)
 from services.scrapers.novalpie import _is_cloudflare_challenge
 
 _DEFAULT_BROWSER_HEADERS = {
@@ -36,7 +45,7 @@ _DEFAULT_BROWSER_HEADERS = {
 }
 
 _SPA_SHELL_RE = re.compile(
-    r'(<div[^>]+id=["\'](?:app|__nuxt|__next|root)["\'][^>]*>\\s*</div>|window\\.__NUXT__|__NEXT_DATA__)',
+    r'(<div[^>]+id=["\'](?:app|__nuxt|__next|root)["\'][^>]*>\s*</div>|window\.__NUXT__|__NEXT_DATA__)',
     re.IGNORECASE,
 )
 
@@ -108,17 +117,22 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
     """Convert HTML to clean markdown-ish text. Returns (title, content)."""
     soup = BeautifulSoup(html, "html.parser")
 
-    # Extract title adaptively
+    # Extract title adaptively: a chapter-numbered heading beats a site-name/logo <h1>.
     adaptive_title = AdaptiveDOM.select_one(
         soup,
-        ["h1", "h2", ".chapter-title", ".ep-title", ".reader-title", "title"],
+        [find_chapter_heading, find_plain_heading, "title"],
         domain=domain,
         key="title",
         role="title",
         adaptive=True,
         auto_save=bool(url),
     )
-    title = adaptive_title.get_text(strip=True) if adaptive_title else (soup.find("title").get_text(strip=True) if soup.find("title") else "Untitled")
+    if adaptive_title is None:
+        title = "Untitled"
+    elif adaptive_title.name == "title":
+        title = clean_title_tag_text(adaptive_title.get_text(strip=True)) or "Untitled"
+    else:
+        title = adaptive_title.get_text(strip=True)
 
     # Remove unwanted tags
     for tag_name in STRIP_TAGS:
@@ -205,7 +219,8 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
     markdown = markdown.replace("图片加载中...", "")
     markdown = markdown.replace("图片加载失败", "")
     markdown = markdown.replace("⚠️", "")
-    
+    markdown = strip_watermarks(markdown)
+
     # Collapse excessive newlines
     markdown = re.sub(r"\n{3,}", "\n\n", markdown)
     markdown = markdown.strip()
@@ -290,6 +305,11 @@ def is_domain(url: str, domain: str) -> bool:
         return host == domain or host.endswith(f".{domain}")
     except Exception:
         return False
+
+
+def is_dedicated_source(url: str) -> bool:
+    """Sites with their own adapter (lock detection lives there, not in generic content checks)."""
+    return is_domain(url, "novalpie.cc") or is_domain(url, "sfacg.com")
 
 
 _NEXT_LINK_EXACT_LABELS = frozenset({
@@ -569,18 +589,12 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
             raise
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch URL: {e}")
+        if is_extraction_empty(markdown) and not is_vip_chapter(req.url, title, markdown):
+            raise HTTPException(422, "No content extracted from URL.")
 
-    is_vip = False
-    if "/vip/" in req.url.lower():
-        is_vip = True
-    elif title and "VIP章节" in title:
-        is_vip = True
-    elif not markdown or len(markdown) < 50:
-        if not (is_domain(req.url, "novalpie.cc") or is_domain(req.url, "sfacg.com")):
-            is_vip = True
-
+    is_vip = is_vip_chapter(req.url, title, markdown, inspect_content=not is_dedicated_source(req.url))
     if is_vip:
-        markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+        markdown = VIP_PLACEHOLDER
 
     if req.thread_id:
         # Add chapter to existing thread
@@ -911,18 +925,12 @@ async def fetch_next_chapter(
             raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
         parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
+        if is_extraction_empty(markdown) and not is_vip_chapter(next_url, parsed_title, markdown):
+            raise HTTPException(422, f"No content extracted from next chapter URL ({next_url}).")
 
-    is_vip = False
-    if "/vip/" in next_url.lower():
-        is_vip = True
-    elif parsed_title and "VIP章节" in parsed_title:
-        is_vip = True
-    elif not markdown or len(markdown) < 50:
-        if not (is_domain(next_url, "novalpie.cc") or is_domain(next_url, "sfacg.com")):
-            is_vip = True
-
+    is_vip = is_vip_chapter(next_url, parsed_title, markdown, inspect_content=not is_dedicated_source(next_url))
     if is_vip:
-        markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+        markdown = VIP_PLACEHOLDER
 
     # Get max order
     max_order = db.execute(
@@ -1096,18 +1104,14 @@ async def crawl_next_chapters(
                         retry_label = "Playwright/Browser" if is_domain(next_url, "novalpie.cc") else "Network/HTTP"
                         yield f"data: {json.dumps({'type': 'log', 'message': f'Gagal memuat bab, mencoba ulang {retry_label} (Percobaan {fetch_attempt + 1}/{max_fetch_attempts})...'})}\n\n"
                         await asyncio.sleep(fetch_attempt * 2)
-                is_vip = False
-                if "/vip/" in next_url.lower():
-                    is_vip = True
-                elif parsed_title and "VIP章节" in parsed_title:
-                    is_vip = True
-                elif not markdown or len(markdown) < 50:
-                    if not (is_domain(next_url, "novalpie.cc") or is_domain(next_url, "sfacg.com")):
-                        is_vip = True
-
+                is_dedicated = is_dedicated_source(next_url)
+                is_vip = is_vip_chapter(next_url, parsed_title, markdown, inspect_content=not is_dedicated)
+                if not is_vip and not is_dedicated and is_extraction_empty(markdown):
+                    yield f"data: {json.dumps({'type': 'complete', 'fetched_count': len(created_chapters), 'reason': 'extraction_failed', 'message': f'Could not extract content from {next_url}. Scraped {len(created_chapters)} new chapters.'})}\n\n"
+                    break
 
                 if is_vip:
-                    markdown = "[VIP CHAPTER] Bab ini terkunci atau tidak dapat diakses (VIP)."
+                    markdown = VIP_PLACEHOLDER
 
                 current_max_order += 1
                 new_chapter = Chapter(
