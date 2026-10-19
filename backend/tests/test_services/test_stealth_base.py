@@ -6,11 +6,11 @@ from fastapi import HTTPException
 
 
 def test_novalpie_prefers_patchright_if_available():
-    """_get_thread_browser should import patchright if available, otherwise playwright."""
+    """Thread-local Playwright should import patchright if available, otherwise playwright."""
     import services.scrapers.novalpie as novalpie_mod
-    source = inspect.getsource(novalpie_mod._get_thread_browser)
-    assert "patchright" in source, "_get_thread_browser must support patchright as drop-in upgrade"
-    assert "playwright" in source, "_get_thread_browser must retain standard playwright fallback"
+    source = inspect.getsource(novalpie_mod._start_sync_playwright)
+    assert "patchright" in source, "_start_sync_playwright must support patchright as drop-in upgrade"
+    assert "playwright" in source, "_start_sync_playwright must retain standard playwright fallback"
 
 
 def test_stealth_base_class_structure():

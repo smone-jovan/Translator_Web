@@ -6,12 +6,20 @@ Mengikuti pendekatan Scrapling v0.5: fingerprint diatur lewat flag native Chromi
 versi Chromium yang benar-benar berjalan, dan challenge Cloudflare dibedakan per `cType`.
 """
 
+import atexit
+import json
 import random
 import re
+import shutil
 import sys
+import tempfile
+import threading
 import time
 import weakref
-from typing import Any, Dict, List, Optional
+from functools import lru_cache
+from importlib.util import find_spec
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Union
 
 FALLBACK_CHROME_MAJOR = 148
 STEALTH_LOCALE = "zh-CN"
@@ -131,6 +139,168 @@ def launch_stealth_browser(pw: Any) -> Any:
     return browser
 
 
+# --- Profil persisten -------------------------------------------------------------
+
+PROFILE_DIR_PREFIX = "readomni-stealth-profile-"
+_PROFILE_RMTREE_ATTEMPTS = 3
+_PROFILE_RMTREE_DELAY_S = 0.2
+_PROFILE_EXIT_RMTREE_ATTEMPTS = 10
+# Sisa profil dari proses yang mati paksa (SIGKILL/taskkill, atexit tidak jalan). Context dibuang
+# setelah CONTEXT_MAX_AGE_S (30 menit, stealth_base), jadi ambang 2 jam aman bagi proses lain yang
+# masih hidup sekaligus membatasi berapa lama cookie (termasuk ghost) tertinggal di disk.
+STALE_PROFILE_AGE_S = 2 * 3600.0
+# Context hasil fallback ke headless shell (pasangan _HEADLESS_SHELL_BROWSERS untuk profil persisten).
+_HEADLESS_SHELL_CONTEXTS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+_live_profile_dirs: Set[str] = set()
+_pending_profile_removals: Set[str] = set()
+_profile_dirs_lock = threading.Lock()
+_stale_sweep_done = False
+
+
+def read_driven_chromium_version(package_root: Union[str, Path]) -> Optional[str]:
+    """Versi Chromium yang dikendalikan paket engine, dari driver/package/browsers.json (cara Scrapling)."""
+    path = Path(package_root) / "driver" / "package" / "browsers.json"
+    try:
+        browsers = json.loads(path.read_text(encoding="utf-8")).get("browsers", [])
+    except (OSError, ValueError, AttributeError):
+        return None
+    for entry in browsers:
+        if not isinstance(entry, dict) or entry.get("name") != "chromium":
+            continue
+        version = entry.get("browserVersion")
+        if isinstance(version, str) and re.match(r"\d+\.", version):
+            return version
+    return None
+
+
+@lru_cache(maxsize=1)
+def _driven_version() -> str:
+    for package in ("patchright", "playwright"):
+        spec = find_spec(package)
+        if spec is not None and spec.origin:
+            version = read_driven_chromium_version(Path(spec.origin).parent)
+            if version:
+                return version
+    return f"{FALLBACK_CHROME_MAJOR}.0.0.0"
+
+
+def _remove_profile_dir(profile_dir: str, attempts: int = _PROFILE_RMTREE_ATTEMPTS) -> None:
+    # Windows bisa masih mengunci file sesaat setelah Chromium keluar.
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(profile_dir)
+            break
+        except FileNotFoundError:
+            break
+        except OSError:
+            if attempt + 1 < attempts:
+                time.sleep(_PROFILE_RMTREE_DELAY_S)
+    else:
+        # Masih terkunci: dicoba lagi di launch berikutnya dan saat proses keluar.
+        with _profile_dirs_lock:
+            _pending_profile_removals.add(profile_dir)
+        return
+    with _profile_dirs_lock:
+        _live_profile_dirs.discard(profile_dir)
+        _pending_profile_removals.discard(profile_dir)
+
+
+def _retry_pending_profile_removals() -> None:
+    with _profile_dirs_lock:
+        pending = list(_pending_profile_removals)
+    for profile_dir in pending:
+        _remove_profile_dir(profile_dir, attempts=1)
+
+
+def sweep_stale_profile_dirs(base_dir: Optional[Union[str, Path]] = None, now: Optional[float] = None) -> None:
+    """Hapus profil ber-prefix kita yang tidak dipakai proses ini dan sudah basi."""
+    base = Path(base_dir or tempfile.gettempdir())
+    cutoff = (time.time() if now is None else now) - STALE_PROFILE_AGE_S
+    with _profile_dirs_lock:
+        live = set(_live_profile_dirs)
+    try:
+        candidates = [d for d in base.iterdir() if d.name.startswith(PROFILE_DIR_PREFIX)]
+    except OSError:
+        return
+    for profile_dir in candidates:
+        try:
+            if str(profile_dir) in live or not profile_dir.is_dir() or profile_dir.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+
+@atexit.register
+def _sweep_profile_dirs() -> None:
+    with _profile_dirs_lock:
+        leftovers = list(_live_profile_dirs | _pending_profile_removals)
+    for profile_dir in leftovers:
+        # Chromium bisa masih keluar dan mengunci profil saat atexit jalan (Windows).
+        _remove_profile_dir(profile_dir, attempts=_PROFILE_EXIT_RMTREE_ATTEMPTS)
+
+
+class PersistentProfileLauncher:
+    """
+    Pengganti `Browser.new_context` dengan antarmuka yang sama (`version`, `new_context`):
+    tiap context adalah `launch_persistent_context` dengan profil sementara sendiri.
+
+    Context incognito dari `new_context` mudah dikenali: kuota storage kecil dan
+    `navigator.languages` hanya berisi nilai `--lang`. Profil biasa tidak. Direktori profil
+    dihapus saat context ditutup, jadi cookie (termasuk workspace ghost) tidak tertinggal di disk.
+    """
+
+    def __init__(self, pw: Any, executable_path: Optional[str] = None):
+        self._pw = pw
+        self._executable_path = executable_path
+        self._contexts: "weakref.WeakSet[Any]" = weakref.WeakSet()
+        # Launch gagal (mis. driver Playwright mati): pemilik thread-local mengganti launcher ini.
+        self.broken = False
+        # UA harus diset saat launch, sebelum ada objek Browser yang bisa ditanya versinya.
+        self.version = _driven_version()
+        global _stale_sweep_done
+        if not _stale_sweep_done:
+            _stale_sweep_done = True
+            sweep_stale_profile_dirs()
+
+    def _launch(self, profile_dir: str, options: Dict[str, Any], full_chromium: bool) -> Any:
+        kwargs = dict(options, user_data_dir=profile_dir, headless=True, args=build_launch_args())
+        if self._executable_path:
+            kwargs["executable_path"] = self._executable_path
+        elif full_chromium:
+            kwargs["channel"] = STEALTH_CHANNEL
+        return self._pw.chromium.launch_persistent_context(**kwargs)
+
+    def new_context(self, **options: Any) -> Any:
+        _retry_pending_profile_removals()
+        profile_dir = tempfile.mkdtemp(prefix=PROFILE_DIR_PREFIX)
+        with _profile_dirs_lock:
+            _live_profile_dirs.add(profile_dir)
+        try:
+            try:
+                context = self._launch(profile_dir, options, full_chromium=True)
+            except Exception as exc:
+                if self._executable_path:
+                    raise
+                print(f"⚠️ [Stealth] Chromium penuh tidak tersedia ({exc}); fallback ke headless shell.")
+                context = self._launch(profile_dir, options, full_chromium=False)
+                _HEADLESS_SHELL_CONTEXTS.add(context)
+        except Exception:
+            self.broken = True
+            _remove_profile_dir(profile_dir)
+            raise
+        context.on("close", lambda _ctx: _remove_profile_dir(profile_dir))
+        self._contexts.add(context)
+        return context
+
+    def close(self) -> None:
+        for context in list(self._contexts):
+            try:
+                context.close()
+            except Exception:
+                pass
+
+
 def _browser_full_version(browser: Any) -> str:
     version = getattr(browser, "version", None)
     if isinstance(version, str) and re.match(r"\d+\.", version):
@@ -181,7 +351,7 @@ def apply_client_hints(context: Any, page: Any, browser: Any, locale: str = STEA
     halaman via CDP, sebelum goto. Chromium penuh sudah bersih dan dibiarkan native: override
     di sana mengubah urutan brand GREASE dan membuat navigator.languages halaman != Worker.
     """
-    if browser not in _HEADLESS_SHELL_BROWSERS:
+    if browser not in _HEADLESS_SHELL_BROWSERS and context not in _HEADLESS_SHELL_CONTEXTS:
         return
     try:
         cdp = context.new_cdp_session(page)

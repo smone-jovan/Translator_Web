@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from unittest.mock import MagicMock
 
@@ -376,7 +377,7 @@ def test_native_fetch_uses_consistent_fingerprint_and_google_referer(monkeypatch
     browser = MagicMock()
     browser.version = "148.0.7778.96"
     browser.new_context.return_value = context
-    monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
+    monkeypatch.setattr(sb, "_get_thread_launcher", lambda: browser)
     monkeypatch.setattr(sb, "get_egress_proxy", lambda: proxy)
 
     sb.StealthyNovelAdapter()._fetch_playwright_sync("https://public.example/x", disable_resources=False)
@@ -466,3 +467,196 @@ def test_real_browser_fingerprint_matches_headful_chromium():
     assert not [b for b in result["brands"] if "Headless" in b]
     assert "Headless" not in result["ua"]
     assert result["languages"] == result["workerLanguages"]
+
+
+# --- Profil persisten (launch_persistent_context) ------------------------------
+
+def test_driven_chromium_version_reads_engine_browsers_json(tmp_path):
+    pkg = tmp_path / "driver" / "package"
+    pkg.mkdir(parents=True)
+    (pkg / "browsers.json").write_text(
+        json.dumps({"browsers": [{"name": "firefox", "browserVersion": "140.0"},
+                                 {"name": "chromium", "browserVersion": "148.0.7778.96"}]}),
+        encoding="utf-8",
+    )
+    assert bs.read_driven_chromium_version(tmp_path) == "148.0.7778.96"
+    assert bs.read_driven_chromium_version(tmp_path / "missing") is None
+
+
+def _fake_persistent_pw(launch_side_effect=None):
+    pw = MagicMock()
+    if launch_side_effect is not None:
+        pw.chromium.launch_persistent_context.side_effect = launch_side_effect
+    return pw
+
+
+def _profile_close_handlers(ctx):
+    return [c.args[1] for c in ctx.on.call_args_list if c.args and c.args[0] == "close"]
+
+
+def test_launcher_opens_each_context_as_its_own_persistent_profile(monkeypatch):
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    pw = _fake_persistent_pw()
+    launcher = bs.PersistentProfileLauncher(pw)
+    assert launcher.version == "148.0.7778.96"
+
+    ctx = launcher.new_context(user_agent="UA", proxy={"server": "http://127.0.0.1:9"})
+
+    kwargs = pw.chromium.launch_persistent_context.call_args.kwargs
+    profile_dir = kwargs["user_data_dir"]
+    assert ctx is pw.chromium.launch_persistent_context.return_value
+    assert os.path.isdir(profile_dir) and os.path.basename(profile_dir).startswith(bs.PROFILE_DIR_PREFIX)
+    assert kwargs["channel"] == bs.STEALTH_CHANNEL and kwargs["headless"] is True
+    assert kwargs["args"] == bs.build_launch_args()
+    assert kwargs["user_agent"] == "UA" and kwargs["proxy"] == {"server": "http://127.0.0.1:9"}
+
+    second = launcher.new_context()
+    assert pw.chromium.launch_persistent_context.call_args.kwargs["user_data_dir"] != profile_dir
+    assert second is not None
+
+    for handler in _profile_close_handlers(ctx):
+        handler(ctx)
+    assert not os.path.exists(profile_dir)  # profil (termasuk cookie ghost) tidak tertinggal di disk
+
+
+def test_launcher_removes_profile_dir_when_launch_fails(monkeypatch):
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    seen = []
+
+    def boom(**kwargs):
+        seen.append(kwargs["user_data_dir"])
+        raise RuntimeError("tidak bisa launch")
+
+    launcher = bs.PersistentProfileLauncher(_fake_persistent_pw(boom))
+    with pytest.raises(RuntimeError):
+        launcher.new_context()
+    assert seen and all(not os.path.exists(d) for d in seen)
+
+
+def test_launcher_falls_back_to_headless_shell_and_keeps_client_hints_override(monkeypatch):
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    shell_ctx = MagicMock()
+    calls = []
+
+    def launch(**kwargs):
+        calls.append(kwargs)
+        if "channel" in kwargs:
+            raise RuntimeError("chromium penuh tidak terpasang")
+        return shell_ctx
+
+    launcher = bs.PersistentProfileLauncher(_fake_persistent_pw(launch))
+    assert launcher.new_context() is shell_ctx
+    assert calls[0]["user_data_dir"] == calls[1]["user_data_dir"]
+
+    cdp = MagicMock()
+    shell_ctx.new_cdp_session.return_value = cdp
+    bs.apply_client_hints(shell_ctx, MagicMock(), launcher)
+    assert cdp.send.call_args.args[0] == "Emulation.setUserAgentOverride"
+
+
+def test_full_chromium_persistent_context_gets_no_client_hints_override(monkeypatch):
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    pw = _fake_persistent_pw()
+    launcher = bs.PersistentProfileLauncher(pw)
+    ctx = launcher.new_context()
+    bs.apply_client_hints(ctx, MagicMock(), launcher)
+    ctx.new_cdp_session.assert_not_called()
+
+
+def _run_in_thread(fn):
+    import threading
+
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("value", fn()))
+    t.start()
+    t.join()
+    return out["value"]
+
+
+def _forget_registry(nv, pw):
+    with nv._browsers_lock:
+        nv._all_active_browsers[:] = [e for e in nv._all_active_browsers if e[0] is not pw]
+
+
+def test_tier2_browser_and_tier3_launcher_share_one_playwright_per_thread(monkeypatch):
+    """Sync API menolak instance Playwright kedua di thread yang sama ('inside the asyncio loop')."""
+    import patchright.sync_api as patchright_api
+    import services.scrapers.novalpie as nv
+
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    pw, _, _ = _fake_pw()
+    starts = []
+    monkeypatch.setattr(patchright_api, "sync_playwright", lambda: MagicMock(start=lambda: starts.append(1) or pw))
+
+    def both():
+        return nv._get_thread_browser(), nv._get_thread_profile_launcher(), nv._get_thread_profile_launcher()
+
+    try:
+        _, launcher, again = _run_in_thread(both)
+    finally:
+        _forget_registry(nv, pw)
+    assert len(starts) == 1
+    assert launcher is again and launcher._pw is pw
+
+
+def test_broken_profile_launcher_is_replaced_on_next_call(monkeypatch):
+    import patchright.sync_api as patchright_api
+    import services.scrapers.novalpie as nv
+
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    pws = []
+
+    def start():
+        pw = MagicMock()
+        pw.chromium.launch_persistent_context.side_effect = RuntimeError("Connection closed")
+        pws.append(pw)
+        return pw
+
+    monkeypatch.setattr(patchright_api, "sync_playwright", lambda: MagicMock(start=start))
+
+    def scenario():
+        first = nv._get_thread_profile_launcher()
+        with pytest.raises(RuntimeError):
+            first.new_context()
+        return first, nv._get_thread_profile_launcher()
+
+    try:
+        first, second = _run_in_thread(scenario)
+    finally:
+        for pw in pws:
+            _forget_registry(nv, pw)
+    assert first.broken is True
+    assert second is not first and second._pw is not first._pw
+    pws[0].stop.assert_called()  # driver lama dimatikan sebelum diganti
+
+
+def test_stale_profile_dirs_are_swept_but_fresh_and_foreign_dirs_kept(tmp_path):
+    now = 10_000_000.0
+    old = tmp_path / (bs.PROFILE_DIR_PREFIX + "old")
+    fresh = tmp_path / (bs.PROFILE_DIR_PREFIX + "fresh")
+    foreign = tmp_path / "someone-else"
+    for d in (old, fresh, foreign):
+        (d / "Default").mkdir(parents=True)
+    os.utime(old, (now - bs.STALE_PROFILE_AGE_S - 60, now - bs.STALE_PROFILE_AGE_S - 60))
+    os.utime(fresh, (now - 60, now - 60))
+    os.utime(foreign, (now - bs.STALE_PROFILE_AGE_S - 60, now - bs.STALE_PROFILE_AGE_S - 60))
+
+    bs.sweep_stale_profile_dirs(tmp_path, now=now)
+
+    assert not old.exists()
+    assert fresh.exists() and foreign.exists()
+
+
+def test_locked_profile_dir_is_retried_on_next_launch(monkeypatch, tmp_path):
+    monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
+    locked = tmp_path / (bs.PROFILE_DIR_PREFIX + "locked")
+    locked.mkdir()
+    real_rmtree = bs.shutil.rmtree
+    monkeypatch.setattr(bs.shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(PermissionError("locked")))
+    monkeypatch.setattr(bs.time, "sleep", lambda s: None)
+    bs._remove_profile_dir(str(locked))
+    assert locked.exists()
+
+    monkeypatch.setattr(bs.shutil, "rmtree", real_rmtree)
+    bs.PersistentProfileLauncher(_fake_persistent_pw()).new_context()
+    assert not locked.exists()

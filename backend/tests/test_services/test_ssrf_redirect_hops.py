@@ -7,6 +7,7 @@ request dikirim (ADR-126).
 """
 
 import http.server
+import json
 import os
 import socket
 import socketserver
@@ -234,7 +235,7 @@ def _mock_browser(monkeypatch, *, cdp_send=None, goto=None, proxy=None):
     context.new_cdp_session.return_value = cdp
     browser = MagicMock()
     browser.new_context.return_value = context
-    monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
+    monkeypatch.setattr(sb, "_get_thread_launcher", lambda: browser)
     proxy = proxy or _FakeProxy()
     monkeypatch.setattr(sb, "get_egress_proxy", lambda: proxy)
     return sb, browser, context, page, cdp, proxy
@@ -314,7 +315,7 @@ def _cache_browser(monkeypatch, proxy=None):
 
     browser = MagicMock()
     browser.new_context.side_effect = make_context
-    monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
+    monkeypatch.setattr(sb, "_get_thread_launcher", lambda: browser)
     monkeypatch.setattr(sb, "get_egress_proxy", lambda: proxy)
     return sb, browser, proxy, created, behavior
 
@@ -348,6 +349,26 @@ def test_native_fetch_closes_leftover_popups_after_each_fetch(monkeypatch):
 
     _fetch(sb, "https://novel.example/ch2")
     popup.close.assert_called()
+
+
+def test_native_fetch_keeps_profile_startup_tab_so_session_cookies_survive(monkeypatch):
+    """Profil persisten tanpa tab = jendela terakhir ditutup = session cookie hilang."""
+    sb, browser, _, created, _ = _cache_browser(monkeypatch)
+    make_context = browser.new_context.side_effect
+
+    def with_startup_tab(**kwargs):
+        context = make_context(**kwargs)
+        startup = MagicMock()
+        context.pages.append(startup)
+        return context
+
+    browser.new_context.side_effect = with_startup_tab
+    _fetch(sb)
+    _fetch(sb, "https://novel.example/ch2")
+
+    startup, *fetch_pages = created[0].pages
+    startup.close.assert_not_called()
+    assert fetch_pages and all(page.close.called for page in fetch_pages)
 
 
 def test_native_fetch_never_shares_context_across_workspaces(monkeypatch):
@@ -418,7 +439,7 @@ def test_cached_contexts_dropped_when_thread_browser_is_recycled(monkeypatch):
 
     second_browser = MagicMock()
     second_browser.new_context.side_effect = first_browser.new_context.side_effect
-    monkeypatch.setattr(sb, "_get_thread_browser", lambda: second_browser)
+    monkeypatch.setattr(sb, "_get_thread_launcher", lambda: second_browser)
     _fetch(sb)
 
     assert second_browser.new_context.call_count == 1
@@ -796,6 +817,8 @@ class _Server:
                     self._html("<html><body><p>challenge lolos</p></body></html>", ["cf_clearance=solved; Path=/"])
                 elif self.path == "/echo-cookie":
                     self._html(f"<html><body><p>cookie=[{self.headers.get('Cookie') or ''}]</p></body></html>")
+                elif self.path == "/fingerprint":
+                    self._html(_FINGERPRINT_PAGE)
                 elif self.path == "/frame-nest":
                     self._html(f'<html><body><iframe src="http://other-site.test:{port}/frame"></iframe></body></html>')
                 elif self.path == "/frame":
@@ -832,6 +855,22 @@ class _Server:
     def close(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+# Diukur dari main world (sisi yang dilihat skrip situs), hasilnya ditulis ke DOM.
+_FINGERPRINT_PAGE = """<html><body><pre id="fp"></pre><script>
+(async () => {
+  const est = await navigator.storage.estimate();
+  const workerLangs = await new Promise(res => {
+    const w = new Worker(URL.createObjectURL(new Blob(['postMessage(navigator.languages)'])));
+    w.onmessage = e => res(e.data);
+  });
+  document.getElementById("fp").textContent = JSON.stringify({
+    quota: est.quota, languages: navigator.languages, workerLanguages: workerLangs,
+    swRegister: navigator.serviceWorker ? String(navigator.serviceWorker.register) : "n/a",
+  });
+})();
+</script></body></html>"""
 
 
 _VECTORS = [
@@ -884,27 +923,23 @@ def real_browser(monkeypatch, egress_proxy):
         pw = sync_playwright().start()
     except Exception as exc:  # pragma: no cover - lingkungan tanpa Playwright
         pytest.skip(f"Playwright tidak tersedia: {exc}")
-    from services.scrapers.browser_stealth import build_launch_args, launch_stealth_browser
+    from services.scrapers.browser_stealth import PersistentProfileLauncher
 
+    # Sama dengan produksi: tiap (workspace, domain) = profil persisten Chromium penuh sendiri.
+    # PW_CHROMIUM_EXECUTABLE: opsional, untuk lingkungan yang versi Chromium-nya tidak
+    # cocok dengan paket playwright terpasang.
+    launcher = PersistentProfileLauncher(pw, executable_path=os.environ.get("PW_CHROMIUM_EXECUTABLE"))
     try:
-        # PW_CHROMIUM_EXECUTABLE: opsional, untuk lingkungan yang versi Chromium-nya tidak
-        # cocok dengan paket playwright terpasang.
-        exe = os.environ.get("PW_CHROMIUM_EXECUTABLE")
-        if exe:
-            browser = pw.chromium.launch(headless=True, executable_path=exe, args=build_launch_args())
-        else:
-            # Sama dengan browser thread-local produksi: Chromium penuh, site isolation aktif.
-            browser = launch_stealth_browser(pw)
+        launcher.new_context().close()
     except Exception as exc:  # pragma: no cover - Chromium belum terpasang
         pw.stop()
         pytest.skip(f"Chromium tidak bisa dijalankan: {exc}")
     import services.scrapers.stealth_base as sb
 
-    monkeypatch.setattr(sb, "_get_thread_browser", lambda: browser)
+    monkeypatch.setattr(sb, "_get_thread_launcher", lambda: launcher)
     monkeypatch.setattr(sb, "validate_external_url", _fake_validator)
     yield sb
     sb.close_thread_contexts()
-    browser.close()
     pw.stop()
 
 
@@ -952,6 +987,25 @@ def test_real_browser_keeps_cookies_per_workspace_domain_but_never_across_worksp
         assert "challenge lolos" in fetch("main", "/set-cookie").html
         assert "cookie=[cf_clearance=solved]" in fetch("main", "/echo-cookie").html
         assert "cookie=[]" in fetch("ghost", "/echo-cookie").html
+    finally:
+        server.close()
+
+
+def test_real_browser_profile_looks_like_regular_chrome_not_incognito(real_browser):
+    """Profil persisten: kuota storage normal, languages = Accept-Language, tanpa patch service worker."""
+    server = _Server()
+    try:
+        page = real_browser.StealthyNovelAdapter(workspace="main")._fetch_playwright_sync(
+            f"http://127.0.0.1:{server.port}/fingerprint",
+            solve_cloudflare=False,
+            disable_resources=False,
+            wait_selector="#fp:not(:empty)",
+            timeout_ms=15000,
+        )
+        fp = json.loads(page.css("#fp")[0].text)
+        assert fp["quota"] > 6e9  # context incognito ~3-4 GB, profil biasa jauh lebih besar
+        assert fp["languages"] == ["zh-CN", "zh"]
+        assert fp["workerLanguages"] == fp["languages"]
     finally:
         server.close()
 

@@ -20,6 +20,7 @@ from services.scrapers.browser_stealth import (  # noqa: F401
     is_cloudflare_challenge as _is_cloudflare_challenge,
     is_patchright_object,
     new_cloudflare_state,
+    PersistentProfileLauncher,
     try_solve_cloudflare_turnstile as _try_solve_cloudflare_turnstile,
 )
 
@@ -136,37 +137,7 @@ def get_novalpie_auth_config(workspace: str = None) -> Tuple[bool, str, str, Lis
     return False, "", "", []
 
 
-def _get_thread_browser():
-    """Returns a reusable thread-local Chromium browser instance to avoid launching/killing Chromium processes repeatedly."""
-    now = time.time()
-    if hasattr(_pw_thread_local, "browser") and _pw_thread_local.browser is not None:
-        try:
-            if _pw_thread_local.browser.is_connected():
-                # Recycle browser if idle for more than 5 minutes
-                if now - getattr(_pw_thread_local, "last_used", now) < 300:
-                    _pw_thread_local.last_used = now
-                    return _pw_thread_local.browser
-        except Exception:
-            pass
-        # Clean up stale or disconnected browser
-        old_browser = getattr(_pw_thread_local, "browser", None)
-        old_pw = getattr(_pw_thread_local, "pw", None)
-        try:
-            if old_browser:
-                old_browser.close()
-        except Exception:
-            pass
-        try:
-            if old_pw:
-                old_pw.stop()
-        except Exception:
-            pass
-        with _browsers_lock:
-            if (old_pw, old_browser) in _all_active_browsers:
-                _all_active_browsers.remove((old_pw, old_browser))
-        _pw_thread_local.browser = None
-        _pw_thread_local.pw = None
-
+def _start_sync_playwright() -> Tuple[Any, str]:
     import sys
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -179,11 +150,90 @@ def _get_thread_browser():
     except ImportError:
         from playwright.sync_api import sync_playwright
         engine_label = "Playwright"
+    return sync_playwright().start(), engine_label
 
+
+def _get_thread_playwright() -> Tuple[Any, str]:
+    """Satu Playwright per thread: Sync API menolak instance kedua di thread yang sama."""
+    pw = getattr(_pw_thread_local, "pw", None)
+    if pw is None:
+        pw, engine_label = _start_sync_playwright()
+        _pw_thread_local.pw = pw
+        _pw_thread_local.engine_label = engine_label
+    return pw, _pw_thread_local.engine_label
+
+
+def _forget_registered(pw: Any, target: Any = None) -> None:
+    with _browsers_lock:
+        _all_active_browsers[:] = [
+            (p, t) for p, t in _all_active_browsers if p is not pw or (target is not None and t is not target)
+        ]
+
+
+def _reset_thread_playwright() -> None:
+    """Driver dianggap mati: tutup browser Tier 2, launcher Tier 3, dan Playwright milik thread ini."""
+    pw = getattr(_pw_thread_local, "pw", None)
+    for attr in ("profile_launcher", "browser"):
+        target = getattr(_pw_thread_local, attr, None)
+        if target is not None:
+            try:
+                target.close()
+            except Exception:
+                pass
+        setattr(_pw_thread_local, attr, None)
+    if pw is not None:
+        try:
+            pw.stop()
+        except Exception:
+            pass
+        _forget_registered(pw)
+    _pw_thread_local.pw = None
+
+
+def _get_thread_profile_launcher() -> PersistentProfileLauncher:
+    """Launcher profil persisten thread-local (Tier 3, stealth_base), memakai Playwright thread ini."""
+    launcher = getattr(_pw_thread_local, "profile_launcher", None)
+    if launcher is not None and launcher.broken:
+        _reset_thread_playwright()
+        launcher = None
+    if launcher is not None:
+        return launcher
+    pw, engine_label = _get_thread_playwright()
+    print(f"🚀 [{engine_label}] Starting persistent-profile launcher for worker thread...")
+    launcher = PersistentProfileLauncher(pw)
+    _pw_thread_local.profile_launcher = launcher
+    with _browsers_lock:
+        _all_active_browsers.append((pw, launcher))
+    return launcher
+
+
+def _get_thread_browser():
+    """Returns a reusable thread-local Chromium browser instance to avoid launching/killing Chromium processes repeatedly."""
+    now = time.time()
+    browser = getattr(_pw_thread_local, "browser", None)
+    if browser is not None:
+        try:
+            connected = browser.is_connected()
+        except Exception:
+            connected = False
+        # Recycle browser if idle for more than 5 minutes
+        if connected and now - getattr(_pw_thread_local, "last_used", now) < 300:
+            _pw_thread_local.last_used = now
+            return browser
+        if connected:
+            # Idle: cukup ganti browser; Playwright tetap hidup untuk launcher Tier 3.
+            try:
+                browser.close()
+            except Exception:
+                pass
+            _forget_registered(_pw_thread_local.pw, browser)
+            _pw_thread_local.browser = None
+        else:
+            _reset_thread_playwright()
+
+    pw, engine_label = _get_thread_playwright()
     print(f"🚀 [{engine_label}] Launching reusable Chromium browser instance for worker thread...")
-    pw = sync_playwright().start()
     browser = launch_stealth_browser(pw)
-    _pw_thread_local.pw = pw
     _pw_thread_local.browser = browser
     _pw_thread_local.last_used = now
     with _browsers_lock:

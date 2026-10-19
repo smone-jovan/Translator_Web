@@ -20,7 +20,7 @@ from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
 from services.scrapers.adaptive_dom import AdaptivePage
 from services.scrapers.novalpie import (
     get_scraper_concurrency,
-    _get_thread_browser,
+    _get_thread_profile_launcher as _get_thread_launcher,
     _inject_scrapling_stealth_scripts,
     _install_resource_shield,
 )
@@ -73,6 +73,9 @@ class _CachedContext:
     # Konfigurasi proxy per-context tidak berubah: cukup dibuktikan sekali. Fetch berikutnya
     # bisa memakai ulang tunnel CONNECT lama sehingga tidak menambah hitungan koneksi proxy.
     proxy_verified: bool = False
+    # Tab bawaan profil persisten. Tidak pernah ditutup: profil tanpa tab = jendela terakhir
+    # ditutup, dan Chromium membuang session cookie seperti saat browser biasa ditutup.
+    startup_pages: Tuple[Any, ...] = ()
 
 
 def _context_cache_key(workspace: Optional[str], url: str) -> Tuple[str, str]:
@@ -110,7 +113,7 @@ def _acquire_context(browser: Any, key: Tuple[str, str], proxy_url: str) -> _Cac
     now = _now()
     entries = _thread_contexts()
     for cached_key, cached in list(entries.items()):
-        # Browser di-recycle (idle/putus) = context lamanya ikut mati bersama browser itu.
+        # Launcher/browser diganti = context lamanya ikut mati bersamanya.
         if (
             cached.browser is not browser
             or now - cached.last_used > CONTEXT_IDLE_TTL_S
@@ -135,7 +138,13 @@ def _acquire_context(browser: Any, key: Tuple[str, str], proxy_url: str) -> _Cac
         except Exception:
             _close_quietly(context)
             raise
-        entry = entries[key] = _CachedContext(context, browser, proxy_url, created=now, last_used=now)
+        try:
+            startup_pages = tuple(context.pages)
+        except Exception:
+            startup_pages = ()
+        entry = entries[key] = _CachedContext(
+            context, browser, proxy_url, created=now, last_used=now, startup_pages=startup_pages
+        )
         while len(entries) > MAX_CACHED_CONTEXTS:
             _evict_context(next(iter(entries)))
     entries.move_to_end(key)
@@ -144,13 +153,14 @@ def _acquire_context(browser: Any, key: Tuple[str, str], proxy_url: str) -> _Cac
 
 
 def _release_context(key: Tuple[str, str], entry: _CachedContext, keep: bool) -> None:
-    # Halaman (termasuk popup sisa) selalu ditutup; context hanya disimpan bila fetch sukses.
+    # Halaman fetch (termasuk popup sisa) selalu ditutup; context hanya disimpan bila fetch sukses.
     try:
         pages = list(entry.context.pages)
     except Exception:
         pages = []
     for page in pages:
-        _close_quietly(page)
+        if not any(page is startup for startup in entry.startup_pages):
+            _close_quietly(page)
     if not keep and _thread_contexts().get(key) is entry:
         _evict_context(key)
 
@@ -336,7 +346,8 @@ class StealthyNovelAdapter(BaseScraperAdapter):
         except ImportError:
             has_stealth = False
 
-        browser = _get_thread_browser()
+        # Tiap (workspace, domain) = profil persisten sendiri, bukan context incognito.
+        browser = _get_thread_launcher()
         egress_proxy = get_egress_proxy()
         cache_key = _context_cache_key(self.workspace, url)
         entry = _acquire_context(browser, cache_key, egress_proxy.server_url)
