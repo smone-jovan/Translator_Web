@@ -13,9 +13,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 from bs4 import BeautifulSoup, Tag
 
+from database import normalize_workspace
+
 _CACHE_LOCK = threading.Lock()
 _SIGNATURE_MEMORY_CACHE: Dict[str, Dict[str, Any]] = {}
-_DEFAULT_STORE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "adaptive_selectors.json"
+_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+# main keeps the legacy file; ghost learns into its own (git-ignored) file so no ghost domain
+# ever lands in the main store (ghost isolation invariant).
+_DEFAULT_STORE_PATH = _DATA_DIR / "adaptive_selectors.json"
+_GHOST_STORE_PATH = _DATA_DIR / "adaptive_selectors.ghost.json"
 
 _BOILERPLATE_TAGS = {
     "script", "style", "nav", "footer", "header", "aside",
@@ -40,6 +46,21 @@ def _extract_domain(url_or_domain: Optional[str]) -> str:
         except Exception:
             return raw
     return raw.removeprefix("www.") or "default"
+
+
+def _resolve_store_path(workspace: Optional[str], store_path: Optional[Path]) -> Path:
+    """An explicit store_path wins; otherwise the workspace picks its own file."""
+    if store_path is not None:
+        return store_path
+    return _GHOST_STORE_PATH if normalize_workspace(workspace) == "ghost" else _DEFAULT_STORE_PATH
+
+
+def _disk_key(domain: str, key: str) -> str:
+    return f"{_extract_domain(domain)}::{key}"
+
+
+def _memory_key(workspace: Optional[str], domain: str, key: str) -> str:
+    return f"{normalize_workspace(workspace)}::{_disk_key(domain, key)}"
 
 
 def _normalize_tokens(values: Iterable[str]) -> List[str]:
@@ -126,13 +147,20 @@ class AdaptiveDOM:
         }
 
     @staticmethod
-    def save_signature(domain: str, key: str, signature: Dict[str, Any], store_path: Optional[Path] = None) -> None:
+    def save_signature(
+        domain: str,
+        key: str,
+        signature: Dict[str, Any],
+        store_path: Optional[Path] = None,
+        *,
+        workspace: Optional[str] = None,
+    ) -> None:
         if not signature:
             return
-        cache_key = f"{_extract_domain(domain)}::{key}"
-        target_path = store_path or _DEFAULT_STORE_PATH
+        cache_key = _disk_key(domain, key)
+        target_path = _resolve_store_path(workspace, store_path)
         with _CACHE_LOCK:
-            _SIGNATURE_MEMORY_CACHE[cache_key] = signature
+            _SIGNATURE_MEMORY_CACHE[_memory_key(workspace, domain, key)] = signature
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 disk_data: Dict[str, Any] = {}
@@ -149,17 +177,24 @@ class AdaptiveDOM:
                 pass
 
     @staticmethod
-    def load_signature(domain: str, key: str, store_path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-        cache_key = f"{_extract_domain(domain)}::{key}"
-        target_path = store_path or _DEFAULT_STORE_PATH
+    def load_signature(
+        domain: str,
+        key: str,
+        store_path: Optional[Path] = None,
+        *,
+        workspace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        cache_key = _disk_key(domain, key)
+        memory_key = _memory_key(workspace, domain, key)
+        target_path = _resolve_store_path(workspace, store_path)
         with _CACHE_LOCK:
-            if cache_key in _SIGNATURE_MEMORY_CACHE:
-                return _SIGNATURE_MEMORY_CACHE[cache_key]
+            if memory_key in _SIGNATURE_MEMORY_CACHE:
+                return _SIGNATURE_MEMORY_CACHE[memory_key]
             if target_path.exists():
                 try:
                     disk_data = json.loads(target_path.read_text(encoding="utf-8"))
                     if isinstance(disk_data, dict) and cache_key in disk_data:
-                        _SIGNATURE_MEMORY_CACHE[cache_key] = disk_data[cache_key]
+                        _SIGNATURE_MEMORY_CACHE[memory_key] = disk_data[cache_key]
                         return disk_data[cache_key]
                 except Exception:
                     pass
@@ -314,6 +349,7 @@ class AdaptiveDOM:
         auto_save: bool = True,
         min_text_len: int = 0,
         store_path: Optional[Path] = None,
+        workspace: Optional[str] = None,
     ) -> Optional[Tag]:
         if not soup:
             return None
@@ -330,13 +366,15 @@ class AdaptiveDOM:
                 if min_text_len > 0 and len(matched.get_text(strip=True)) < min_text_len:
                     continue
                 if auto_save:
-                    cls.save_signature(domain, key, cls.compute_signature(matched), store_path=store_path)
+                    cls.save_signature(
+                        domain, key, cls.compute_signature(matched), store_path=store_path, workspace=workspace
+                    )
                 return matched
 
         if not adaptive:
             return None
 
-        saved_sig = cls.load_signature(domain, key, store_path=store_path)
+        saved_sig = cls.load_signature(domain, key, store_path=store_path, workspace=workspace)
         if saved_sig:
             relocated = cls.find_similar_element(soup, saved_sig, role=role)
             if isinstance(relocated, Tag) and (min_text_len <= 0 or len(relocated.get_text(strip=True)) >= min_text_len):
@@ -346,7 +384,9 @@ class AdaptiveDOM:
             best_container = cls.find_best_content_container(soup, min_chars=max(40, min_text_len))
             if isinstance(best_container, Tag):
                 if auto_save:
-                    cls.save_signature(domain, key, cls.compute_signature(best_container), store_path=store_path)
+                    cls.save_signature(
+                        domain, key, cls.compute_signature(best_container), store_path=store_path, workspace=workspace
+                    )
                 return best_container
         elif role == "title":
             return cls.find_best_title_element(soup)
@@ -356,9 +396,10 @@ class AdaptiveDOM:
 class AdaptiveNode:
     """Scrapling-compatible DOM node wrapper around BeautifulSoup Tag."""
 
-    def __init__(self, tag: Tag, domain: str = "default"):
+    def __init__(self, tag: Tag, domain: str = "default", workspace: Optional[str] = None):
         self._tag = tag
         self._domain = domain
+        self._workspace = workspace
 
     @property
     def text(self) -> str:
@@ -380,26 +421,37 @@ class AdaptiveNode:
             matches = []
         if matches:
             if auto_save:
-                AdaptiveDOM.save_signature(self._domain, selector, AdaptiveDOM.compute_signature(matches[0]))
-            return [AdaptiveNode(m, domain=self._domain) for m in matches if isinstance(m, Tag)]
+                AdaptiveDOM.save_signature(
+                    self._domain, selector, AdaptiveDOM.compute_signature(matches[0]), workspace=self._workspace
+                )
+            return [AdaptiveNode(m, domain=self._domain, workspace=self._workspace) for m in matches if isinstance(m, Tag)]
         if adaptive:
             role = "title" if any(k in selector.lower() for k in ("h1", "h2", "title")) else "content"
             relocated = AdaptiveDOM.select_one(
-                self._tag, [selector], domain=self._domain, key=selector, role=role, adaptive=True, auto_save=auto_save
+                self._tag, [selector], domain=self._domain, key=selector, role=role, adaptive=True,
+                auto_save=auto_save, workspace=self._workspace,
             )
             if relocated is not None:
-                return [AdaptiveNode(relocated, domain=self._domain)]
+                return [AdaptiveNode(relocated, domain=self._domain, workspace=self._workspace)]
         return []
 
 
 class AdaptivePage:
     """Scrapling-compatible Page object for native Adaptive Playwright fallback."""
 
-    def __init__(self, html: str, url: str = "", domain: Optional[str] = None, status: int = 200):
+    def __init__(
+        self,
+        html: str,
+        url: str = "",
+        domain: Optional[str] = None,
+        status: int = 200,
+        workspace: Optional[str] = None,
+    ):
         self.html = html or ""
         self.url = url
         self.status = status
         self.domain = _extract_domain(domain or url)
+        self.workspace = workspace
         self.soup = BeautifulSoup(self.html, "html.parser")
 
     @property
@@ -413,13 +465,16 @@ class AdaptivePage:
             matches = []
         if matches:
             if auto_save:
-                AdaptiveDOM.save_signature(self.domain, selector, AdaptiveDOM.compute_signature(matches[0]))
-            return [AdaptiveNode(m, domain=self.domain) for m in matches if isinstance(m, Tag)]
+                AdaptiveDOM.save_signature(
+                    self.domain, selector, AdaptiveDOM.compute_signature(matches[0]), workspace=self.workspace
+                )
+            return [AdaptiveNode(m, domain=self.domain, workspace=self.workspace) for m in matches if isinstance(m, Tag)]
         if adaptive:
             role = "title" if any(k in selector.lower() for k in ("h1", "h2", "title")) else "content"
             relocated = AdaptiveDOM.select_one(
-                self.soup, [selector], domain=self.domain, key=selector, role=role, adaptive=True, auto_save=auto_save
+                self.soup, [selector], domain=self.domain, key=selector, role=role, adaptive=True,
+                auto_save=auto_save, workspace=self.workspace,
             )
             if relocated is not None:
-                return [AdaptiveNode(relocated, domain=self.domain)]
+                return [AdaptiveNode(relocated, domain=self.domain, workspace=self.workspace)]
         return []

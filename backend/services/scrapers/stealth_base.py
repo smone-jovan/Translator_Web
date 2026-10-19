@@ -426,6 +426,7 @@ class StealthyNovelAdapter(BaseScraperAdapter):
                 url=final_url,
                 domain=self.adaptive_domain or final_url,
                 status=status_code,
+                workspace=self.workspace,
             )
             keep_context = True
             return result
@@ -530,11 +531,12 @@ class StealthyNovelAdapter(BaseScraperAdapter):
         adaptive: bool = True,
         auto_save: bool = False,
         domain: str = "default",
+        workspace: Optional[str] = None,
     ) -> Tuple[str, str]:
         if isinstance(page, str):
-            page = AdaptivePage(html=page, domain=domain)
+            page = AdaptivePage(html=page, domain=domain, workspace=workspace)
         elif isinstance(page, BeautifulSoup):
-            page = AdaptivePage(html=str(page), domain=domain)
+            page = AdaptivePage(html=str(page), domain=domain, workspace=workspace)
 
         title_nodes = page.css(title_selector, adaptive=adaptive, auto_save=auto_save)
         title = title_nodes[0].text.strip() if title_nodes else "Untitled Chapter"

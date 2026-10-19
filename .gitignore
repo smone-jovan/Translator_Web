@@ -24,6 +24,9 @@ dist-ssr
 *.sw?
 
 # Database & Cache
+# Ghost workspace's learned AdaptiveDOM selectors (private; main keeps adaptive_selectors.json)
+backend/data/adaptive_selectors.ghost.json
+backend/data/adaptive_selectors.ghost.tmp
 *.db
 *.db-shm
 *.db-wal

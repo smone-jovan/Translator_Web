@@ -136,9 +136,13 @@ async def test_concurrent_reads_of_same_chapter_share_one_scrape(factories, open
 
 
 @pytest.mark.asyncio
-async def test_failed_scrape_is_shared_then_cleared_so_next_read_retries(factories, opened_sessions):
+async def test_failed_scrape_is_shared_then_cleared_so_next_read_retries(factories, opened_sessions, monkeypatch):
+    import routers.threads as threads_router
+
     url = _seed_unscraped_chapter(factories["main"])
     release, calls = asyncio.Event(), []
+    now = [1_000.0]
+    monkeypatch.setattr(threads_router, "_cooldown_clock", lambda: now[0])
 
     with patch("services.scrapers.novalpie.NovalpieAdapter", _fake_adapter(release, calls, fail_first=True)):
         async with _client() as client:
@@ -153,6 +157,8 @@ async def test_failed_scrape_is_shared_then_cleared_so_next_read_retries(factori
             assert not r1.json()["content_original"]
             assert not r2.json()["content_original"]
 
+            # The in-flight entry is cleared; once the failure cooldown elapses a later read retries.
+            now[0] += threads_router.ON_DEMAND_SCRAPE_FAILURE_COOLDOWN_SECONDS + 1
             retry = await client.get(url)
 
     assert len(calls) == 2

@@ -130,3 +130,63 @@ def is_vip_chapter(
 
 def is_extraction_empty(markdown: Optional[str]) -> bool:
     return len((markdown or "").strip()) < _MIN_GENERIC_CONTENT_CHARS
+
+
+# --- link labels and navigation blocks -----------------------------------------------------
+
+_LABEL_ATTRS = ("aria-label", "title")
+_ICON_CHILD_TAGS = ("img", "i", "span", "svg")
+_WORD_CHAR_RE = re.compile(r"\w")
+
+
+def anchor_label(a: Tag) -> str:
+    """
+    Visible text of a link; for icon-only links (no letters/CJK, e.g. `<i>` or `›`) fall back to
+    the anchor's aria-label/title, then an icon child's alt/aria-label/title.
+    """
+    text = a.get_text(strip=True)
+    if _WORD_CHAR_RE.search(text):
+        return text
+    for attr in _LABEL_ATTRS:
+        value = str(a.get(attr) or "").strip()
+        if value:
+            return value
+    for child in a.find_all(_ICON_CHILD_TAGS):
+        for attr in ("alt", *_LABEL_ATTRS):
+            value = str(child.get(attr) or "").strip()
+            if value:
+                return value
+    return text
+
+
+# A block whose links make up most of its (short) text is navigation, not prose.
+_NAV_BLOCK_TAGS = ("div", "p", "ul", "ol", "li", "section", "table", "tr", "td", "dl", "dd", "center")
+_NAV_BLOCK_MAX_CHARS = 80
+_NAV_BLOCK_MIN_LINK_SHARE = 0.6
+
+
+# Link-heavy alone is not enough: short dialogue with linked names (李逍遥？) and linked paywall
+# notices look the same, so at least one link must also read like site navigation.
+_NAV_LINK_WORD_RE = re.compile(
+    r"上一[章页頁节節话話]|下一[章页頁节節话話]|目录|目錄|首页|首頁|书架|書架|书页|返回|章节列表|加入书签"
+    r"|\b(?:prev(?:ious)?|next|home|index|contents|toc|library|chapter list)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_nav_block(el: Tag) -> bool:
+    text = el.get_text(strip=True)
+    if not text or len(text) > _NAV_BLOCK_MAX_CHARS or _VIP_NOTICE_RE.match(text):
+        return False
+    anchors = el.find_all("a")
+    link_len = sum(len(a.get_text(strip=True)) for a in anchors)
+    if link_len < len(text) * _NAV_BLOCK_MIN_LINK_SHARE:
+        return False
+    return any(_NAV_LINK_WORD_RE.search(anchor_label(a)) for a in anchors)
+
+
+def remove_nav_blocks(content_el: Tag) -> None:
+    """Decompose short link-dominated blocks inside `content_el` (never `content_el` itself)."""
+    for el in content_el.find_all(_NAV_BLOCK_TAGS):
+        if not getattr(el, "decomposed", False) and _is_nav_block(el):
+            el.decompose()

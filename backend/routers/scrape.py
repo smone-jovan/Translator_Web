@@ -26,11 +26,13 @@ from services.scrapers.engine import MetadataScraperEngine
 from services.scrapers.adaptive_dom import AdaptiveDOM
 from services.scrapers.generic_cleanup import (
     VIP_PLACEHOLDER,
+    anchor_label,
     clean_title_tag_text,
     find_chapter_heading,
     find_plain_heading,
     is_extraction_empty,
     is_vip_chapter,
+    remove_nav_blocks,
     strip_watermarks,
 )
 from services.scrapers.novalpie import _is_cloudflare_challenge
@@ -112,9 +114,12 @@ def _is_page_wrapper(el, page_text_len: int) -> bool:
     return link_text_len < text_len * _WRAPPER_MAX_LINK_SHARE
 
 
-def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
+def html_to_markdown(html: str, url: str = "", workspace: Optional[str] = None) -> tuple[str, str]:
+    """Convert HTML to clean markdown-ish text. Returns (title, content).
+
+    `workspace` selects the AdaptiveDOM selector store, so ghost scrapes learn only in ghost.
+    """
     domain = urllib.parse.urlparse(url).hostname or "default" if url else "default"
-    """Convert HTML to clean markdown-ish text. Returns (title, content)."""
     soup = BeautifulSoup(html, "html.parser")
 
     # Extract title adaptively: a chapter-numbered heading beats a site-name/logo <h1>.
@@ -126,6 +131,7 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         role="title",
         adaptive=True,
         auto_save=bool(url),
+        workspace=workspace,
     )
     if adaptive_title is None:
         title = "Untitled"
@@ -179,6 +185,7 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         role="content",
         adaptive=True,
         auto_save=bool(url),
+        workspace=workspace,
         min_text_len=60,
     )
 
@@ -189,6 +196,7 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         or soup.body
         or soup
     )
+    remove_nav_blocks(content_el)
 
     # Pre-process some tags to maintain structure
     for tag in content_el.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
@@ -358,7 +366,7 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
 
     anchors = []
     for a in soup.find_all("a"):
-        text = a.get_text(strip=True)
+        text = anchor_label(a)
         if any(excluded in text.lower() for excluded in _NEXT_LINK_EXCLUDED):
             continue
         url = resolve(a.get("href"))
@@ -438,7 +446,7 @@ async def fetch_html_adaptive(
             pass
 
     if not needs_escalation and html_text and _SPA_SHELL_RE.search(html_text):
-        _, probe_md = html_to_markdown(html_text, url=final_url)
+        _, probe_md = html_to_markdown(html_text, url=final_url, workspace=workspace)
         if len(probe_md.strip()) < 50:
             needs_escalation = True
 
@@ -526,7 +534,7 @@ async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Opt
 
     try:
         html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
-        title, markdown = html_to_markdown(html_text, url=final_url)
+        title, markdown = html_to_markdown(html_text, url=final_url, workspace=ws)
     except HTTPException:
         raise
     except Exception as e:
@@ -584,7 +592,7 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
     else:
         try:
             html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
-            title, markdown = html_to_markdown(html_text, url=final_url)
+            title, markdown = html_to_markdown(html_text, url=final_url, workspace=ws)
         except HTTPException:
             raise
         except Exception as e:
@@ -924,7 +932,7 @@ async def fetch_next_chapter(
         except Exception as e:
             raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
-        parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
+        parsed_title, markdown = html_to_markdown(next_html, url=next_final_url, workspace=ws)
         if is_extraction_empty(markdown) and not is_vip_chapter(next_url, parsed_title, markdown):
             raise HTTPException(422, f"No content extracted from next chapter URL ({next_url}).")
 
@@ -1090,7 +1098,7 @@ async def crawl_next_chapters(
                             parsed_title, markdown = await sfacg.scrape_chapter_content(next_url)
                         else:
                             next_html, next_final_url = await fetch_html_adaptive(next_url, workspace=ws)
-                            parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
+                            parsed_title, markdown = html_to_markdown(next_html, url=next_final_url, workspace=ws)
 
                         # Check if successful content extracted
                         if markdown and len(markdown.strip()) >= 50:

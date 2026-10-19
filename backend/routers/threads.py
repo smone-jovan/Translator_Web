@@ -785,6 +785,41 @@ def update_style_guide(thread_id: int, payload: StyleGuideUpdate, db: Session = 
 # outcome instead of starting a second Playwright/HTTP scrape.
 _inflight_chapter_scrapes: dict[tuple[str, int], asyncio.Future] = {}
 
+# A failed on-demand scrape (empty extraction or a caught fetch error) leaves the chapter unfetched
+# so a later read can retry, but every read and N±1 warm-up would otherwise re-hit the site at once
+# (a Playwright launch per hit on Cloudflare sites). Five minutes outlasts a reading burst over the
+# same few chapters and a typical Cloudflare/rate-limit window, yet still recovers from a transient
+# outage within one session. Keyed by make_workspace_key so ghost and main never share entries.
+ON_DEMAND_SCRAPE_FAILURE_COOLDOWN_SECONDS = 300.0
+# Bound on remembered failures; past it the oldest (closest to expiry) entry is evicted. 1024 covers
+# a whole failing TOC being warmed while staying a few tens of KB.
+ON_DEMAND_SCRAPE_FAILURE_MAX_ENTRIES = 1024
+# Monotonic so wall-clock jumps cannot extend or skip a cooldown; module-level so tests can swap it
+# without patching time.monotonic (which the event loop also uses).
+_cooldown_clock = time.monotonic
+# make_workspace_key(workspace, chapter_id) -> _cooldown_clock() at failure, oldest first.
+_failed_chapter_scrapes: dict[tuple[str, int], float] = {}
+
+
+def _in_failure_cooldown(key: tuple[str, int]) -> bool:
+    failed_at = _failed_chapter_scrapes.get(key)
+    if failed_at is None:
+        return False
+    if _cooldown_clock() - failed_at < ON_DEMAND_SCRAPE_FAILURE_COOLDOWN_SECONDS:
+        return True
+    _failed_chapter_scrapes.pop(key, None)
+    return False
+
+
+def _record_on_demand_outcome(key: tuple[str, int], succeeded: bool) -> None:
+    # Pop first so a re-failure moves to the end and insertion order stays failure-time order.
+    _failed_chapter_scrapes.pop(key, None)
+    if succeeded:
+        return
+    while len(_failed_chapter_scrapes) >= ON_DEMAND_SCRAPE_FAILURE_MAX_ENTRIES:
+        del _failed_chapter_scrapes[next(iter(_failed_chapter_scrapes))]
+    _failed_chapter_scrapes[key] = _cooldown_clock()
+
 
 def _mark_outcome_retrieved(outcome: asyncio.Future) -> None:
     # With no waiters, an unread exception would be logged as "never retrieved".
@@ -794,6 +829,8 @@ def _mark_outcome_retrieved(outcome: asyncio.Future) -> None:
 
 async def _scrape_chapter_once(db: Session, chapter: Chapter, ws: str) -> None:
     key = make_workspace_key(ws, chapter.id)
+    if _in_failure_cooldown(key):
+        return
     pending = _inflight_chapter_scrapes.get(key)
     if pending is not None:
         # shield: one waiter being cancelled must not cancel the outcome for the others.
@@ -806,7 +843,8 @@ async def _scrape_chapter_once(db: Session, chapter: Chapter, ws: str) -> None:
     outcome.add_done_callback(_mark_outcome_retrieved)
     _inflight_chapter_scrapes[key] = outcome
     try:
-        await _scrape_chapter_on_demand(db, chapter, ws)
+        succeeded = await _scrape_chapter_on_demand(db, chapter, ws)
+        _record_on_demand_outcome(key, succeeded)
     except HTTPException as exc:
         outcome.set_exception(exc)
         raise
@@ -818,7 +856,8 @@ async def _scrape_chapter_once(db: Session, chapter: Chapter, ws: str) -> None:
             outcome.set_result(None)
 
 
-async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> None:
+async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> bool:
+    """Fetch and save the chapter. Returns False when nothing usable was fetched (logged)."""
     chapter_id = chapter.id
     try:
         from services.security import validate_external_url
@@ -836,13 +875,13 @@ async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> N
         else:
             from routers.scrape import fetch_html_adaptive, html_to_markdown
             html_text, final_url = await fetch_html_adaptive(chapter.source_url, workspace=ws)
-            fetched_title, fetched_markdown = html_to_markdown(html_text, url=final_url)
+            fetched_title, fetched_markdown = html_to_markdown(html_text, url=final_url, workspace=ws)
             if is_extraction_empty(fetched_markdown) and not is_vip_chapter(
                 chapter.source_url, fetched_title, fetched_markdown
             ):
                 # Leave the chapter unfetched so the next read retries instead of locking it as VIP.
                 print(f"[ERROR] No content extracted for on-demand chapter {chapter_id} from {chapter.source_url}")
-                return
+                return False
 
         from routers.scrape import is_dedicated_source
         is_vip = is_vip_chapter(
@@ -859,10 +898,12 @@ async def _scrape_chapter_on_demand(db: Session, chapter: Chapter, ws: str) -> N
 
         db.commit()
         print(f"[ON-DEMAND READ] Fetched chapter {chapter_id} content from {chapter.source_url}")
+        return True
     except HTTPException:
         raise
     except Exception as e:
         print(f"[ERROR] Failed to fetch on-demand chapter {chapter_id}: {e}")
+        return False
 
 
 @router.get("/threads/{thread_id}/chapters/{chapter_id}", response_model=ChapterContent)

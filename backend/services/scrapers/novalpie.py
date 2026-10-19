@@ -782,7 +782,9 @@ class NovalpieAdapter(BaseScraperAdapter):
                 or soup.find(attrs={"data-id": str(chapter_id)})
             )
             if target is not None:
-                AdaptiveDOM.save_signature("novalpie.cc", "chapter_content", AdaptiveDOM.compute_signature(target))
+                AdaptiveDOM.save_signature(
+                    "novalpie.cc", "chapter_content", AdaptiveDOM.compute_signature(target), workspace=self.workspace
+                )
 
         if not target:
             target = (
@@ -802,6 +804,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                     adaptive=True,
                     auto_save=True,
                     min_text_len=40,
+                    workspace=self.workspace,
                 )
                 or soup
             )
@@ -810,7 +813,9 @@ class NovalpieAdapter(BaseScraperAdapter):
         h2 = target.find(["h2", "h1"]) if hasattr(target, "find") else None
         if h2 and h2.get_text(strip=True):
             title = h2.get_text(strip=True)
-            AdaptiveDOM.save_signature("novalpie.cc", "chapter_title", AdaptiveDOM.compute_signature(h2))
+            AdaptiveDOM.save_signature(
+                "novalpie.cc", "chapter_title", AdaptiveDOM.compute_signature(h2), workspace=self.workspace
+            )
         else:
             adaptive_title_el = AdaptiveDOM.select_one(
                 soup,
@@ -820,6 +825,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                 role="title",
                 adaptive=True,
                 auto_save=True,
+                workspace=self.workspace,
             )
             if adaptive_title_el and adaptive_title_el.get_text(strip=True):
                 title = adaptive_title_el.get_text(strip=True)

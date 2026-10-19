@@ -42,14 +42,29 @@ def hermetic_dns(monkeypatch):
 @pytest.fixture(autouse=True)
 def isolated_adaptive_store(monkeypatch, tmp_path):
     """
-    AdaptiveDOM auto-saves selector signatures to backend/data/adaptive_selectors.json, a
-    git-tracked file. Point it at a per-test temp file and start from an empty memory cache so
-    tests neither dirty the working tree nor depend on each other's learned signatures.
+    AdaptiveDOM auto-saves selector signatures per workspace: main to the git-tracked
+    backend/data/adaptive_selectors.json, ghost to backend/data/adaptive_selectors.ghost.json.
+    Point both at per-test temp files and start from an empty memory cache so tests neither
+    dirty the working tree nor depend on each other's learned signatures.
     """
     from services.scrapers import adaptive_dom
 
-    monkeypatch.setattr(adaptive_dom, "_DEFAULT_STORE_PATH", tmp_path / "adaptive_selectors.json")
+    store_dir = tmp_path / "adaptive_store"
+    monkeypatch.setattr(adaptive_dom, "_DEFAULT_STORE_PATH", store_dir / "adaptive_selectors.json")
+    monkeypatch.setattr(adaptive_dom, "_GHOST_STORE_PATH", store_dir / "adaptive_selectors.ghost.json")
     monkeypatch.setattr(adaptive_dom, "_SIGNATURE_MEMORY_CACHE", {})
+
+
+@pytest.fixture(autouse=True)
+def isolated_on_demand_scrape_cooldown(monkeypatch):
+    """
+    Failed on-demand scrapes put (workspace, chapter_id) into a module-level cooldown registry.
+    In-memory test databases reuse chapter ids, so start every test from an empty registry or a
+    failure in one test would silently block the same chapter id in the next.
+    """
+    import routers.threads as threads_router
+
+    monkeypatch.setattr(threads_router, "_failed_chapter_scrapes", {})
 
 
 _REAL_CONNECT = socket.socket.connect

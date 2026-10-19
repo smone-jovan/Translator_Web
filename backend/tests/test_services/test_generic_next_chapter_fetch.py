@@ -69,9 +69,9 @@ async def test_fetch_next_uses_adaptive_fetch_with_workspace(db_session, monkeyp
     markdown_urls = []
     real_html_to_markdown = scrape_router.html_to_markdown
 
-    def spy_html_to_markdown(html, url=""):
+    def spy_html_to_markdown(html, url="", workspace=None):
         markdown_urls.append(url)
-        return real_html_to_markdown(html, url=url)
+        return real_html_to_markdown(html, url=url, workspace=workspace)
 
     monkeypatch.setattr(scrape_router, "html_to_markdown", spy_html_to_markdown)
 
