@@ -241,7 +241,7 @@ class AdaptiveDOM:
             return None
         best_el: Optional[Tag] = None
         best_score = 0.0
-        for el in soup.find_all(["article", "main", "section", "div"]):
+        for el in soup.find_all(["article", "main", "section", "div", "td", "dd"]):
             if not isinstance(el, Tag) or el.name in _BOILERPLATE_TAGS:
                 continue
             el_id = str(el.get("id", "") or "")
@@ -423,3 +423,360 @@ class AdaptivePage:
             if relocated is not None:
                 return [AdaptiveNode(relocated, domain=self.domain)]
         return []
+
+
+_TITLE_SITE_SUFFIX_RE = re.compile(
+    r"\s*(?:[-_|—–｜]\s*(?:[^-_|—–｜]{2,35}(?:小说网?|文学网?|阅读网?|书院|中文网|文庫|소설|Novel|Read|Online|Webnovel|Royal\s*Road|Scribble\s*Hub|Wattpad|Syosetu|Kakuyomu)[^-_|—–｜]*)|_最新章节.*|,最新章节.*|\(\s*全文在线阅读.*\))\s*$",
+    re.IGNORECASE,
+)
+_AUTHOR_LABEL_RE = re.compile(
+    r"(?:作\s*者|Author|저자|작가|著者|作者[:：])\s*[:：]?\s*([^\n\r|<>/\t]{1,50})",
+    re.IGNORECASE,
+)
+_STATUS_LABEL_RE = re.compile(
+    r"(?:状\s*态|Status|상태|状態)\s*[:：]?\s*(连载中?|连载|完结|完本|已完成|Ongoing|Completed|Hiatus|연재중|완결|連載中|完結)",
+    re.IGNORECASE,
+)
+
+
+def _clean_extracted_title(raw_title: Optional[str]) -> str:
+    if not raw_title:
+        return ""
+    cleaned = re.sub(r"\s+", " ", str(raw_title)).strip()
+    cleaned = _TITLE_SITE_SUFFIX_RE.sub("", cleaned).strip()
+    cleaned = re.sub(r"^【[^】]{1,12}】\s*", "", cleaned).strip()
+    return cleaned or str(raw_title).strip()
+
+
+def extract_universal_metadata(html: str, url: str = "") -> Dict[str, Optional[str]]:
+    """
+    Universal plug-and-play metadata extractor for generic novel TOC and chapter pages.
+    Extracts title, original_title, author, cover_image, synopsis, genres, tags, status, and detail_url
+    from og:novel:* tags, Schema.org JSON-LD, OpenGraph/Twitter meta tags, and common DOM patterns.
+    """
+    import urllib.parse
+
+    result: Dict[str, Optional[str]] = {
+        "title": None,
+        "original_title": None,
+        "author": None,
+        "cover_image": None,
+        "synopsis": None,
+        "genres": None,
+        "tags": None,
+        "status": None,
+        "detail_url": url or None,
+    }
+    if not html:
+        return result
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    def _resolve_url(candidate: Optional[str]) -> Optional[str]:
+        if not candidate or not isinstance(candidate, str):
+            return None
+        c = candidate.strip()
+        if not c or c.startswith("data:"):
+            return None
+        if url:
+            return urllib.parse.urljoin(url, c)
+        return c
+
+    # 1. Meta tag scan (og:novel:*, OpenGraph, Twitter, standard meta)
+    meta_map: Dict[str, str] = {}
+    for m in soup.find_all("meta"):
+        key = (m.get("property") or m.get("name") or m.get("itemprop") or "").strip().lower()
+        val = (m.get("content") or "").strip()
+        if key and val and key not in meta_map:
+            meta_map[key] = val
+
+    # Priority 1A: Chinese/Asian novel standard og:novel:*
+    novel_title = (
+        meta_map.get("og:novel:book_name")
+        or meta_map.get("og:novel:title")
+        or meta_map.get("book:title")
+    )
+    if novel_title:
+        result["title"] = _clean_extracted_title(novel_title)
+        result["original_title"] = result["title"]
+
+    if meta_map.get("og:novel:author"):
+        result["author"] = meta_map["og:novel:author"]
+    if meta_map.get("og:novel:category"):
+        result["genres"] = meta_map["og:novel:category"]
+    if meta_map.get("og:novel:status"):
+        result["status"] = meta_map["og:novel:status"]
+    if meta_map.get("og:novel:read_url") or meta_map.get("og:novel:latest_chapter_url"):
+        result["detail_url"] = _resolve_url(
+            meta_map.get("og:novel:read_url") or meta_map.get("og:novel:latest_chapter_url")
+        ) or result["detail_url"]
+
+    # 2. Schema.org JSON-LD (<script type="application/ld+json">)
+    for script in soup.find_all("script", type=re.compile(r"application/ld\+json", re.I)):
+        raw_json = script.string or script.get_text(strip=True)
+        if not raw_json:
+            continue
+        try:
+            data = json.loads(raw_json)
+        except Exception:
+            continue
+
+        items: List[Dict[str, Any]] = []
+        if isinstance(data, dict):
+            if isinstance(data.get("@graph"), list):
+                items.extend([x for x in data["@graph"] if isinstance(x, dict)])
+            items.append(data)
+        elif isinstance(data, list):
+            items.extend([x for x in data if isinstance(x, dict)])
+
+        for item in items:
+            if not result["title"]:
+                ld_title = item.get("name") or item.get("headline")
+                if isinstance(ld_title, str) and ld_title.strip():
+                    result["title"] = _clean_extracted_title(ld_title)
+                    result["original_title"] = result["title"]
+            if not result["author"]:
+                ld_author = item.get("author") or item.get("creator")
+                if isinstance(ld_author, dict):
+                    ld_author = ld_author.get("name")
+                elif isinstance(ld_author, list) and ld_author:
+                    first_a = ld_author[0]
+                    ld_author = first_a.get("name") if isinstance(first_a, dict) else str(first_a)
+                if isinstance(ld_author, str) and ld_author.strip():
+                    result["author"] = ld_author.strip()
+            if not result["cover_image"]:
+                ld_img = item.get("image") or item.get("thumbnailUrl")
+                if isinstance(ld_img, dict):
+                    ld_img = ld_img.get("url") or ld_img.get("contentUrl")
+                elif isinstance(ld_img, list) and ld_img:
+                    first_i = ld_img[0]
+                    ld_img = first_i.get("url") if isinstance(first_i, dict) else str(first_i)
+                if isinstance(ld_img, str) and ld_img.strip():
+                    result["cover_image"] = _resolve_url(ld_img)
+            if not result["synopsis"]:
+                ld_desc = item.get("description")
+                if isinstance(ld_desc, str) and ld_desc.strip():
+                    result["synopsis"] = ld_desc.strip()
+            if not result["genres"]:
+                ld_genre = item.get("genre")
+                if isinstance(ld_genre, list):
+                    ld_genre = ", ".join(str(g).strip() for g in ld_genre if str(g).strip())
+                if isinstance(ld_genre, str) and ld_genre.strip():
+                    result["genres"] = ld_genre.strip()
+            if not result["tags"]:
+                ld_kw = item.get("keywords")
+                if isinstance(ld_kw, list):
+                    ld_kw = ", ".join(str(k).strip() for k in ld_kw if str(k).strip())
+                if isinstance(ld_kw, str) and ld_kw.strip():
+                    result["tags"] = ld_kw.strip()
+
+    # 3. Standard OpenGraph / Twitter / HTML meta fallbacks
+    if not result["title"]:
+        og_title = meta_map.get("og:title") or meta_map.get("twitter:title") or meta_map.get("title")
+        if og_title:
+            result["title"] = _clean_extracted_title(og_title)
+            result["original_title"] = result["title"]
+
+    if not result["author"]:
+        meta_author = (
+            meta_map.get("author")
+            or meta_map.get("book:author")
+            or meta_map.get("article:author")
+            or meta_map.get("twitter:creator")
+        )
+        if meta_author:
+            result["author"] = meta_author.strip()
+
+    if not result["cover_image"]:
+        meta_img = (
+            meta_map.get("og:image")
+            or meta_map.get("twitter:image")
+            or meta_map.get("image")
+        )
+        if meta_img:
+            result["cover_image"] = _resolve_url(meta_img)
+
+    if not result["synopsis"]:
+        meta_desc = (
+            meta_map.get("og:description")
+            or meta_map.get("twitter:description")
+            or meta_map.get("description")
+        )
+        if meta_desc:
+            result["synopsis"] = meta_desc.strip()
+
+    if not result["tags"] and meta_map.get("keywords"):
+        result["tags"] = meta_map["keywords"].strip()
+
+    # 4. DOM selector fallbacks for sites without rich meta tags
+    if not result["title"]:
+        for sel in ("#info h1", ".book-info h1", ".novel-info h1", ".book-title", ".novel-title", "h1", "title"):
+            el = soup.select_one(sel)
+            if el and el.get_text(strip=True):
+                result["title"] = _clean_extracted_title(el.get_text(strip=True))
+                result["original_title"] = result["title"]
+                break
+
+    if not result["author"]:
+        for sel in ('[itemprop="author"]', ".book-author", ".novel-author", ".author-name", ".author"):
+            el = soup.select_one(sel)
+            if el and el.get_text(strip=True):
+                txt = el.get_text(strip=True)
+                m = _AUTHOR_LABEL_RE.search(txt)
+                result["author"] = (m.group(1) if m else txt).strip()
+                break
+        if not result["author"]:
+            info_text = soup.get_text("\n", strip=True)[:3000]
+            m = _AUTHOR_LABEL_RE.search(info_text)
+            if m:
+                result["author"] = m.group(1).strip()
+
+    if not result["cover_image"]:
+        for sel in (
+            '#fmimg img',
+            '.book-img img',
+            '.book-cover img',
+            '.novel-cover img',
+            '.cover img',
+            'img[itemprop="image"]',
+        ):
+            img = soup.select_one(sel)
+            if img:
+                raw_src = img.get("data-src") or img.get("data-original") or img.get("src")
+                resolved = _resolve_url(raw_src)
+                if resolved:
+                    result["cover_image"] = resolved
+                    break
+
+    if not result["synopsis"]:
+        for sel in (
+            '#intro',
+            '.book-intro',
+            '.novel-intro',
+            '.synopsis',
+            '.description',
+            '[itemprop="description"]',
+            '.intro',
+        ):
+            el = soup.select_one(sel)
+            if el and len(el.get_text(strip=True)) >= 15:
+                result["synopsis"] = el.get_text("\n", strip=True)
+                break
+
+    if not result["status"]:
+        info_text = soup.get_text("\n", strip=True)[:3000]
+        m = _STATUS_LABEL_RE.search(info_text)
+        if m:
+            result["status"] = m.group(1).strip()
+
+    return result
+
+
+_HYDRATION_PROSE_KEYS = (
+    "chaptercontent", "novelcontent", "episodecontent", "content", "body",
+    "text", "html", "paragraphs", "blocks", "matter", "rawcontent",
+)
+_HYDRATION_TITLE_KEYS = (
+    "chaptertitle", "episodetitle", "subtitle", "title", "chaptername", "name",
+)
+
+
+def extract_hydration_prose(html: str) -> Optional[tuple[str, str]]:
+    """
+    Fallback extractor for Next.js (__NEXT_DATA__), Nuxt (__NUXT_DATA__), or custom SPA JSON
+    state embedded in <script> tags when static HTML body contains an unhydrated shell.
+    Returns (title, markdown) if chapter prose (>= 80 chars) is found, else None.
+    """
+    if not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+
+    json_blobs: List[Any] = []
+    for script in soup.find_all("script"):
+        sid = (script.get("id") or "").strip()
+        stype = (script.get("type") or "").strip().lower()
+        raw = (script.string or script.get_text() or "").strip()
+        if not raw or len(raw) < 80:
+            continue
+        if sid in ("__NEXT_DATA__", "__NUXT_DATA__") or stype == "application/json":
+            try:
+                json_blobs.append(json.loads(raw))
+                continue
+            except Exception:
+                pass
+        # Check window.__INITIAL_STATE__ = {...}; or window.__NEXT_DATA__ = {...};
+        m = re.search(
+            r"window\.(?:__INITIAL_STATE__|__NEXT_DATA__|__PRELOADED_STATE__)\s*=\s*(\{.*\})\s*;?\s*$",
+            raw,
+            re.DOTALL,
+        )
+        if m:
+            try:
+                json_blobs.append(json.loads(m.group(1)))
+            except Exception:
+                pass
+
+    if not json_blobs:
+        return None
+
+    best_prose = ""
+    best_title = ""
+
+    def _clean_prose_Candidate(val: str) -> str:
+        s = val.strip()
+        if "<p" in s.lower() or "<br" in s.lower() or "<div" in s.lower():
+            frag = BeautifulSoup(s, "html.parser")
+            for br in frag.find_all("br"):
+                br.replace_with("\n\n")
+            for p in frag.find_all(["p", "div"]):
+                p.insert_before("\n\n")
+                p.insert_after("\n\n")
+            s = frag.get_text()
+        s = re.sub(r"[ \t]+", " ", s)
+        s = re.sub(r"\n{3,}", "\n\n", s).strip()
+        return s
+
+    def _walk(node: Any, current_title: str = "") -> None:
+        nonlocal best_prose, best_title
+        if isinstance(node, dict):
+            local_title = current_title
+            for k, v in node.items():
+                kl = str(k).lower().replace("_", "").replace("-", "")
+                if kl in _HYDRATION_TITLE_KEYS and isinstance(v, str) and 1 <= len(v.strip()) <= 180:
+                    local_title = v.strip()
+                    break
+
+            for k, v in node.items():
+                kl = str(k).lower().replace("_", "").replace("-", "")
+                if kl in _HYDRATION_PROSE_KEYS:
+                    candidate = ""
+                    if isinstance(v, str) and len(v.strip()) >= 80:
+                        candidate = _clean_prose_Candidate(v)
+                    elif isinstance(v, list) and v:
+                        parts = []
+                        for item in v:
+                            if isinstance(item, str) and item.strip():
+                                parts.append(item.strip())
+                            elif isinstance(item, dict):
+                                txt = item.get("text") or item.get("content") or item.get("paragraph")
+                                if isinstance(txt, str) and txt.strip():
+                                    parts.append(txt.strip())
+                        if parts:
+                            candidate = "\n\n".join(parts)
+                    if len(candidate) >= 80 and len(candidate) > len(best_prose):
+                        # Guard against minified code/URLs masquerading as prose
+                        if not candidate.startswith(("http://", "https://", "function(", "{")):
+                            best_prose = candidate
+                            if local_title:
+                                best_title = local_title
+                _walk(v, local_title)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item, current_title)
+
+    for blob in json_blobs:
+        _walk(blob)
+
+    if len(best_prose) >= 80:
+        return (best_title or "Untitled", best_prose)
+    return None

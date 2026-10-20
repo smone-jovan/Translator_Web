@@ -23,7 +23,7 @@ from sqlalchemy import select, func
 from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace, get_db_workspace
 from services.security import validate_external_url, create_safe_async_client
 from services.scrapers.engine import MetadataScraperEngine
-from services.scrapers.adaptive_dom import AdaptiveDOM
+from services.scrapers.adaptive_dom import AdaptiveDOM, extract_universal_metadata, extract_hydration_prose
 from services.scrapers.novalpie import _is_cloudflare_challenge
 
 _DEFAULT_BROWSER_HEADERS = {
@@ -36,7 +36,7 @@ _DEFAULT_BROWSER_HEADERS = {
 }
 
 _SPA_SHELL_RE = re.compile(
-    r'(<div[^>]+id=["\'](?:app|__nuxt|__next|root)["\'][^>]*>\\s*</div>|window\\.__NUXT__|__NEXT_DATA__)',
+    r'(<div[^>]+id=["\'](?:app|__nuxt|__next|root)["\'][^>]*>\s*</div>|window\.__NUXT__|__NEXT_DATA__)',
     re.IGNORECASE,
 )
 
@@ -72,16 +72,22 @@ class ScrapeMetadataRequest(BaseModel):
     source: Optional[str] = "novelupdates"   # "novelupdates" or "sfacg"
 
 
-# Tags to strip completely
+# Tags to strip completely (note: <img> is preserved and converted to Markdown ![alt](url))
 STRIP_TAGS = [
     "script", "style", "nav", "footer", "header", "aside",
-    "iframe", "noscript", "form", "button", "svg", "figure",
-    "figcaption", "img", "video", "audio", "canvas",
+    "iframe", "noscript", "form", "button", "svg",
+    "figcaption", "video", "audio", "canvas",
 ]
 
 # Common ad/nav class patterns (uses negative lookbehind to avoid matching words ending in 'ad' like 'read-content')
 AD_PATTERNS = re.compile(
-    r"(?<![a-zA-Z0-9])(ads?[_-]|banner|sidebar|menu|nav|footer|comment|social|share|popup|modal|cookie)",
+    r"(?<![a-zA-Z0-9])(ads?[_-]|banner|sidebar|menu|nav|footer|bottem|page[_-]?nav|chap[_-]?nav|turn[_-]?page|comment|social|share|popup|modal|cookie| watermark|anti[_-]?scrape)",
+    re.IGNORECASE,
+)
+
+# Inline CSS patterns used by novel sites to inject invisible anti-scraper honeypot text
+_HIDDEN_STYLE_RE = re.compile(
+    r"(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|em|rem|pt|%)?(?:\s*;|\s*$)|opacity\s*:\s*0(?:\s*;|\s*$)|height\s*:\s*0(?:px)?(?:\s*;|\s*$))",
     re.IGNORECASE,
 )
 
@@ -125,12 +131,22 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         for tag in soup.find_all(tag_name):
             tag.decompose()
 
-    # Remove elements with ad-like classes/ids
+    # Remove hidden anti-scraper honeypots and elements with ad-like classes/ids
     page_text_len = len(soup.get_text(strip=True))
-    for el in soup.find_all(True):
+    for el in list(soup.find_all(True)):
         if getattr(el, "attrs", None) is None:
             continue
-            
+
+        if el.name not in _ALWAYS_KEEP_TAGS:
+            is_hidden = (
+                el.has_attr("hidden")
+                or str(el.get("aria-hidden", "")).strip().lower() == "true"
+                or bool(_HIDDEN_STYLE_RE.search(str(el.get("style", "") or "")))
+            )
+            if is_hidden and not _is_page_wrapper(el, page_text_len):
+                el.decompose()
+                continue
+
         classes_raw = el.get("class", [])
         if isinstance(classes_raw, list):
             classes = " ".join(str(c) for c in classes_raw)
@@ -176,6 +192,31 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
         or soup
     )
 
+    # Convert inline chapter illustrations (<img>, including lazy-loaded data-src) to Markdown
+    for img in list(content_el.find_all("img")):
+        raw_src = (
+            img.get("data-src")
+            or img.get("data-original")
+            or img.get("data-lazy-src")
+            or img.get("data-actualsrc")
+            or img.get("src")
+            or ""
+        ).strip()
+        if not raw_src or raw_src.startswith("data:") or raw_src.lower().endswith(".svg"):
+            img.decompose()
+            continue
+        width = str(img.get("width") or "").strip()
+        height = str(img.get("height") or "").strip()
+        if width == "1" or height == "1":
+            img.decompose()
+            continue
+        abs_src = urllib.parse.urljoin(url, raw_src) if url else raw_src
+        if not abs_src.startswith(("http://", "https://", "/")):
+            img.decompose()
+            continue
+        alt = re.sub(r"[\[\]\r\n]+", " ", str(img.get("alt") or "").strip())
+        img.replace_with(f"\n\n![{alt}]({abs_src})\n\n")
+
     # Pre-process some tags to maintain structure
     for tag in content_el.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         level = int(tag.name[1])
@@ -210,14 +251,41 @@ def html_to_markdown(html: str, url: str = "") -> tuple[str, str]:
     markdown = re.sub(r"\n{3,}", "\n\n", markdown)
     markdown = markdown.strip()
 
+    # Fallback: if static DOM had < 50 chars of prose, inspect SPA JSON hydration scripts (__NEXT_DATA__, etc.)
+    if len(markdown) < 50:
+        hydrated = extract_hydration_prose(html)
+        if hydrated:
+            hyd_title, hyd_md = hydrated
+            if hyd_title and hyd_title != "Untitled":
+                title = hyd_title
+            markdown = hyd_md
+
     return title, markdown
 
 
 _HEADER_CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?([^\s;\"']+)", re.IGNORECASE)
 _META_CHARSET_RE = re.compile(rb"<meta[^>]+charset\s*=\s*[\"']?\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 _CHARSET_SNIFF_BYTES = 4096
-# Sites labelled gb2312/gbk routinely serve GBK-only characters; GB18030 is a strict superset.
-_CHARSET_ALIASES = {"gb2312": "gb18030", "gbk": "gb18030", "x-gbk": "gb18030", "gb_2312-80": "gb18030"}
+# Map common CJK/JP/KR aliases to their strict superset codecs in Python's stdlib.
+_CHARSET_ALIASES = {
+    "gb2312": "gb18030",
+    "gbk": "gb18030",
+    "x-gbk": "gb18030",
+    "gb_2312-80": "gb18030",
+    "big5": "big5hkscs",
+    "big5-hkscs": "big5hkscs",
+    "x-x-big5": "big5hkscs",
+    "shift_jis": "cp932",
+    "shift-jis": "cp932",
+    "sjis": "cp932",
+    "x-sjis": "cp932",
+    "ms932": "cp932",
+    "windows-31j": "cp932",
+    "euc-kr": "cp949",
+    "euckr": "cp949",
+    "ks_c_5601-1987": "cp949",
+    "ksc5601": "cp949",
+}
 _ASCII_BYTES = bytes(range(128))
 # Legacy CJK bytes (GBK, Big5, Shift-JIS, EUC-KR) read as UTF-8 yield ~0.65-0.9 replacement
 # chars per non-ASCII byte; genuine UTF-8 with a few corrupt bytes stays far below this.
@@ -238,7 +306,7 @@ def _decode_lenient_utf8(content: bytes) -> Optional[str]:
     """UTF-8 with a few corrupt bytes replaced, or None when the bytes are not UTF-8 at all."""
     text = content.decode("utf-8", errors="replace")
     non_ascii_len = len(content.translate(None, _ASCII_BYTES))
-    if text.count("�") <= non_ascii_len * _MAX_UTF8_ERROR_RATIO:
+    if text.count("") <= non_ascii_len * _MAX_UTF8_ERROR_RATIO:
         return text
     return None
 
@@ -272,14 +340,15 @@ def decode_response_html(resp) -> str:
         except UnicodeDecodeError:
             continue
 
-    # No usable declaration, or the bytes contradict it: sniff.
+    # No usable declaration, or the bytes contradict it: sniff across UTF-8 and CJK/JP/KR codecs.
     lenient_utf8 = _decode_lenient_utf8(content)
     if lenient_utf8 is not None:
         return lenient_utf8
-    try:
-        return content.decode("gb18030")
-    except UnicodeDecodeError:
-        pass
+    for fallback_enc in ("gb18030", "big5hkscs", "cp932", "cp949"):
+        try:
+            return content.decode(fallback_enc)
+        except UnicodeDecodeError:
+            continue
     return content.decode(declared[0] if declared else "gb18030", errors="replace")
 
 
@@ -294,10 +363,27 @@ def is_domain(url: str, domain: str) -> bool:
 
 _NEXT_LINK_EXACT_LABELS = frozenset({
     "下一章", "下一页", "下一頁", "下一节", "下一節", "下一话", "下一話", "下页", "下章",
-    "next", "next chapter", "next page", "次へ", "次の話",
+    "next", "next chapter", "next page", "next episode",
+    "次へ", "次の話", "次話", "次のページ", "次ページ",
+    "다음화", "다음 화", "다음장", "다음 장", "다음편", "다음 편",
+    "bab selanjutnya", "chapter selanjutnya", "lanjut",
 })
-_NEXT_LINK_EXCLUDED = ("下一卷", "next volume")
+_NEXT_CHAPTER_STRICT_LABELS = frozenset({
+    "下一章", "下一节", "下一節", "下一话", "下一話", "下章",
+    "next chapter", "next episode",
+    "次の話", "次話",
+    "다음화", "다음 화", "다음장", "다음 장", "다음편", "다음 편",
+    "bab selanjutnya", "chapter selanjutnya",
+})
+_SUBPAGE_LABELS = frozenset({
+    "下一页", "下一頁", "下页", "next page", "次のページ", "次ページ",
+})
+_NEXT_LINK_EXCLUDED = ("下一卷", "next volume", "다음권", "次巻")
 _NEXT_LINK_DECORATION_RE = re.compile(r"[\s<>«»‹›→⇒➜>\[\]【】()（）|:：.…·»]+")
+_JS_NEXT_PAGE_RE = re.compile(
+    r"(?:var|let|const)?\s*(?:next_page|nextpage|nextUrl|next_url|nextChapterUrl)\s*=\s*[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
 
 
 def _site_host(url: str) -> str:
@@ -317,12 +403,136 @@ def _normalize_next_label(text: str) -> str:
     return _NEXT_LINK_DECORATION_RE.sub(" ", text).strip().lower()
 
 
+def _chapter_base_stem(url: str) -> tuple[str, int]:
+    """
+    Return (canonical_chapter_stem, subpage_num) for URLs like:
+    - /book/123/456.html -> ('/book/123/456', 1)
+    - /book/123/456_2.html -> ('/book/123/456', 2)
+    - /book/123/456-3.html -> ('/book/123/456', 3)
+    """
+    parsed = urllib.parse.urlparse(url)
+    path = re.sub(r"\.(?:html?|shtml|php|aspx)$", "", parsed.path.rstrip("/"), flags=re.I)
+    q_match = re.search(r"(?:^|&)(?:page|p)=(\d+)(?:&|$)", parsed.query, flags=re.I)
+    if q_match:
+        return path, int(q_match.group(1))
+    m = re.match(r"^(.+?\d+)[_-](\d{1,2})$", path)
+    if m and int(m.group(2)) <= 20:
+        return m.group(1), int(m.group(2))
+    return path, 1
+
+
+def _is_subpage_url_of(candidate_url: str, base_url: str) -> bool:
+    """True when `candidate_url` is sub-page N+1 (e.g. 101_2.html or ?page=2) of `base_url`."""
+    if not _same_site(candidate_url, base_url):
+        return False
+    base_stem, base_sub = _chapter_base_stem(base_url)
+    cand_stem, cand_sub = _chapter_base_stem(candidate_url)
+    return bool(base_stem and base_stem == cand_stem and cand_sub == base_sub + 1)
+
+
+def find_next_subpage_link(html: str, base_url: str) -> Optional[str]:
+    """
+    Detect intra-chapter pagination links (e.g. `101_2.html`, `101-2.html`, `?page=2`, or
+    `下一页` when paired with a separate `下一章` link) so split chapters can be stitched.
+    Returns None for single-page chapters.
+    """
+    if not html or not base_url:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    current = urllib.parse.urldefrag(base_url)[0]
+
+    def resolve(href) -> Optional[str]:
+        href = (href or "").strip()
+        if not href or href.startswith("#") or href.lower().startswith(("javascript:", "mailto:")):
+            return None
+        candidate = urllib.parse.urldefrag(urllib.parse.urljoin(base_url, href))[0]
+        if candidate == current or not candidate.startswith(("http://", "https://")):
+            return None
+        return candidate if _same_site(candidate, base_url) else None
+
+    anchors = []
+    has_distinct_next_chapter_label = False
+    for a in soup.find_all("a"):
+        text = a.get_text(strip=True)
+        norm = _normalize_next_label(text)
+        url = resolve(a.get("href"))
+        if not url:
+            continue
+        anchors.append((norm, url, text))
+        if norm in _NEXT_CHAPTER_STRICT_LABELS and not _is_subpage_url_of(url, base_url):
+            has_distinct_next_chapter_label = True
+
+    # 1. Explicit URL sub-page pattern (e.g. 101.html -> 101_2.html or ?page=2)
+    for norm, url, _ in anchors:
+        if _is_subpage_url_of(url, base_url):
+            return url
+
+    # 2. Label is "下一页 / next page" AND the page also has a distinct "下一章 / next chapter" link
+    if has_distinct_next_chapter_label:
+        for norm, url, _ in anchors:
+            if norm in _SUBPAGE_LABELS:
+                return url
+
+    return None
+
+
+async def stitch_subpages_markdown(
+    first_html: str,
+    first_url: str,
+    first_md: str,
+    *,
+    workspace: Optional[str] = None,
+    max_subpages: int = 5,
+) -> tuple[str, str, str]:
+    """
+    If `first_html` is page 1 of a split chapter (e.g. 101.html -> 101_2.html -> 101_3.html),
+    fetch and stitch subsequent sub-pages into a single Markdown string.
+    Returns (stitched_markdown, last_html, last_final_url).
+    For single-page chapters, returns immediately with zero extra network or parser calls.
+    """
+    next_sub_url = find_next_subpage_link(first_html, first_url)
+    if not next_sub_url:
+        return first_md, first_html, first_url
+
+    parts = [first_md.strip()] if first_md else []
+    visited = {urllib.parse.urldefrag(first_url)[0]}
+    last_html = first_html
+    last_url = first_url
+
+    for _ in range(max_subpages):
+        if not next_sub_url or next_sub_url in visited:
+            break
+        visited.add(next_sub_url)
+        try:
+            validate_external_url(next_sub_url)
+            sub_html, sub_final_url = await fetch_html_adaptive(next_sub_url, workspace=workspace)
+            _, sub_md = html_to_markdown(sub_html, url=sub_final_url)
+            if sub_md:
+                # Strip duplicate leading # Title header on continuation sub-pages
+                cleaned_sub = re.sub(r"^#{1,3}\s+[^\n]+\n+", "", sub_md.strip()).strip()
+                if cleaned_sub:
+                    parts.append(cleaned_sub)
+            last_html = sub_html
+            last_url = sub_final_url
+            next_sub_url = find_next_subpage_link(sub_html, sub_final_url)
+        except Exception:
+            break
+
+    return "\n\n".join(p for p in parts if p), last_html, last_url
+
+
 def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]]:
     """
     Find the next-chapter link of a generic chapter page as (absolute_url, link_text).
-    Priority: <link rel=next> / <a rel=next>, then exact labels (下一章, Next Chapter, ...),
-    then any link text containing 下一 / next. Next-volume links (下一卷), off-site links,
-    self links and javascript:/# anchors are never returned.
+    Priority:
+    1. Explicit next-chapter labels (下一章, Next Chapter, 다음화, 次の話, Bab Selanjutnya)
+       that do NOT point to an intra-chapter sub-page (1_2.html).
+    2. <link rel=next> / <a rel=next>
+    3. Any exact label in _NEXT_LINK_EXACT_LABELS (including 下一页 / Next Page)
+    4. Partial label matches (下一, 下页, next, 다음, 次へ)
+    5. Inline JS variables (var next_page = "...")
+    Next-volume links (下一卷, 다음권, 次巻), off-site links, self links and javascript:/# anchors
+    are never returned.
     """
     soup = BeautifulSoup(html, "html.parser")
     current = urllib.parse.urldefrag(base_url)[0]
@@ -345,20 +555,53 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
         if url:
             anchors.append((a, url, text))
 
+    # 1. Prefer strict "next chapter" labels that are NOT intra-chapter sub-pages (1_2.html)
+    for _, url, text in anchors:
+        if _normalize_next_label(text) in _NEXT_CHAPTER_STRICT_LABELS and not _is_subpage_url_of(url, base_url):
+            return url, text
+
+    # 2. <link rel="next"> / <a rel="next"> (skip if it's a sub-page and a strict next-chapter link exists)
     for tag in soup.find_all("link"):
         if "next" in [r.lower() for r in (tag.get("rel") or [])]:
             url = resolve(tag.get("href"))
-            if url:
+            if url and not _is_subpage_url_of(url, base_url):
                 return url, ""
     for a, url, text in anchors:
-        if "next" in [r.lower() for r in (a.get("rel") or [])]:
+        if "next" in [r.lower() for r in (a.get("rel") or [])] and not _is_subpage_url_of(url, base_url):
+            return url, text
+
+    # 3. Any exact label in _NEXT_LINK_EXACT_LABELS (preferring non-subpage URLs first)
+    for _, url, text in anchors:
+        if _normalize_next_label(text) in _NEXT_LINK_EXACT_LABELS and not _is_subpage_url_of(url, base_url):
             return url, text
     for _, url, text in anchors:
         if _normalize_next_label(text) in _NEXT_LINK_EXACT_LABELS:
             return url, text
+
+    # 4. Partial label matches
     for _, url, text in anchors:
-        if "下一" in text or "下页" in text or "next" in text.lower():
+        tl = text.lower()
+        if (
+            "下一" in text
+            or "下页" in text
+            or "下章" in text
+            or "다음" in text
+            or "次の" in text
+            or "次へ" in text
+            or "next" in tl
+            or "selanjutnya" in tl
+        ):
             return url, text
+
+    # 5. Inline JS variable fallback (e.g. var next_page = "102.html";)
+    for script in soup.find_all("script"):
+        s_txt = script.string or script.get_text() or ""
+        m = _JS_NEXT_PAGE_RE.search(s_txt)
+        if m:
+            url = resolve(m.group(1))
+            if url:
+                return url, ""
+
     return None
 
 
@@ -507,6 +750,7 @@ async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Opt
     try:
         html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
         title, markdown = html_to_markdown(html_text, url=final_url)
+        markdown, _, _ = await stitch_subpages_markdown(html_text, final_url, markdown, workspace=ws)
     except HTTPException:
         raise
     except Exception as e:
@@ -565,6 +809,7 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
         try:
             html_text, final_url = await fetch_html_adaptive(req.url, workspace=ws)
             title, markdown = html_to_markdown(html_text, url=final_url)
+            markdown, _, _ = await stitch_subpages_markdown(html_text, final_url, markdown, workspace=ws)
         except HTTPException:
             raise
         except Exception as e:
@@ -630,6 +875,16 @@ async def import_from_url(req: ImportURLRequest, db: Session = Depends(get_db)):
                     synopsis = meta.synopsis
             except Exception as e:
                 print(f"⚠️ [Novalpie] Error auto-discovering novel metadata on single chapter import: {e}")
+        elif not is_domain(req.url, "sfacg.com") and locals().get("html_text"):
+            try:
+                uni_meta = extract_universal_metadata(html_text, url=final_url)
+                if uni_meta.get("title") and uni_meta["title"] != title:
+                    novel_title = uni_meta["title"]
+                author = uni_meta.get("author") or author
+                cover_image = uni_meta.get("cover_image") or cover_image
+                synopsis = uni_meta.get("synopsis") or synopsis
+            except Exception as e:
+                print(f"⚠️ [Universal] Error extracting metadata on chapter import: {e}")
 
         thread = Thread(
             title=novel_title,
@@ -880,6 +1135,13 @@ async def fetch_next_chapter(
             raise HTTPException(502, f"Failed to fetch chapter HTML: {e}")
 
         next_info = find_next_chapter_link(current_html, current_final_url)
+        # If current page only links to an intra-chapter sub-page (e.g. 101_2.html), walk sub-pages
+        # to find the true next-chapter link at the end of the split chapter.
+        if (not next_info or _is_subpage_url_of(next_info[0], current_final_url)) and find_next_subpage_link(current_html, current_final_url):
+            _, last_sub_html, last_sub_url = await stitch_subpages_markdown(
+                current_html, current_final_url, "", workspace=ws
+            )
+            next_info = find_next_chapter_link(last_sub_html, last_sub_url)
         if next_info:
             next_url, next_title = next_info
 
@@ -911,6 +1173,7 @@ async def fetch_next_chapter(
             raise HTTPException(502, f"Failed to fetch next chapter URL ({next_url}): {e}")
 
         parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
+        markdown, _, _ = await stitch_subpages_markdown(next_html, next_final_url, markdown, workspace=ws)
 
     is_vip = False
     if "/vip/" in next_url.lower():
@@ -1045,6 +1308,11 @@ async def crawl_next_chapters(
                         break
 
                     next_info = find_next_chapter_link(current_html, current_final_url)
+                    if (not next_info or _is_subpage_url_of(next_info[0], current_final_url)) and find_next_subpage_link(current_html, current_final_url):
+                        _, last_sub_html, last_sub_url = await stitch_subpages_markdown(
+                            current_html, current_final_url, "", workspace=ws
+                        )
+                        next_info = find_next_chapter_link(last_sub_html, last_sub_url)
                     if next_info and next_info[0] != current_url:
                         next_url, next_title = next_info
 
@@ -1083,6 +1351,9 @@ async def crawl_next_chapters(
                         else:
                             next_html, next_final_url = await fetch_html_adaptive(next_url, workspace=ws)
                             parsed_title, markdown = html_to_markdown(next_html, url=next_final_url)
+                            markdown, _, _ = await stitch_subpages_markdown(
+                                next_html, next_final_url, markdown, workspace=ws
+                            )
 
                         # Check if successful content extracted
                         if markdown and len(markdown.strip()) >= 50:
@@ -1153,4 +1424,3 @@ async def crawl_next_chapters(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(crawl_stream_generator(), media_type="text/event-stream")
-

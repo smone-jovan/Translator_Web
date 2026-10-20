@@ -1,3 +1,4 @@
+import re
 import urllib.parse
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
 from database import get_db, Thread, Chapter, resolve_workspace, get_db_workspace
+from services.scrapers.adaptive_dom import extract_universal_metadata
 
 router = APIRouter(prefix="/api", tags=["Scraping", "TOC"])
 
@@ -30,54 +32,144 @@ class TOCBulkImportRequest(BaseModel):
     genres: Optional[str] = None
     chapters: List[TOCChapterInfo]
 
+
+_CHAPTER_TEXT_RE = re.compile(
+    r"(?:"
+    r"第\s*[0-9零一二三四五六七八九十百千万〇两]+\s*[章节回话話集卷篇幕]|"
+    r"^(?:chapter|ch\.?|episode|ep\.?)\s*\d+|"
+    r"^\d+\s*(?:화|장|편|話|章|节|節)|"
+    r"^\d{1,4}\s*[.、:：\-—]\s*\S+|"
+    r"^(?:序章|楔子|引子|尾声|尾聲|番外|番外編|后记|後記|幕間|프롤로그|에필로그|외전|プロローグ|エピローグ|prologue|epilogue|interlude|side\s*story)"
+    r")",
+    re.IGNORECASE,
+)
+
+_CHAPTER_PATH_RE = re.compile(
+    r"(?:/(?:read|chapter|chapters|ep|episode|episodes|txt|viewer|view|archive)/|\d+[_/-]\d+\.html?$)",
+    re.IGNORECASE,
+)
+
+_TOC_NAV_EXACT_LABELS = frozenset({
+    "上一章", "下一章", "上一页", "下一页", "上一頁", "下一頁", "目录", "目錄",
+    "返回目录", "章节目录", "加入书架", "投推荐票", "推荐票", "书架", "首页",
+    "登录", "注册", "报错", "トップ", "目次", "次へ", "前へ", "이전화", "다음화",
+    "prev", "next", "previous", "next chapter", "previous chapter", "home",
+})
+
+_TOC_FOLLOW_KEYWORDS = (
+    "/MainIndex/",
+    "/catalog",
+    "/chapters",
+    "目录",
+    "目錄",
+    "全部章节",
+    "章节目录",
+    "完整目录",
+    "查看目录",
+    "点击阅读",
+    "开始阅读",
+    "전체회차",
+    "目次",
+    "table of contents",
+)
+
+
+def _same_site_host(netloc_a: str, netloc_b: str) -> bool:
+    a = (netloc_a or "").split(":")[0].lower()
+    b = (netloc_b or "").split(":")[0].lower()
+    if a.startswith("www."):
+        a = a[4:]
+    if b.startswith("www."):
+        b = b[4:]
+    if not a or not b:
+        return False
+    return a == b or a.endswith(f".{b}") or b.endswith(f".{a}")
+
+
 def extract_links_from_html(html_text: str, base_url: str):
     soup = BeautifulSoup(html_text, "html.parser")
+    meta = extract_universal_metadata(html_text, url=base_url)
     title_tag = soup.find("title")
-    novel_title = title_tag.get_text(strip=True) if title_tag else "Untitled Novel"
+    novel_title = (
+        meta.get("title")
+        or (title_tag.get_text(strip=True) if title_tag else "")
+        or "Untitled Novel"
+    )
 
     parsed_base = urllib.parse.urlparse(base_url)
+    base_clean = urllib.parse.urldefrag(base_url)[0]
+    base_digits = [seg for seg in parsed_base.path.split("/") if seg.isdigit() and len(seg) >= 2]
 
     links = []
-    seen_urls = set()
+    url_to_index = {}
     raw_links = []
 
-    for a in soup.find_all('a', href=True):
-        href = a.get('href')
+    junk_paths = (
+        "/stag/", "/cmts/", "/lcmt/", "/fans", "/vip/c/",
+        "/author/", "/user/", "/login", "/register", "/search",
+        "/category/", "/tag/", "/rank/", "/top/", "/comment",
+    )
+
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        if not href or href.startswith("#") or href.lower().startswith(("javascript:", "mailto:", "tel:")):
+            continue
         text = a.get_text(strip=True)
         if not text or len(text) < 2:
             continue
-
-        abs_url = urllib.parse.urljoin(base_url, href)
-        parsed = urllib.parse.urlparse(abs_url)
-
-        if parsed.netloc != parsed_base.netloc:
+        if text.lower() in _TOC_NAV_EXACT_LABELS:
             continue
 
-        if abs_url == base_url or abs_url in seen_urls:
+        abs_url = urllib.parse.urldefrag(urllib.parse.urljoin(base_url, href))[0]
+        parsed = urllib.parse.urlparse(abs_url)
+
+        if not _same_site_host(parsed.netloc, parsed_base.netloc):
+            continue
+
+        if abs_url == base_clean:
             continue
 
         raw_links.append((text, abs_url, parsed))
 
-        is_chapter = False
-        junk_paths = ["/stag/", "/cmts/", "/lcmt/", "/fans", "/vip/c/"]
+        if any(junk in parsed.path.lower() for junk in junk_paths):
+            continue
 
-        # 1. Path is deeper than base (e.g. /Novel/123/456/)
-        if parsed.path.startswith(parsed_base.path) and len(parsed.path.rstrip('/')) > len(parsed_base.path.rstrip('/')):
-            if not any(junk in parsed.path for junk in junk_paths):
-                is_chapter = True
-        # 2. Chinese websites often use specific path structures, but make sure it's not the novel root itself
-        elif any(char.isdigit() for char in parsed.path) and len(parsed.path.rstrip('/').split('/')) > 3:
-            if not any(junk in parsed.path for junk in junk_paths):
-                is_chapter = True
+        is_chapter = False
+        base_path_clean = parsed_base.path.rstrip("/")
+        cand_path_clean = parsed.path.rstrip("/")
+
+        # 1. Path is deeper than base (e.g. /Novel/123/456/ or /book/123.html -> /book/123/1.html)
+        base_stem = re.sub(r"\.(?:html?|shtml|php|aspx)$", "", base_path_clean, flags=re.I)
+        if base_stem and cand_path_clean.startswith(base_stem) and len(cand_path_clean) > len(base_stem):
+            is_chapter = True
+        # 2. Chinese websites often use specific path structures with digits
+        elif any(char.isdigit() for char in parsed.path) and len(cand_path_clean.split("/")) > 3:
+            is_chapter = True
+        # 3. Path matches common chapter routes (/read/123/456, /chapter/456, /txt/123/456)
+        elif _CHAPTER_PATH_RE.search(parsed.path) and any(c.isdigit() for c in parsed.path):
+            is_chapter = True
+        # 4. Shares novel numeric ID and ends with a chapter numeric ID or matches chapter text pattern
+        elif base_digits and any(f"/{nid}/" in parsed.path for nid in base_digits) and any(c.isdigit() for c in cand_path_clean.split("/")[-1]):
+            is_chapter = True
+        elif _CHAPTER_TEXT_RE.search(text) and any(char.isdigit() for char in parsed.path):
+            is_chapter = True
 
         # Extra safety: Ensure the link is not just the novel homepage
-        if "/Novel/" in parsed.path and len(parsed.path.rstrip('/').split('/')) <= 3:
+        if "/Novel/" in parsed.path and len(cand_path_clean.split("/")) <= 3:
             is_chapter = False
 
         if is_chapter:
+            # Tail deduplication: many Chinese/Asian novel TOC pages place a "最新章节 (Latest Chapters)"
+            # widget at the top before the main chronological "正文 (Chapter List)" below.
+            # If the same chapter URL appears again later in the main TOC, move it to the later
+            # position so chapters stay in chronological order starting from Chapter 1.
+            if abs_url in url_to_index:
+                old_idx = url_to_index[abs_url]
+                links[old_idx] = None
+            url_to_index[abs_url] = len(links)
             links.append({"title": text, "url": abs_url})
-            seen_urls.add(abs_url)
 
+    links = [item for item in links if item is not None]
     return novel_title, links, raw_links
 
 
@@ -137,11 +229,11 @@ async def scrape_toc(req: TOCScrapeRequest, request: Request = None):
         novel_title, links, raw_links = await fetch_and_extract_links(req.url, workspace=ws)
 
         # If we found too few links, we might be on the summary page.
-        # Look for a dedicated TOC link (like /MainIndex/ or "点击阅读")
+        # Look for a dedicated TOC link (like /MainIndex/, "目录", "全部章节", "点击阅读", etc.)
         if len(links) < 50:
             toc_url = None
             for text, url, parsed in raw_links:
-                if "/MainIndex/" in url or "目录" in text or "点击阅读" in text:
+                if any(kw in url or kw in text.lower() or kw in text for kw in _TOC_FOLLOW_KEYWORDS):
                     toc_url = url
                     break
 
@@ -187,6 +279,7 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
             from services.security import validate_external_url
             try:
                 validate_external_url(req.base_url)
+                ws = get_db_workspace(db)
                 if is_domain(req.base_url, "sfacg.com"):
                     from services.scrapers.sfacg import SFACGAdapter
                     sfacg = SFACGAdapter()
@@ -197,7 +290,6 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
                         synopsis = meta.synopsis or ""
                         cover_image = meta.cover_image or ""
                 elif is_domain(req.base_url, "novalpie.cc"):
-                    ws = get_db_workspace(db)
                     from services.scrapers.novalpie import NovalpieAdapter
                     novalpie = NovalpieAdapter(workspace=ws)
                     meta = await novalpie.scrape_metadata(req.base_url)
@@ -208,6 +300,17 @@ async def bulk_import_toc(req: TOCBulkImportRequest, db: Session = Depends(get_d
                         cover_image = meta.cover_image or ""
                         if not req.genres and meta.genres:
                             req.genres = meta.genres
+                else:
+                    from routers.scrape import fetch_html_adaptive
+                    html_text, final_url = await fetch_html_adaptive(req.base_url, workspace=ws)
+                    uni_meta = extract_universal_metadata(html_text, url=final_url)
+                    if uni_meta.get("title") and (not req.title or req.title == "Imported Novel"):
+                        title = uni_meta["title"]
+                    author = uni_meta.get("author") or author
+                    synopsis = uni_meta.get("synopsis") or synopsis
+                    cover_image = uni_meta.get("cover_image") or cover_image
+                    if not req.genres and uni_meta.get("genres"):
+                        req.genres = uni_meta["genres"]
             except Exception as e:
                 print(f"[TOC Import] Auto-metadata failed: {e}")
 

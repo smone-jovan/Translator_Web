@@ -6,6 +6,7 @@ atau Native Adaptive Playwright Fallback + Adaptive DOM Parsing.
 
 import asyncio
 import json
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -17,7 +18,7 @@ from fastapi import HTTPException
 
 from database import normalize_workspace
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
-from services.scrapers.adaptive_dom import AdaptivePage
+from services.scrapers.adaptive_dom import AdaptiveDOM, AdaptivePage
 from services.scrapers.novalpie import (
     get_scraper_concurrency,
     _get_thread_browser,
@@ -396,6 +397,21 @@ class StealthyNovelAdapter(BaseScraperAdapter):
             if wait_selector:
                 try:
                     page.wait_for_selector(wait_selector, state=wait_selector_state, timeout=min(10000, timeout_ms))
+                except Exception:
+                    pass
+            else:
+                # Universal SPA prose-ready poll: when no selector is given and initial DOM looks
+                # like an unhydrated Vue/React/Next/Nuxt shell, poll briefly (up to 3.0s) until
+                # prose paragraphs appear.
+                try:
+                    probe_html = _page_content(page)
+                    if re.search(r"(?:id=[\x27\"](?:app|__nuxt|__next|root)[\x27\"]|window\.__NUXT__|__NEXT_DATA__)", probe_html, re.I):
+                        for _ in range(6):
+                            probe_soup = BeautifulSoup(probe_html, "html.parser")
+                            if AdaptiveDOM.find_best_content_container(probe_soup, min_chars=120) is not None:
+                                break
+                            page.wait_for_timeout(500)
+                            probe_html = _page_content(page)
                 except Exception:
                     pass
 
