@@ -290,6 +290,7 @@ _ASCII_BYTES = bytes(range(128))
 # Legacy CJK bytes (GBK, Big5, Shift-JIS, EUC-KR) read as UTF-8 yield ~0.65-0.9 replacement
 # chars per non-ASCII byte; genuine UTF-8 with a few corrupt bytes stays far below this.
 _MAX_UTF8_ERROR_RATIO = 0.1
+_UTF8_REPLACEMENT_CHAR = "\ufffd"
 
 
 def _normalize_charset(label: Optional[str]) -> Optional[str]:
@@ -306,7 +307,7 @@ def _decode_lenient_utf8(content: bytes) -> Optional[str]:
     """UTF-8 with a few corrupt bytes replaced, or None when the bytes are not UTF-8 at all."""
     text = content.decode("utf-8", errors="replace")
     non_ascii_len = len(content.translate(None, _ASCII_BYTES))
-    if text.count("") <= non_ascii_len * _MAX_UTF8_ERROR_RATIO:
+    if text.count(_UTF8_REPLACEMENT_CHAR) <= non_ascii_len * _MAX_UTF8_ERROR_RATIO:
         return text
     return None
 
@@ -344,11 +345,12 @@ def decode_response_html(resp) -> str:
     lenient_utf8 = _decode_lenient_utf8(content)
     if lenient_utf8 is not None:
         return lenient_utf8
-    for fallback_enc in ("gb18030", "big5hkscs", "cp932", "cp949"):
-        try:
-            return content.decode(fallback_enc)
-        except UnicodeDecodeError:
-            continue
+    if not declared:
+        for fallback_enc in ("gb18030", "big5hkscs", "cp932", "cp949"):
+            try:
+                return content.decode(fallback_enc)
+            except UnicodeDecodeError:
+                continue
     return content.decode(declared[0] if declared else "gb18030", errors="replace")
 
 
@@ -525,9 +527,9 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
     """
     Find the next-chapter link of a generic chapter page as (absolute_url, link_text).
     Priority:
-    1. Explicit next-chapter labels (下一章, Next Chapter, 다음화, 次の話, Bab Selanjutnya)
+    1. <link rel=next> / <a rel=next> (unless pointing to an intra-chapter sub-page 1_2.html)
+    2. Explicit next-chapter labels (下一章, Next Chapter, 다음화, 次の話, Bab Selanjutnya)
        that do NOT point to an intra-chapter sub-page (1_2.html).
-    2. <link rel=next> / <a rel=next>
     3. Any exact label in _NEXT_LINK_EXACT_LABELS (including 下一页 / Next Page)
     4. Partial label matches (下一, 下页, next, 다음, 次へ)
     5. Inline JS variables (var next_page = "...")
@@ -555,12 +557,7 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
         if url:
             anchors.append((a, url, text))
 
-    # 1. Prefer strict "next chapter" labels that are NOT intra-chapter sub-pages (1_2.html)
-    for _, url, text in anchors:
-        if _normalize_next_label(text) in _NEXT_CHAPTER_STRICT_LABELS and not _is_subpage_url_of(url, base_url):
-            return url, text
-
-    # 2. <link rel="next"> / <a rel="next"> (skip if it's a sub-page and a strict next-chapter link exists)
+    # 1. <link rel="next"> / <a rel="next"> (skip if it points to an intra-chapter sub-page 1_2.html)
     for tag in soup.find_all("link"):
         if "next" in [r.lower() for r in (tag.get("rel") or [])]:
             url = resolve(tag.get("href"))
@@ -568,6 +565,11 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
                 return url, ""
     for a, url, text in anchors:
         if "next" in [r.lower() for r in (a.get("rel") or [])] and not _is_subpage_url_of(url, base_url):
+            return url, text
+
+    # 2. Prefer strict "next chapter" labels that are NOT intra-chapter sub-pages (1_2.html)
+    for _, url, text in anchors:
+        if _normalize_next_label(text) in _NEXT_CHAPTER_STRICT_LABELS and not _is_subpage_url_of(url, base_url):
             return url, text
 
     # 3. Any exact label in _NEXT_LINK_EXACT_LABELS (preferring non-subpage URLs first)
