@@ -500,7 +500,24 @@ def _clean_extracted_title(raw_title: Optional[str]) -> str:
     cleaned = re.sub(r"\s+", " ", str(raw_title)).strip()
     cleaned = _TITLE_SITE_SUFFIX_RE.sub("", cleaned).strip()
     cleaned = re.sub(r"^【[^】]{1,12}】\s*", "", cleaned).strip()
+    cleaned = _collapse_repeated_title_segments(cleaned)
+    cleaned = _TITLE_TOC_SUFFIX_RE.sub("", cleaned).strip()
     return cleaned or str(raw_title).strip()
+
+
+_TITLE_TOC_SUFFIX_RE = re.compile(r"(?:章节目录|章節目錄|最新章节|最新章節)$")
+
+
+def _collapse_repeated_title_segments(title: str) -> str:
+    """'书名,作者,书名最新章节_...' -> '书名': keep the first comma segment only when a later
+    segment repeats it as a prefix (SEO-style <title>); ordinary titles with commas are untouched."""
+    segments = [seg.strip() for seg in re.split(r"[,，]", title)]
+    if len(segments) < 2 or len(segments[0]) < 2:
+        return title
+    first = _TITLE_TOC_SUFFIX_RE.sub("", segments[0]).strip()
+    if first and any(seg.startswith(first) for seg in segments[1:]):
+        return segments[0]
+    return title
 
 
 def extract_universal_metadata(html: str, url: str = "") -> Dict[str, Optional[str]]:

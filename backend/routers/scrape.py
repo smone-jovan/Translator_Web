@@ -555,6 +555,14 @@ async def stitch_subpages_markdown(
     return "\n\n".join(p for p in parts if p), last_html, last_url
 
 
+def _is_ancestor_index_url(candidate: str, current: str) -> bool:
+    """True when candidate is a directory-style ancestor of current (e.g. /book/8/ for /book/8/99.html).
+    Sites point '下一章' at the book index on the last chapter; that is never a next chapter."""
+    cand_path = urllib.parse.urlparse(candidate).path
+    cur_path = urllib.parse.urlparse(current).path
+    return cand_path.endswith("/") and cur_path.startswith(cand_path) and cur_path != cand_path
+
+
 def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]]:
     """
     Find the next-chapter link of a generic chapter page as (absolute_url, link_text).
@@ -577,6 +585,8 @@ def find_next_chapter_link(html: str, base_url: str) -> Optional[tuple[str, str]
             return None
         candidate = urllib.parse.urldefrag(urllib.parse.urljoin(base_url, href))[0]
         if candidate == current or not candidate.startswith(("http://", "https://")):
+            return None
+        if _is_ancestor_index_url(candidate, current):
             return None
         return candidate if _same_site(candidate, base_url) else None
 
