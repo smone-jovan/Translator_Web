@@ -1090,7 +1090,7 @@ def test_native_fetch_retries_content_while_page_navigates_after_challenge(monke
 
     sb, _, _, page, _, _ = _mock_browser(monkeypatch, goto=goto, proxy=proxy)
     # Redirect pasca-challenge: content() gagal sesaat, lalu halaman tujuan siap.
-    page.content.side_effect = [RuntimeError(_NAVIGATING), "<html><body>bab</body></html>", "<html><body>bab</body></html>"]
+    page.content.side_effect = [RuntimeError(_NAVIGATING)] + ["<html><body>bab</body></html>"] * 4
 
     result = sb.StealthyNovelAdapter()._fetch_playwright_sync("https://public.example/x", disable_resources=False)
     assert "bab" in result.html
