@@ -11,6 +11,21 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Resolve a stored cover URL into something an <img> can load reliably.
+ * Remote http(s) covers go through the backend proxy (handles hotlink protection and
+ * Cloudflare-protected hosts, and caches on disk); data:/blob:/local paths pass through.
+ */
+export function coverImageSrc(
+  url: string | null | undefined
+): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
+/**
  * Text colour for destructive actions. rose-500 measured ~3.1-3.7:1 on sepia/white and on the
  * dark-blue omni theme. rose-700 on the light themes (sepia, white), rose-300 on omni and
  * rose-400 on the near-black themes keep it >= 4.5:1 (WCAG 1.4.3).

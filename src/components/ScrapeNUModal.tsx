@@ -7,6 +7,7 @@ import IconButton from '@mui/material/IconButton';
 import { Search, Sparkles, Check, AlertCircle, X, Globe, Info, ArrowLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getApiUrl } from '@/lib/api';
+import { coverImageSrc } from '@/lib/utils';
 import { getTitleGradient } from './EditCoverModal';
 
 interface ScrapeNUModalProps {
@@ -281,7 +282,7 @@ export default function ScrapeNUModal({
               <div className="relative w-full aspect-[3/4] rounded-xl overflow-hidden shadow-xl border border-[var(--border)] bg-[var(--secondary)]">
                 {successData.cover_image ? (
                   <img
-                    src={successData.cover_image}
+                    src={coverImageSrc(successData.cover_image)}
                     alt="Novel Updates Cover"
                     className="w-full h-full object-cover"
                   />
@@ -415,7 +416,7 @@ export default function ScrapeNUModal({
                       <div className="w-10 h-14 shrink-0 rounded-md overflow-hidden bg-[var(--secondary)] border border-[var(--border)] relative">
                         {cand.cover_image ? (
                           <img
-                            src={cand.cover_image}
+                            src={coverImageSrc(cand.cover_image)}
                             alt="Cover thumbnail"
                             className="w-full h-full object-cover"
                           />
@@ -467,7 +468,7 @@ export default function ScrapeNUModal({
                     <div className="w-[70px] aspect-[3/4] rounded-lg overflow-hidden border border-[var(--border)] bg-[var(--secondary)] shrink-0 shadow-md">
                       {selectedCandidate.cover_image ? (
                         <img
-                          src={selectedCandidate.cover_image}
+                          src={coverImageSrc(selectedCandidate.cover_image)}
                           alt="Cover"
                           className="w-full h-full object-cover"
                         />

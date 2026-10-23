@@ -3,11 +3,11 @@ import hashlib
 from pathlib import Path
 import re
 from typing import Callable, List, Optional
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import Chapter, make_workspace_key
-from services.security import validate_external_url, create_safe_async_client
+from services.security import validate_external_url
+from services.image_fetcher import fetch_image_adaptive
 
 CACHE_DIR = (Path("uploads") / "cache" / "images").resolve()
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,6 +30,10 @@ def guess_image_ext_from_bytes(data: bytes) -> str:
         return "webp"
     if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
         return "gif"
+    if len(data) >= 12 and data[4:12] in (b"ftypavif", b"ftypavis"):
+        return "avif"
+    if data.startswith(b"BM"):
+        return "bmp"
     if data.startswith(b"<svg") or b"<svg" in data[:100].lower():
         return "svg+xml"
     return "jpeg"
@@ -62,6 +66,32 @@ def get_cached_image(url: str) -> Optional[tuple[bytes, str, Path]]:
     return None
 
 
+async def warm_cover_cache(url: Optional[str], workspace: Optional[str] = None) -> bool:
+    """
+    Best-effort: unduh cover remote sekali (dengan eskalasi anti-Cloudflare penuh) dan simpan ke
+    disk cache, sehingga /api/images/proxy langsung HIT. Tidak pernah melempar; return True bila
+    cover sudah/berhasil ter-cache.
+    """
+    if not url or not url.startswith(("http://", "https://")) or "\x00" in url:
+        return False
+    if get_cached_image(url):
+        return True
+    try:
+        fetched = await fetch_image_adaptive(url, workspace=workspace)
+        if not fetched:
+            return False
+        data, ext = fetched
+        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_file = (CACHE_DIR / f"{url_hash}.{ext}").resolve()
+        if not is_safe_cache_path(cache_file):
+            return False
+        cache_file.write_bytes(data)
+        return True
+    except Exception as e:
+        print(f"[ImageCacher] Cover warm-up skipped ({url[:60]}...: {type(e).__name__})")
+        return False
+
+
 async def prefetch_remote_images(
     urls: List[str],
     on_progress: Optional[Callable[[int, int], None]] = None
@@ -77,7 +107,7 @@ async def prefetch_remote_images(
     results: dict[str, tuple[bytes, str]] = {}
     completed_count = 0
 
-    async def _fetch_one(client: httpx.AsyncClient, url: str):
+    async def _fetch_one(url: str):
         nonlocal completed_count
         # Skip obvious dummy/placeholder URLs without network call
         if any(d in url.lower() for d in ["example.com", "placeholder", "test.com"]):
@@ -108,28 +138,19 @@ async def prefetch_remote_images(
 
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
 
-        # Not in cache; fetch over HTTP with aggressive connect timeout for dead domains
+        # Not in cache; fetch with tiered escalation (httpx -> curl_cffi). Browser tier is
+        # disabled here: bulk prefetch must not spawn a browser per illustration.
         async with sem:
             try:
-                headers = {
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    "Referer": "https://novalpie.cc/"
-                }
-                timeout = httpx.Timeout(8.0, connect=3.0)
-                resp = await client.get(url, headers=headers, timeout=timeout)
-                if resp.status_code == 200 and resp.content:
-                    data = resp.content
-                    ext = guess_image_ext_from_bytes(data) or "jpeg"
+                fetched = await fetch_image_adaptive(url, allow_browser=False)
+                if fetched:
+                    data, ext = fetched
                     cache_file = (CACHE_DIR / f"{url_hash}.{ext}").resolve()
                     if is_safe_cache_path(cache_file):
                         cache_file.write_bytes(data)
                     results[url] = (data, ext)
                 else:
-                    print(f"[Export] Notice: Image skipped ({url[:60]}... status {resp.status_code})")
+                    print(f"[Export] Notice: Image skipped ({url[:60]}... not retrievable)")
             except Exception as e:
                 print(f"[Export] Notice: Image skipped ({url[:60]}... unreachable: {type(e).__name__})")
             finally:
@@ -137,8 +158,7 @@ async def prefetch_remote_images(
                 if on_progress:
                     on_progress(completed_count, len(urls))
 
-    async with create_safe_async_client(follow_redirects=True) as client:
-        await asyncio.gather(*[_fetch_one(client, u) for u in urls])
+    await asyncio.gather(*[_fetch_one(u) for u in urls])
 
     return results
 

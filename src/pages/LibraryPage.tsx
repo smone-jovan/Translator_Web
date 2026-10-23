@@ -29,6 +29,7 @@ import {
   getWorkspaceStorageKey,
   invalidateThreadCache,
 } from "@/lib/api";
+import { coverImageSrc } from "@/lib/utils";
 import BulkTranslateModal from "@/components/BulkTranslateModal";
 import AutoAwesome from "@mui/icons-material/AutoAwesome";
 import Menu from "@mui/material/Menu";
@@ -144,7 +145,7 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
         >
           {thread.cover_image ? (
             <img
-              src={thread.cover_image}
+              src={coverImageSrc(thread.cover_image)}
               alt={thread.title}
               className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
@@ -989,7 +990,7 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                   <div className="w-24 md:w-32 aspect-[3/4] bg-[var(--card)] rounded-2xl shadow-xl flex-shrink-0 overflow-hidden border border-[var(--primary)]/10 rotate-[-2deg] group-hover:rotate-0 transition-transform duration-500 relative">
                     {book.cover_image ? (
                       <img
-                        src={book.cover_image}
+                        src={coverImageSrc(book.cover_image)}
                         alt={book.title}
                         className="w-full h-full object-cover"
                       />

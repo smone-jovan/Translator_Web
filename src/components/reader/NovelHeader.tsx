@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { BookOpen, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { cn, coverImageSrc } from '@/lib/utils';
 import type { ThreadDetail } from './types';
 
 interface NovelHeaderProps {
@@ -27,7 +27,7 @@ export default function NovelHeader({
         {thread.cover_image && (
           <div 
             className="absolute inset-0 z-0 bg-cover bg-center pointer-events-none scale-110 filter blur-[40px] brightness-[0.3] opacity-30"
-            style={{ backgroundImage: `url(${thread.cover_image})` }}
+            style={{ backgroundImage: `url("${coverImageSrc(thread.cover_image)}")` }}
           />
         )}
         {/* Subtle gradient overlay to blend backdrop smoothly */}
@@ -40,7 +40,7 @@ export default function NovelHeader({
             <div className="w-[180px] h-[250px] md:w-[220px] md:h-[308px] rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10 relative transition-transform duration-500 group-hover:scale-105">
               {thread.cover_image ? (
                 <img 
-                  src={thread.cover_image} 
+                  src={coverImageSrc(thread.cover_image)} 
                   alt={thread.title} 
                   className="w-full h-full object-cover"
                   onError={(e) => {

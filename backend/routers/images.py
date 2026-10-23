@@ -1,10 +1,10 @@
 import asyncio
 import hashlib
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
-import httpx
-from database import get_db, Thread, get_db_workspace, make_workspace_key, normalize_workspace
+from database import get_db, Thread, get_db_workspace, make_workspace_key, normalize_workspace, resolve_workspace
 from services.task_registry import spawn_background_task
+from services.image_fetcher import fetch_image_adaptive
 from services.image_cacher import (
     CACHE_DIR,
     ACTIVE_IMAGE_JOBS,
@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api", tags=["Images"])
 
 @router.get("/images/proxy")
 async def proxy_image(
+    request: Request,
     url: str = Query(..., description="Remote image URL to proxy and cache"),
     force: bool = Query(False, description="Force invalidate cache and redownload fresh image from source")
 ):
@@ -38,7 +39,7 @@ async def proxy_image(
         raise HTTPException(status_code=400, detail="Invalid characters in URL")
 
     # SSRF guard: block requests to internal/private IPs
-    from services.security import validate_external_url, create_safe_async_client
+    from services.security import validate_external_url
     validate_external_url(url)
 
     # 1. Check local cache first (unless force=True)
@@ -70,40 +71,27 @@ async def proxy_image(
 
     # 3. Not in cache; fetch over network
     try:
-        import urllib.parse
-        parsed = urllib.parse.urlparse(url)
-        referer = f"{parsed.scheme}://{parsed.netloc}/"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Referer": referer,
-        }
-        timeout = httpx.Timeout(12.0, connect=4.0)
-        async with create_safe_async_client(follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers, timeout=timeout)
-            if resp.status_code != 200 or not resp.content:
-                raise HTTPException(status_code=resp.status_code if resp.status_code in [403, 404] else 404, detail="Remote image not found")
+        # Eskalasi bertingkat (httpx -> curl_cffi -> browser stealth) untuk host berlindung Cloudflare.
+        fetched = await fetch_image_adaptive(url, workspace=resolve_workspace(request))
+        if fetched is None:
+            raise HTTPException(status_code=404, detail="Remote image not found")
 
-            data = resp.content
-            ext = guess_image_ext_from_bytes(data) or "jpeg"
-            url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
-            cache_file = (CACHE_DIR / f"{url_hash}.{ext}").resolve()
+        data, ext = fetched
+        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_file = (CACHE_DIR / f"{url_hash}.{ext}").resolve()
 
-            if is_safe_cache_path(cache_file):
-                cache_file.write_bytes(data)
+        if is_safe_cache_path(cache_file):
+            cache_file.write_bytes(data)
 
-            media_type = f"image/{ext}" if ext != "svg+xml" else "image/svg+xml"
-            return Response(
-                content=data,
-                media_type=media_type,
-                headers={
-                    "Cache-Control": "public, max-age=31536000, immutable",
-                    "X-Cache-Status": "MISS",
-                }
-            )
+        media_type = f"image/{ext}" if ext != "svg+xml" else "image/svg+xml"
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "X-Cache-Status": "MISS",
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:

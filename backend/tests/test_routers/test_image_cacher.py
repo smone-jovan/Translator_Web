@@ -26,6 +26,8 @@ def test_guess_image_ext():
     assert guess_image_ext_from_bytes(b"RIFF\x00\x00\x00\x00WEBP") == "webp"
     assert guess_image_ext_from_bytes(b"GIF89a\x01\x00") == "gif"
     assert guess_image_ext_from_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'>") == "svg+xml"
+    assert guess_image_ext_from_bytes(b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00") == "avif"
+    assert guess_image_ext_from_bytes(b"BM\x00\x00\x00\x00") == "bmp"
 
 
 def test_path_safety():
@@ -90,6 +92,85 @@ def test_proxy_image_miss_and_fetch(client):
 
     if cache_file.exists():
         cache_file.unlink()
+
+
+def test_proxy_image_uses_adaptive_fetcher_for_cloudflare_blocked_host(client):
+    remote_url = "https://cf-protected.org/cover.png"
+    fake_png = b"\x89PNG\r\n\x1a\nCOVER"
+    url_hash = hashlib.sha256(remote_url.encode("utf-8")).hexdigest()
+    cache_file = CACHE_DIR / f"{url_hash}.png"
+
+    with patch("services.security.validate_external_url"), \
+         patch("routers.images.fetch_image_adaptive", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = (fake_png, "png")
+        try:
+            res = client.get(f"/api/images/proxy?url={remote_url}")
+            assert res.status_code == 200
+            assert res.headers.get("x-cache-status") == "MISS"
+            assert res.content == fake_png
+            assert cache_file.exists()
+            mock_fetch.assert_awaited_once()
+        finally:
+            if cache_file.exists():
+                cache_file.unlink()
+
+
+def test_proxy_image_returns_404_when_all_tiers_fail(client):
+    remote_url = "https://cf-protected.org/unreachable.png"
+    with patch("services.security.validate_external_url"), \
+         patch("routers.images.fetch_image_adaptive", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = None
+        res = client.get(f"/api/images/proxy?url={remote_url}")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_warm_cover_cache_downloads_once_and_skips_when_cached():
+    from services.image_cacher import warm_cover_cache
+
+    url = "https://cf-protected.org/warm-cover.png"
+    fake_png = b"\x89PNG\r\n\x1a\nWARM"
+    cache_file = CACHE_DIR / f"{hashlib.sha256(url.encode('utf-8')).hexdigest()}.png"
+    try:
+        with patch("services.image_cacher.fetch_image_adaptive", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = (fake_png, "png")
+            assert await warm_cover_cache(url) is True
+            assert cache_file.read_bytes() == fake_png
+            assert await warm_cover_cache(url) is True  # sudah ter-cache
+            assert mock_fetch.await_count == 1
+    finally:
+        cache_file.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_warm_cover_cache_ignores_non_http_and_failures():
+    from services.image_cacher import warm_cover_cache
+
+    assert await warm_cover_cache("data:image/png;base64,AAAA") is False
+    assert await warm_cover_cache(None) is False
+    with patch("services.image_cacher.fetch_image_adaptive", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.side_effect = RuntimeError("boom")
+        assert await warm_cover_cache("https://cf-protected.org/x.png") is False
+
+
+def test_update_thread_cover_warms_cache_for_remote_url(client, db_session):
+    thread = Thread(title="Cover Warm Novel")
+    db_session.add(thread)
+    db_session.commit()
+    db_session.refresh(thread)
+    url = "https://fenrirealm.com/storage/4173/cover.png?width=600&height=800&format="
+
+    with patch("services.image_cacher.warm_cover_cache", new_callable=AsyncMock) as mock_warm:
+        res = client.put(f"/api/threads/{thread.id}/cover", json={"cover_image": url})
+        assert res.status_code == 200
+        assert res.json()["cover_image"] == url
+        mock_warm.assert_awaited_once()
+        assert mock_warm.await_args.args[0] == url
+
+    with patch("services.image_cacher.warm_cover_cache", new_callable=AsyncMock) as mock_warm:
+        res = client.put(f"/api/threads/{thread.id}/cover", json={"cover_image": "data:image/jpeg;base64,AAAA"})
+        assert res.status_code == 200
+        mock_warm.assert_not_called()
 
 
 def test_thread_cache_images_workflow(client, db_session):

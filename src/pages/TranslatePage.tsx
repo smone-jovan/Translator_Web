@@ -18,7 +18,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { cn, coverImageSrc } from "@/lib/utils";
 import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { toast } from "sonner";
 import { TocImportModal, type TocChapter } from "@/components/TocImportModal";
@@ -757,7 +757,7 @@ export default function TranslatePage({
                           >
                             {t.cover_image ? (
                               <img
-                                src={t.cover_image}
+                                src={coverImageSrc(t.cover_image)}
                                 alt=""
                                 className="w-5 h-7 rounded object-cover shrink-0"
                               />

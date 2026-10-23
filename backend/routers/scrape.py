@@ -1012,7 +1012,12 @@ async def scrape_metadata(
         thread.author = result.author
         
     db.commit()
-    
+
+    if result.cover_image:
+        from services.image_cacher import warm_cover_cache
+        from services.task_registry import spawn_background_task
+        spawn_background_task(warm_cover_cache(result.cover_image, workspace=get_db_workspace(db)))
+
     return {
         "success": True,
         "original_title": result.original_title,

@@ -751,7 +751,12 @@ class ThreadCoverUpdate(BaseModel):
 
 
 @router.put("/threads/{thread_id}/cover")
-def update_thread_cover(thread_id: int, payload: ThreadCoverUpdate, db: Session = Depends(get_db)):
+def update_thread_cover(
+    thread_id: int,
+    payload: ThreadCoverUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Update cover image for a thread (Base64 or URL)."""
     stmt = select(Thread).where(Thread.id == thread_id)
     thread = db.execute(stmt).scalar_one_or_none()
@@ -760,6 +765,9 @@ def update_thread_cover(thread_id: int, payload: ThreadCoverUpdate, db: Session 
     
     thread.cover_image = payload.cover_image
     db.commit()
+    if payload.cover_image and payload.cover_image.startswith(("http://", "https://")):
+        from services.image_cacher import warm_cover_cache
+        background_tasks.add_task(warm_cover_cache, payload.cover_image, get_db_workspace(db))
     return {"status": "success", "cover_image": thread.cover_image}
 
 

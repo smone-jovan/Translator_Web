@@ -9,6 +9,7 @@ import DialogActions from '@mui/material/DialogActions';
 import IconButton from '@mui/material/IconButton';
 import { UploadCloud, Link as LinkIcon, Sparkles, Trash2, Check, AlertCircle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { coverImageSrc } from '@/lib/utils';
 
 interface EditCoverModalProps {
   isOpen: boolean;
@@ -381,7 +382,7 @@ export default function EditCoverModal({
           <div className="relative w-full aspect-[3/4] rounded-xl overflow-hidden shadow-2xl border border-[var(--border)] group/preview bg-[var(--secondary)]">
             {previewSrc ? (
               <img
-                src={previewSrc}
+                src={coverImageSrc(previewSrc)}
                 alt="Book cover preview"
                 className="w-full h-full object-cover"
                 onError={() => {
