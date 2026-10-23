@@ -766,7 +766,8 @@ export default function ReaderPage({
 
       // Only the selected chapter may start a stream: while the next chapter loads, the button
       // still shows the previous chapterContent, and a delayed auto-translate can fire late.
-      if (isTranslating || !chId || chId !== selectedChapterIdRef.current) return;
+      if (isTranslating || !chId || chId !== selectedChapterIdRef.current)
+        return;
       translateAbortRef.current?.abort();
       const controller = new AbortController();
       translateAbortRef.current = controller;

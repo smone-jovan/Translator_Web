@@ -59,6 +59,10 @@ def test_module_level_sessions_never_write_the_real_databases():
             assert conn.execute("SELECT 1 FROM threads WHERE title = ?", (marker,)).fetchone()
         finally:
             conn.close()
+            # The session database is shared by the whole run; leave no book behind for others.
+            with database.get_session(workspace) as db:
+                db.query(Thread).filter(Thread.title == marker).delete()
+                db.commit()
 
 
 def test_launcher_log_never_appends_to_the_real_log_file():

@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from database import (
     get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark, get_db_workspace,
-    make_workspace_key,
+    make_workspace_key, get_session,
 )
 from services.cleaner_tools import CleanerTools
 from services.image_paths import delete_thread_images
@@ -1378,8 +1378,38 @@ def delete_thread(thread_id: int, db: Session = Depends(get_db)):
     ws = get_db_workspace(db)
     db.delete(thread)
     db.commit()
-    delete_thread_images(ws, thread_id)  # after commit: a failed delete must not orphan the DB row
+    if not _image_folder_shared_with_ghost(ws, thread_id):
+        delete_thread_images(ws, thread_id)  # after commit: a failed delete must not orphan the DB row
     return {"deleted": True, "id": thread_id}
+
+
+def _image_folder_shared_with_ghost(workspace: str, thread_id: int) -> bool:
+    """Before per-workspace folders, ghost thread N also wrote its images into main's thread_N
+    folder. Keep that folder while the ghost book with that id still links to it. This read-only
+    look into the ghost database is the one exception to keeping a request inside its workspace;
+    nothing from it reaches the response. When unsure, keep the folder."""
+    if workspace != "main":
+        return False
+    legacy_prefix = f"/images/thread_{int(thread_id)}/"
+    legacy_like = "%" + legacy_prefix.replace("_", "\\_") + "%"
+    try:
+        with get_session("ghost") as ghost_db:
+            ghost_thread = ghost_db.get(Thread, thread_id)
+            if ghost_thread is None:
+                return False
+            if legacy_prefix in (ghost_thread.cover_image or ""):
+                return True
+            linked = ghost_db.execute(
+                select(Chapter.id).where(
+                    Chapter.thread_id == thread_id,
+                    Chapter.content_original.like(legacy_like, escape="\\")
+                    | Chapter.content_translated.like(legacy_like, escape="\\"),
+                ).limit(1)
+            ).first()
+            return linked is not None
+    except Exception as e:
+        print(f"[WARN] Could not check ghost book {thread_id} for legacy images; keeping the folder: {e}")
+        return True
 
 
 class TranslationUpdate(BaseModel):

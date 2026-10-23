@@ -651,15 +651,17 @@ def init_db(target: str = "all"):
 
 def switch_workspace(target: str):
     """
-    Switches the active workspace globally.
-    If switching to ghost, it copies the settings from main to ghost so API keys are shared.
+    Prepares `target` for the client that is switching to it: makes sure its database exists and,
+    for ghost, copies the settings from main so API keys are shared.
+
+    The workspace itself is per request (X-Workspace header / cookie + ghost session, ADR-118).
+    The process-wide ACTIVE_WORKSPACE is deliberately left alone: changing it would move every
+    other device's unscoped fallbacks to this client's workspace.
     """
-    global ACTIVE_WORKSPACE
     if target not in ["main", "ghost"]:
         raise ValueError("Invalid workspace target")
 
-    ACTIVE_WORKSPACE = target
-    print(f"[WORKSPACE] Switched to {target} workspace.")
+    print(f"[WORKSPACE] Preparing {target} workspace.")
 
     # Initialize the target DB if it doesn't exist
     init_db(target=target)
