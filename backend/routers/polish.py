@@ -8,6 +8,7 @@ import json
 
 from database import get_db, Thread, Chapter, GlobalSetting
 from services.ai.factory import AIProviderFactory
+from services.context_engine import ContextEngine
 from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.prompt_templates import (
     build_title_cleaning_prompt,
@@ -195,7 +196,9 @@ async def translate_titles(
         # B. Translate Synopsis if still in source script (Chinese/Korean/Japanese)
         if thread.synopsis and contains_source_script(thread.synopsis):
             print(f"🔄 Translating source script synopsis/description...")
-            sys_prompt_syn = build_synopsis_translation_prompt(target_lang)
+            sys_prompt_syn = build_synopsis_translation_prompt(target_lang) + ContextEngine.build_glossary_hint(
+                db, thread_id, thread.synopsis
+            )
             user_prompt_syn = thread.synopsis
             try:
                 provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
@@ -407,6 +410,7 @@ async def translate_titles(
 
             chunk_source_lang = detect_source_language(" ".join(chunk_titles))
             sys_prompt = build_title_translation_prompt(target_lang, source_lang=chunk_source_lang)
+            sys_prompt += ContextEngine.build_glossary_hint(db, thread_id, chr(10).join(chunk_titles))
             user_prompt = "\n".join(prompt_lines)
 
             try:

@@ -189,6 +189,31 @@ class ContextEngine:
         return term.strip()
 
     @staticmethod
+    def build_glossary_hint(db: Session, thread_id: int, text: str, limit: int = 40) -> str:
+        """Glossary block for short texts (titles, synopsis): active terms of the thread that
+        appear in `text`, locked first. Empty string when nothing matches."""
+        if not text:
+            return ""
+        entries = db.execute(
+            select(LorebookEntry)
+            .where(LorebookEntry.thread_id == thread_id, LorebookEntry.is_archived == False)  # noqa: E712
+            .order_by(desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count), LorebookEntry.id)
+        ).scalars().all()
+        matched = [
+            e for e in entries
+            if e.translated_term and ContextEngine._term_matches_text(e.original_term, text)
+        ][:limit]
+        if not matched:
+            return ""
+        lines = [f"- {e.original_term} => {e.translated_term}" for e in matched]
+        nl = chr(10)
+        header = (
+            "[STRICT GLOSSARY - MANDATORY]" + nl
+            + "Always render these terms exactly as given, consistent with the book's chapters:" + nl
+        )
+        return nl + nl + header + nl.join(lines) + nl
+
+    @staticmethod
     def _term_matches_text(original_term: str, text: str) -> bool:
         """
         Check whether any clean variant of a glossary original_term appears in text.
