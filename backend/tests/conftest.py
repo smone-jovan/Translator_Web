@@ -18,6 +18,53 @@ _REAL_GETADDRINFO = socket.getaddrinfo
 _FAKE_PUBLIC_IP = "93.184.216.34"
 
 
+@pytest.fixture(autouse=True, scope="session")
+def isolated_module_databases(tmp_path_factory):
+    """
+    database.py binds app.db / ghost.db relative to the working directory, and the backend runs
+    with cwd=backend, so running pytest from there would migrate and write the real library.
+    Rebind the module-level engines (used by init_db) and sessionmakers (shared by every module
+    that imported them) to throwaway files for the whole session.
+    """
+    import database
+
+    tmp_dir = tmp_path_factory.mktemp("module_databases")
+    engines = {
+        name: create_engine(
+            f"sqlite:///{tmp_dir / f'{name}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 60},
+        )
+        for name in ("main", "ghost")
+    }
+    original_engines = (database.engine_main, database.engine_ghost)
+
+    database.engine_main, database.engine_ghost = engines["main"], engines["ghost"]
+    database.SessionLocalMain.configure(bind=engines["main"])
+    database.SessionLocalGhost.configure(bind=engines["ghost"])
+    yield
+    database.SessionLocalMain.configure(bind=original_engines[0])
+    database.SessionLocalGhost.configure(bind=original_engines[1])
+    database.engine_main, database.engine_ghost = original_engines
+    for engine in engines.values():
+        engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def isolated_secrets_file(monkeypatch, tmp_path):
+    """save_secrets() rewrites backend/.env, which holds the developer's real API keys."""
+    from services.ai import secrets
+
+    monkeypatch.setattr(secrets, "ENV_FILE_PATH", str(tmp_path / ".env"))
+
+
+@pytest.fixture(autouse=True)
+def isolated_launcher_log(monkeypatch, tmp_path):
+    """launcher.log() appends to the repo's real launcher.log; only matters once a test imported it."""
+    launcher = sys.modules.get("launcher")
+    if launcher is not None:
+        monkeypatch.setattr(launcher, "LOG_FILE", str(tmp_path / "launcher.log"))
+
+
 @pytest.fixture(autouse=True)
 def hermetic_dns(monkeypatch):
     """

@@ -299,7 +299,10 @@ class BackgroundTranslator:
 
             if fetch_only:
                 print(f"[FETCH_ONLY] Chapter {chapter_id} raw text successfully fetched. Skipping translation.")
-                chapter.translation_status = "idle"  # Keep it idle so it can be translated later
+                # Keep it idle so it can be translated later, but never demote a finished translation:
+                # the "done" status is what lets a later non-overwrite batch skip this chapter.
+                if not (chapter.translation_status == "done" and chapter.content_translated):
+                    chapter.translation_status = "idle"
                 db.commit()
                 return True
 
@@ -598,7 +601,7 @@ class BackgroundTranslator:
                         try:
                             ContextEngine.auto_save_glossary(db, thread_id, full_content)
                         except Exception as e:
-                            logger.warning(f"auto_save_glossary non-fatal error on chapter {chapter_id}: {e}")
+                            print(f"[WARN] auto_save_glossary non-fatal error on chapter {chapter_id}: {e}")
 
                         clean_to_save = ContextEngine.enforce_glossary_locking(db, thread_id, clean_to_save)
 

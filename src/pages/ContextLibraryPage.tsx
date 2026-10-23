@@ -611,6 +611,10 @@ export default function ContextLibraryPage() {
     }
   }, [showAddForm]);
 
+  // Thread whose data is on screen. Responses for any other thread are stale: switching A -> B
+  // quickly must not show A's glossary under B, nor let "Save" write A's context into B.
+  const activeThreadIdRef = useRef<number | null>(null);
+
   const fetchLorebook = useCallback(async (threadId: number) => {
     setIsLoadingEntries(true);
     try {
@@ -619,11 +623,12 @@ export default function ContextLibraryPage() {
       );
       if (!res.ok) throw new Error("Failed to load lorebook");
       const data = await res.json();
+      if (activeThreadIdRef.current !== threadId) return;
       setEntries(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Failed to fetch lorebook", e);
     } finally {
-      setIsLoadingEntries(false);
+      if (activeThreadIdRef.current === threadId) setIsLoadingEntries(false);
     }
   }, []);
 
@@ -632,6 +637,7 @@ export default function ContextLibraryPage() {
       const res = await fetch(getApiUrl(`/api/threads/${threadId}/context`));
       if (!res.ok) return;
       const data = await res.json();
+      if (activeThreadIdRef.current !== threadId) return;
       setThreadContext(data.thread_context || "");
       setStyleGuide(data.style_guide || "");
     } catch (e) {
@@ -646,6 +652,7 @@ export default function ContextLibraryPage() {
       );
       if (!res.ok) return;
       const data = await res.json();
+      if (activeThreadIdRef.current !== threadId) return;
       setRelationships(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Failed to fetch relationships", e);
@@ -704,19 +711,20 @@ export default function ContextLibraryPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedThreadId) {
-      setEntries([]);
-      setThreadContext("");
-      setStyleGuide("");
-      setSuggestions([]);
-      setRelationships([]);
-      setEditingEntryId(null);
-      setShowAddForm(false);
-      return;
-    }
+    activeThreadIdRef.current = selectedThreadId;
+    // Drop the previous thread's data at once, so nothing of it can be shown or saved under
+    // the new thread while its own data loads.
+    setEntries([]);
+    setThreadContext("");
+    setStyleGuide("");
     setSuggestions([]);
+    setRelationships([]);
     setEditingEntryId(null);
     setShowAddForm(false);
+    if (!selectedThreadId) {
+      setIsLoadingEntries(false);
+      return;
+    }
     fetchLorebook(selectedThreadId);
     fetchThreadContextAndStyle(selectedThreadId);
     fetchRelationships(selectedThreadId);
