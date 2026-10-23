@@ -649,6 +649,23 @@ def init_db(target: str = "all"):
         _migrate_engine(engine_ghost, "ghost.db")
 
 
+_SHARED_SETTINGS_MAIN_TO_GHOST = (
+    "openai_api_key", "gemini_api_key", "openrouter_api_key",
+    "openai_api_keys", "gemini_api_keys", "openrouter_api_keys",
+    "llm_provider", "openai_model", "gemini_model", "openrouter_model",
+    "ghost_pin",
+    # The Novalpie token lives in the shared backend/.env, so its on/off flag follows main too;
+    # otherwise adult novels (ADULT_VERIFICATION_REQUIRED) fail in ghost with the token present.
+    "novalpie_auth_enabled",
+)
+
+
+def sync_shared_settings_to_ghost(gs_main, gs_ghost) -> None:
+    """Copies the settings that are shared across workspaces from main onto ghost."""
+    for name in _SHARED_SETTINGS_MAIN_TO_GHOST:
+        setattr(gs_ghost, name, getattr(gs_main, name))
+
+
 def switch_workspace(target: str):
     """
     Prepares `target` for the client that is switching to it: makes sure its database exists and,
@@ -684,17 +701,6 @@ def switch_workspace(target: str):
                         db_ghost.commit()
                         print("[WORKSPACE] Initialized ghost.db settings from app.db")
                     else:
-                        # Always keep API keys & PIN synced from main to ghost
-                        gs_ghost.openai_api_key = gs_main.openai_api_key
-                        gs_ghost.gemini_api_key = gs_main.gemini_api_key
-                        gs_ghost.openrouter_api_key = gs_main.openrouter_api_key
-                        gs_ghost.openai_api_keys = gs_main.openai_api_keys
-                        gs_ghost.gemini_api_keys = gs_main.gemini_api_keys
-                        gs_ghost.openrouter_api_keys = gs_main.openrouter_api_keys
-                        gs_ghost.llm_provider = gs_main.llm_provider
-                        gs_ghost.openai_model = gs_main.openai_model
-                        gs_ghost.gemini_model = gs_main.gemini_model
-                        gs_ghost.openrouter_model = gs_main.openrouter_model
-                        gs_ghost.ghost_pin = gs_main.ghost_pin
+                        sync_shared_settings_to_ghost(gs_main, gs_ghost)
                         db_ghost.commit()
                         print("[WORKSPACE] Synced API keys & PIN to ghost.db")

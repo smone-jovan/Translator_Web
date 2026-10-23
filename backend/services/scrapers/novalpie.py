@@ -472,6 +472,22 @@ class NovalpieAdapter(BaseScraperAdapter):
                         detail_url=f"{self.BASE_URL}/book/{novel_id}"
                     )
                 else:
+                    error_code = ""
+                    try:
+                        body = resp.json()
+                        error_code = body.get("error_code", "") if isinstance(body, dict) else ""
+                    except Exception:
+                        pass
+                    if error_code == "ADULT_VERIFICATION_REQUIRED":
+                        return ScrapedNovelMetadata(
+                            success=False,
+                            title="",
+                            original_title=query,
+                            synopsis=(
+                                "Novalpie ADULT_VERIFICATION_REQUIRED: novel ini butuh akun terverifikasi. "
+                                "Aktifkan Novalpie Auth dan isi token di Pengaturan untuk workspace ini."
+                            )
+                        )
                     return ScrapedNovelMetadata(
                         success=False,
                         title="",

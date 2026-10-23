@@ -350,3 +350,37 @@ def test_parse_chapter_html_normalizes_image_urls():
 
 
 
+@pytest.mark.asyncio
+async def test_scrape_metadata_adult_verification_gives_actionable_message():
+    adapter = NovalpieAdapter()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 403
+    mock_resp.json.return_value = {
+        "success": False,
+        "error_code": "ADULT_VERIFICATION_REQUIRED",
+        "require_verification": True,
+    }
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_resp
+        meta = await adapter.scrape_metadata("https://novalpie.cc/book/350000")
+
+    assert meta.success is False
+    assert "ADULT_VERIFICATION_REQUIRED" in meta.synopsis
+    assert "Novalpie" in meta.synopsis and "workspace" in meta.synopsis.lower()
+
+
+def test_sync_shared_settings_copies_novalpie_auth_flag_to_ghost():
+    from types import SimpleNamespace
+    from database import sync_shared_settings_to_ghost
+
+    names = ("openai_api_key", "gemini_api_key", "openrouter_api_key", "openai_api_keys",
+             "gemini_api_keys", "openrouter_api_keys", "llm_provider", "openai_model",
+             "gemini_model", "openrouter_model", "ghost_pin")
+    main = SimpleNamespace(**{n: f"main-{n}" for n in names}, novalpie_auth_enabled=1)
+    ghost = SimpleNamespace(**{n: "old" for n in names}, novalpie_auth_enabled=0)
+
+    sync_shared_settings_to_ghost(main, ghost)
+
+    assert ghost.novalpie_auth_enabled == 1
+    assert ghost.ghost_pin == "main-ghost_pin"
