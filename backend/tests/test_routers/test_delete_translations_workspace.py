@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from database import Base, Thread, make_workspace_key
 from main import app
-from services.background_translator import ActiveBatch, active_batches
+from services.background_translator import ActiveBatch, active_batches, recent_finished_batches
 
 
 def _memory_factory():
@@ -32,8 +32,10 @@ def dual_workspaces(monkeypatch):
         lambda ws="main": factories["ghost" if str(ws).lower() == "ghost" else "main"],
     )
     active_batches.clear()
+    recent_finished_batches.clear()
     yield factories
     active_batches.clear()
+    recent_finished_batches.clear()
 
 
 def _register_batch(workspace: str) -> ActiveBatch:

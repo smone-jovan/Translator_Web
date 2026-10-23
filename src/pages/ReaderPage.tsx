@@ -734,21 +734,21 @@ export default function ReaderPage({
     };
   }, [prefetchEnabled, fetchThread, thread?.chapters]);
 
-  // Live translation stream. Aborted when the reader moves to another chapter (keyed by id, not
-  // index, so deleting an earlier chapter does not cut it) or unmounts: a stream started for
-  // chapter A must never write into, and then get saved as, chapter B.
+  // Live translation stream. Aborted when the selected chapter id changes or the reader unmounts:
+  // a stream for chapter A must never write into, and then get saved as, chapter B.
   const translateAbortRef = useRef<AbortController | null>(null);
+  const selectedChapterIdRef = useRef<number | null>(null);
   const selectedChapterId =
     selectedChapterIdx !== null
       ? (thread?.chapters?.[selectedChapterIdx]?.id ?? null)
       : null;
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    selectedChapterIdRef.current = selectedChapterId;
+    return () => {
       translateAbortRef.current?.abort();
       translateAbortRef.current = null;
-    },
-    [selectedChapterId]
-  );
+    };
+  }, [selectedChapterId]);
 
   const handleTranslateChapter = useCallback(
     async (
@@ -762,7 +762,10 @@ export default function ReaderPage({
         overrideContent || chapterContent?.content_original || "";
       const chId = overrideId || chapterContent?.id;
 
-      if (isTranslating || !chId) return;
+      // Only the selected chapter may start a stream: while the next chapter loads, the button
+      // still shows the previous chapterContent, and a delayed auto-translate can fire late.
+      if (isTranslating || !chId || chId !== selectedChapterIdRef.current) return;
+      translateAbortRef.current?.abort();
       const controller = new AbortController();
       translateAbortRef.current = controller;
       const isActiveStream = () => translateAbortRef.current === controller;

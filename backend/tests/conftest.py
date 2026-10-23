@@ -41,6 +41,9 @@ def isolated_module_databases(tmp_path_factory):
     database.engine_main, database.engine_ghost = engines["main"], engines["ghost"]
     database.SessionLocalMain.configure(bind=engines["main"])
     database.SessionLocalGhost.configure(bind=engines["ghost"])
+    # Create the schema up front, as app startup does, so no test depends on an earlier one
+    # having run the lifespan (or on tables left behind in a developer's real database).
+    database.init_db("all")
     yield
     database.SessionLocalMain.configure(bind=original_engines[0])
     database.SessionLocalGhost.configure(bind=original_engines[1])

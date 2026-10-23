@@ -614,6 +614,9 @@ export default function ContextLibraryPage() {
   // Thread whose data is on screen. Responses for any other thread are stale: switching A -> B
   // quickly must not show A's glossary under B, nor let "Save" write A's context into B.
   const activeThreadIdRef = useRef<number | null>(null);
+  // Thread whose context/style guide was actually loaded; saving before that would overwrite the
+  // stored text with the empty fields shown while loading.
+  const contextLoadedForRef = useRef<number | null>(null);
 
   const fetchLorebook = useCallback(async (threadId: number) => {
     setIsLoadingEntries(true);
@@ -640,6 +643,7 @@ export default function ContextLibraryPage() {
       if (activeThreadIdRef.current !== threadId) return;
       setThreadContext(data.thread_context || "");
       setStyleGuide(data.style_guide || "");
+      contextLoadedForRef.current = threadId;
     } catch (e) {
       console.error("Failed to fetch thread context", e);
     }
@@ -712,6 +716,7 @@ export default function ContextLibraryPage() {
 
   useEffect(() => {
     activeThreadIdRef.current = selectedThreadId;
+    contextLoadedForRef.current = null;
     // Drop the previous thread's data at once, so nothing of it can be shown or saved under
     // the new thread while its own data loads.
     setEntries([]);
@@ -806,6 +811,10 @@ export default function ContextLibraryPage() {
 
   const saveThreadRulesAndStyle = async () => {
     if (!selectedThreadId) return;
+    if (contextLoadedForRef.current !== selectedThreadId) {
+      toast.error("Konteks novel belum termuat. Tunggu sebentar lalu coba lagi.");
+      return;
+    }
     setIsSavingThreadCtx(true);
     try {
       const res = await apiJson(`/api/threads/${selectedThreadId}/context`, {
@@ -1204,21 +1213,19 @@ export default function ContextLibraryPage() {
 
   const handleExtractContext = async () => {
     if (!selectedThreadId) return;
+    const threadId = selectedThreadId;
     setIsExtracting(true);
     setAiReasoning("");
     setShowAiReasoning(false);
     const lmUrl = localStorage.getItem("lm_url") || "http://localhost:1234";
     const lmModel = localStorage.getItem("lm_model") || "";
     try {
-      const res = await apiJson(
-        `/api/threads/${selectedThreadId}/extract-context`,
-        {
-          lm_url: lmUrl,
-          model: lmModel || undefined,
-          chapter_count: extractSettings.chapterCount,
-          sample_size: extractSettings.sampleSize,
-        }
-      );
+      const res = await apiJson(`/api/threads/${threadId}/extract-context`, {
+        lm_url: lmUrl,
+        model: lmModel || undefined,
+        chapter_count: extractSettings.chapterCount,
+        sample_size: extractSettings.sampleSize,
+      });
       let data: any = {};
       try {
         data = await res.json();
@@ -1227,6 +1234,9 @@ export default function ContextLibraryPage() {
           cause: err,
         });
       }
+      // This LLM call takes a while: if the user moved to another book meanwhile, these terms
+      // must not be offered (and bulk-added) under that book.
+      if (activeThreadIdRef.current !== threadId) return;
       if (!res.ok) throw new Error(data.detail || "Ekstraksi gagal.");
       if (data.metadata?.reasoning) setAiReasoning(data.metadata.reasoning);
 
