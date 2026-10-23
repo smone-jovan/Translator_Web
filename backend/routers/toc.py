@@ -86,6 +86,69 @@ def _same_site_host(netloc_a: str, netloc_b: str) -> bool:
     return a == b or a.endswith(f".{b}") or b.endswith(f".{a}")
 
 
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+_TITLE_NUM_ARABIC_RE = re.compile(r"第\s*(\d+)\s*[章节話话回]|(?:chapter|ch\.?|bab)\s*(\d+)", re.IGNORECASE)
+_TITLE_NUM_CN_RE = re.compile(r"第\s*([零〇一二两三四五六七八九十百千]+)\s*[章节話话回]")
+_TITLE_NUM_AFTER_VOLUME_RE = re.compile(r"[卷部]\s*(\d+)")
+_TITLE_NUM_LEADING_RE = re.compile(r"^\s*(\d+)")
+_MIN_ORDER_PAIRS = 3
+_DESCENDING_RATIO = 0.8
+
+
+def _cn_numeral_to_int(text: str) -> Optional[int]:
+    total, current = 0, 0
+    for ch in text:
+        if ch in _CN_DIGITS:
+            current = _CN_DIGITS[ch]
+        elif ch in _CN_UNITS:
+            total += (current or 1) * _CN_UNITS[ch]
+            current = 0
+        else:
+            return None
+    return total + current
+
+
+def _chapter_number_from_title(title: str) -> Optional[int]:
+    match = _TITLE_NUM_ARABIC_RE.search(title or "")
+    if match:
+        return int(match.group(1) or match.group(2))
+    match = _TITLE_NUM_CN_RE.search(title or "")
+    if match:
+        return _cn_numeral_to_int(match.group(1))
+    match = _TITLE_NUM_AFTER_VOLUME_RE.search(title or "") or _TITLE_NUM_LEADING_RE.search(title or "")
+    return int(match.group(1)) if match else None
+
+
+def _chapter_number_from_url(url: str) -> Optional[int]:
+    digits = re.findall(r"\d+", urllib.parse.urlparse(url or "").path)
+    return int(digits[-1]) if digits else None
+
+
+def _is_descending(numbers: List[Optional[int]]) -> bool:
+    """True only when the numbered items clearly run high -> low (>= 80% of adjacent pairs)."""
+    known = [n for n in numbers if n is not None]
+    if len(known) < _MIN_ORDER_PAIRS + 1 or len(known) < 0.6 * len(numbers):
+        return False
+    pairs = list(zip(known, known[1:]))
+    descending = sum(1 for a, b in pairs if b < a)
+    return descending >= _DESCENDING_RATIO * len(pairs)
+
+
+def ensure_chronological_order(chapters: list) -> list:
+    """Return chapters oldest-first. Some sites list newest-first; importing that as-is makes
+    'Chapter 1' the story's last chapter. Detect from title numbers, else from URL ids, and only
+    reverse when the evidence is clear. Never mutates the input."""
+    if len(chapters) < _MIN_ORDER_PAIRS + 1:
+        return chapters
+    title_numbers = [_chapter_number_from_title(c["title"]) for c in chapters]
+    if sum(n is not None for n in title_numbers) >= 0.6 * len(chapters):
+        descending = _is_descending(title_numbers)
+    else:
+        descending = _is_descending([_chapter_number_from_url(c["url"]) for c in chapters])
+    return list(reversed(chapters)) if descending else chapters
+
+
 def extract_links_from_html(html_text: str, base_url: str):
     soup = BeautifulSoup(html_text, "html.parser")
     meta = extract_universal_metadata(html_text, url=base_url)
@@ -250,7 +313,7 @@ async def scrape_toc(req: TOCScrapeRequest, request: Request = None):
     except Exception as e:
         raise HTTPException(502, f"Failed to fetch URL: {e}")
 
-    return TOCScrapeResponse(title=novel_title, chapters=links)
+    return TOCScrapeResponse(title=novel_title, chapters=ensure_chronological_order(links))
 
 
 @router.post("/threads/bulk-import-toc")
