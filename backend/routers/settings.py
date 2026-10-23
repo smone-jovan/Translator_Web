@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from urllib.parse import urlparse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 import json
 from database import get_db, GlobalSetting, Thread
+from services.ai.settings import OFFICIAL_PROVIDER_URLS
+from services import pin
 from services.ai.secrets import load_secrets, save_secrets, mask_secret, is_masked_secret, resolve_masked_keys
 
 router = APIRouter(prefix="/api", tags=["Settings"])
@@ -12,6 +15,7 @@ class ContextUpdate(BaseModel):
     context: str
 
 class GlobalSettingsUpdate(BaseModel):
+    current_ghost_pin: str | None = None
     lm_url: str | None = None
     lm_model: str | None = None
     target_language: str | None = None
@@ -111,6 +115,17 @@ def update_global_context(req: ContextUpdate, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "ok"}
 
+def _url_host(url: str | None) -> str:
+    parsed = urlparse((url or "").strip())
+    return (parsed.hostname or "").lower() + (f":{parsed.port}" if parsed.port else "")
+
+
+def _require_http_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="URL harus http(s) tanpa kredensial")
+
+
 @router.post("/settings")
 def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     stmt = select(GlobalSetting)
@@ -143,12 +158,25 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     gs.novalpie_cookie = ""
 
     if req.llm_provider is not None: gs.llm_provider = req.llm_provider
-    if req.openai_url is not None: gs.openai_url = req.openai_url
+    if req.openai_url is not None:
+        new_openai_url = req.openai_url.strip()
+        if new_openai_url:
+            _require_http_url(new_openai_url)
+        if _url_host(new_openai_url) != _url_host(gs.openai_url or OFFICIAL_PROVIDER_URLS["openai"]):
+            # Key tersimpan tidak boleh ikut pindah ke host baru (cegah exfiltrasi); user harus input ulang.
+            save_secrets(openai_api_key="")
+            gs.openai_api_keys = "[]"
+            gs.openai_active_key_index = 0
+        gs.openai_url = new_openai_url
     if req.openai_model is not None: gs.openai_model = req.openai_model
     if req.gemini_model is not None: gs.gemini_model = req.gemini_model
     if req.openrouter_model is not None: gs.openrouter_model = req.openrouter_model
     if req.ghost_pin is not None and not is_masked_secret(req.ghost_pin):
-        gs.ghost_pin = req.ghost_pin
+        if not pin.verify_pin(gs.ghost_pin, req.current_ghost_pin):
+            raise HTTPException(status_code=403, detail="PIN lama salah")
+        if not req.ghost_pin.strip():
+            raise HTTPException(status_code=400, detail="PIN baru tidak boleh kosong")
+        gs.ghost_pin = pin.hash_pin(req.ghost_pin)
 
     real_openai = req.openai_api_key if (req.openai_api_key is not None and not is_masked_secret(req.openai_api_key)) else None
     real_gemini = req.gemini_api_key if (req.gemini_api_key is not None and not is_masked_secret(req.gemini_api_key)) else None

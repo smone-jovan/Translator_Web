@@ -26,14 +26,7 @@ if %ERRORLEVEL% neq 0 (
     echo  [OK] Port 5173 sudah terbuka
 )
 
-echo  [*] Membuka port 8000 (Backend FastAPI)...
-netsh advfirewall firewall show rule name="ReadOmni AI - Backend (FastAPI)" >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    netsh advfirewall firewall add rule name="ReadOmni AI - Backend (FastAPI)" dir=in action=allow protocol=TCP localport=8000 profile=private,domain >nul
-    echo  [OK] Port 8000 berhasil dibuka
-) else (
-    echo  [OK] Port 8000 sudah terbuka
-)
+:: Port 8000 (backend) sengaja TIDAK dibuka: HP mengakses lewat proxy Vite (5173), backend hanya loopback.
 
 echo.
 echo  ══════════════════════════════════════════════

@@ -5,7 +5,7 @@ from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
-from services.security import validate_external_url, create_safe_async_client
+from services.security import validate_external_url, create_safe_async_client, egress_proxies
 
 class SFACGAdapter(BaseScraperAdapter):
     """
@@ -204,7 +204,7 @@ class SFACGAdapter(BaseScraperAdapter):
         print(f"[SFACG] Direct scraping target URL: {target_url}")
 
         try:
-            async with AsyncSession() as client:
+            async with AsyncSession(proxies=egress_proxies()) as client:
                 resp = await client.get(target_url, headers=self.headers, impersonate="chrome110", timeout=15.0)
                 if resp.status_code != 200:
                     return ScrapedNovelMetadata(

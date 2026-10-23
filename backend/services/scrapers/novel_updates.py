@@ -5,7 +5,7 @@ from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 
 from services.scrapers.base import BaseScraperAdapter, ScrapedNovelMetadata
-from services.security import follow_redirects_safely
+from services.security import egress_proxies, follow_redirects_safely
 
 _NOVELUPDATES_HOSTS = {"novelupdates.com", "www.novelupdates.com"}
 
@@ -117,7 +117,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
             google_url = f"https://www.google.com/search?q={encoded_query}&num=10"
             
             print(f"[NovelUpdates] Searching Google: {google_url}")
-            async with AsyncSession() as client:
+            async with AsyncSession(proxies=egress_proxies()) as client:
                 resp = await client.get(google_url, headers=self.headers, impersonate="chrome120", timeout=12.0)
                 if resp.status_code != 200:
                     print(f"[NovelUpdates] Google search returned status {resp.status_code}")
@@ -168,7 +168,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         
         try:
             from curl_cffi.requests import AsyncSession
-            async with AsyncSession() as client:
+            async with AsyncSession(proxies=egress_proxies()) as client:
                 resp = await client.get(url, headers=self.headers, impersonate="chrome120", timeout=12.0)
                 if resp.status_code == 200:
                     soup = BeautifulSoup(resp.text, 'html.parser')
@@ -423,7 +423,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
         
         try:
             print(f"[NovelUpdates] Enhancing metadata from: {meta.detail_url}")
-            async with AsyncSession() as client:
+            async with AsyncSession(proxies=egress_proxies()) as client:
                 resp = await self._fetch_series_page(client, meta.detail_url)
                 if resp is not None and resp.status_code == 200:
                     detail_meta = await self._parse_html(resp.text, meta.detail_url, query, True)
@@ -446,7 +446,7 @@ class NovelUpdatesAdapter(BaseScraperAdapter):
     async def _scrape_detail_page(self, url: str, query: str, include_cover: bool) -> ScrapedNovelMetadata:
         """Scrape detail page directly."""
         try:
-            async with AsyncSession() as client:
+            async with AsyncSession(proxies=egress_proxies()) as client:
                 resp = await self._fetch_series_page(client, url)
                 if resp is not None and resp.status_code == 200:
                     return await self._parse_html(resp.text, url, query, include_cover)

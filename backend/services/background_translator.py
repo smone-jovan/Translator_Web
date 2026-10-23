@@ -231,12 +231,12 @@ class BackgroundTranslator:
                 if getattr(chapter, "source_url", None):
                     print(f"[SCRAPE] Chapter {chapter_id} has no content. Scraping on-demand from {chapter.source_url}")
                     try:
-                        from routers.scrape import scrape_url, ScrapeRequest
+                        from routers.scrape import scrape_url_in_workspace, ScrapeRequest
                         max_scrape_attempts = 3
                         scrape_resp = None
                         for s_attempt in range(1, max_scrape_attempts + 1):
                             try:
-                                scrape_resp = await scrape_url(ScrapeRequest(url=chapter.source_url), workspace=workspace)
+                                scrape_resp = await scrape_url_in_workspace(ScrapeRequest(url=chapter.source_url), workspace)
                                 if scrape_resp and scrape_resp.markdown and len(scrape_resp.markdown.strip()) >= 50:
                                     err_keywords = ["加载章节内容失败", "请求过于频繁", "请稍后再试", "Ray ID:", "Cloudflare Turnstile blocked"]
                                     if not any(k in scrape_resp.markdown for k in err_keywords):

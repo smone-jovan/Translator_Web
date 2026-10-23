@@ -21,7 +21,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
 from database import get_db, SessionLocal, Thread, Chapter, GlobalSetting, resolve_workspace, get_db_workspace
-from services.security import validate_external_url, create_safe_async_client
+from services.security import (
+    MAX_HTML_BYTES,
+    ResponseTooLarge,
+    create_safe_async_client,
+    validate_external_url,
+)
 from services.scrapers.engine import MetadataScraperEngine
 from services.scrapers.adaptive_dom import (
     AdaptiveDOM,
@@ -665,11 +670,14 @@ async def fetch_html_adaptive(
             follow_redirects=True,
             timeout=30.0,
             headers=_DEFAULT_BROWSER_HEADERS,
+            max_response_bytes=MAX_HTML_BYTES,
         ) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html_text = decode_response_html(resp)
             final_url = str(resp.url) if getattr(resp, "url", None) else url
+    except ResponseTooLarge:
+        raise HTTPException(status_code=413, detail="Halaman terlalu besar")
     except httpx.HTTPStatusError as exc:
         primary_exc = exc
         if exc.response is None or exc.response.status_code not in (403, 429, 503):
@@ -683,13 +691,14 @@ async def fetch_html_adaptive(
     if needs_escalation:
         try:
             from curl_cffi.requests import AsyncSession
-            from services.security import follow_redirects_safely
+            from services.security import egress_proxies, follow_redirects_safely
             # Redirect diikuti manual: setiap hop divalidasi SEBELUM diminta (ADR-126).
             async with AsyncSession(
                 impersonate="chrome120",
                 headers=_DEFAULT_BROWSER_HEADERS,
                 timeout=25.0,
                 allow_redirects=False,
+                proxies=egress_proxies(),
             ) as cf_session:
                 cf_resp, cf_final_url = await follow_redirects_safely(
                     lambda u: cf_session.get(u, allow_redirects=False), url
@@ -735,8 +744,13 @@ async def fetch_html_adaptive(
 
 
 @router.post("/scrape", response_model=ScrapeResponse)
-async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Optional[str] = None):
-    """Fetch URL, strip ads/nav, return clean markdown."""
+async def scrape_url(req: ScrapeRequest, request: Request = None):
+    """Fetch URL, strip ads/nav, return clean markdown. Workspace hanya dari sesi request (bukan param publik)."""
+    return await scrape_url_in_workspace(req, resolve_workspace(request))
+
+
+async def scrape_url_in_workspace(req: ScrapeRequest, ws: str):
+    """Implementasi scrape dengan workspace eksplisit; dipakai worker internal yang sudah tahu workspace-nya."""
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
 
@@ -750,7 +764,6 @@ async def scrape_url(req: ScrapeRequest, request: Request = None, workspace: Opt
             "This is a Novel TOC URL. Please use the 'Extract TOC' button (list icon) instead to import all chapters.",
         )
 
-    ws = workspace or resolve_workspace(request)
 
     # 1. Dedicated Adapter: Novalpie
     if is_domain(req.url, "novalpie.cc"):

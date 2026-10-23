@@ -19,6 +19,8 @@ except ImportError:
     HAS_EBOOKLIB = False
 
 from database import get_db, Thread, Chapter
+from services.image_fetcher import sniff_raster_ext
+from services.security import check_zip_safe, read_upload_limited
 
 router = APIRouter(prefix="/api", tags=["EPUB"])
 
@@ -116,7 +118,8 @@ async def upload_epub(
     if not file.filename or not file.filename.lower().endswith(".epub"):
         raise HTTPException(400, "File must be .epub")
 
-    content = await file.read()
+    content = await read_upload_limited(file)
+    check_zip_safe(content)
 
     try:
         book = epub.read_epub(io.BytesIO(content))
@@ -188,13 +191,21 @@ async def upload_epub(
             if not clean_name:
                 continue
 
+            # Hanya raster hasil sniff magic bytes; SVG/HTML ditolak (stored XSS). Ekstensi diganti hasil sniff.
+            content = img_item.get_content()
+            sniffed_ext = sniff_raster_ext(content)
+            if not sniffed_ext:
+                print(f"⚠️ Skipped non-raster image: {clean_name}")
+                continue
+            clean_name = f"{Path(clean_name).stem}.{sniffed_ext}"
+
             candidate_path = (base_img_dir / clean_name).resolve()
             if not candidate_path.is_relative_to(base_img_dir) or candidate_path == base_img_dir:
                 continue
 
             try:
                 with open(candidate_path, "wb") as f:
-                    f.write(img_item.get_content())
+                    f.write(content)
                 # Add to map (public url) for both raw path and basename
                 img_url = f"/images/thread_{thread.id}/{clean_name}"
                 image_map[raw_name] = img_url

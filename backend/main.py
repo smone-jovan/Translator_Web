@@ -13,15 +13,17 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
+import ipaddress
 import os
 from pathlib import Path
 import mimetypes
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
+from services.image_fetcher import sniff_raster_ext
 
 from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images
 
@@ -68,6 +70,34 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_extra_allowed_hosts = {h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()}
+
+
+def is_allowed_host(host_header: str) -> bool:
+    """Tolak Host berupa nama domain asing (DNS rebinding, A-02). Literal IP, localhost, *.local, dan ALLOWED_HOSTS lolos."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.rsplit(":", 1)[0]
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return host in _LOOPBACK_HOSTS or host.endswith(".local") or host in _extra_allowed_hosts
+
+
+@app.middleware("http")
+async def reject_foreign_host(request, call_next):
+    if not is_allowed_host(request.headers.get("host", "")):
+        return JSONResponse({"detail": "Invalid host header"}, status_code=400)
+    return await call_next(request)
+
+
 # CORS — Restrict to loopback, private LAN (RFC 1918), and local mDNS to prevent arbitrary internet origin abuse
 allowed_origins_env = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 cors_origin_regex = (
@@ -94,13 +124,9 @@ def guess_image_ext(file_path: str) -> str:
     try:
         with open(file_path, "rb") as f:
             header = f.read(12)
-        if header.startswith(b"\xff\xd8"): return "jpeg"
-        if header.startswith(b"\x89PNG\r\n\x1a\n"): return "png"
-        if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"): return "gif"
-        if header.startswith(b"RIFF") and header[8:12] == b"WEBP": return "webp"
+        return sniff_raster_ext(header) or ""
     except Exception:
-        pass
-    return ""
+        return ""
 
 @app.get("/images/{rest_of_path:path}", tags=["Images"])
 async def serve_images(rest_of_path: str):
@@ -124,16 +150,19 @@ async def serve_images(rest_of_path: str):
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
 
-    file_path_str = str(candidate)
-    media_type, _ = mimetypes.guess_type(file_path_str)
-    if not media_type:
-        ext = guess_image_ext(file_path_str)
-        if ext:
-            media_type = f"image/{ext}"
-        else:
-            media_type = "application/octet-stream"
+    # Tipe ditentukan dari magic bytes (bukan ekstensi); selain raster -> 404 (cegah stored XSS via SVG/HTML).
+    ext = guess_image_ext(str(candidate))
+    if not ext:
+        raise HTTPException(status_code=404, detail="Image not found")
 
-    return FileResponse(file_path_str, media_type=media_type)
+    return FileResponse(
+        str(candidate),
+        media_type=f"image/{ext}",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
 
 
 @app.get("/", tags=["Health"])

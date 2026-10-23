@@ -100,13 +100,8 @@ class TestResolveActiveModel:
 class TestResolveActiveBaseUrl:
     """Tests for resolve_active_base_url()."""
 
-    def test_returns_requested_url_when_provided(self):
-        result = resolve_active_base_url(None, "http://custom:8080")
-        assert result == "http://custom:8080"
-
-    def test_strips_trailing_slash(self):
-        result = resolve_active_base_url(None, "http://custom:8080/")
-        assert result == "http://custom:8080"
+    def test_ignores_requested_url_without_settings(self):
+        assert resolve_active_base_url(None, "http://custom:8080") == "http://localhost:1234"
 
     def test_defaults_to_localhost_when_no_settings(self):
         assert resolve_active_base_url(None) == "http://localhost:1234"

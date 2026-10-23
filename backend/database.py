@@ -4,6 +4,8 @@ Tabel: threads, chapters, lorebook_entries, translation_segments, user_bookmarks
 """
 
 import re
+import secrets
+import time
 from typing import List, Optional, Any
 from datetime import datetime
 from contextlib import contextmanager
@@ -73,15 +75,42 @@ def SessionLocal(workspace: Optional[str] = None):
     return db
 
 
+GHOST_SESSION_COOKIE = "readomni_ghost_session"
+GHOST_SESSION_TTL_SECONDS = 30 * 24 * 3600
+# token sesi ghost -> waktu kedaluwarsa (epoch). Hanya di memori: restart server = PIN ulang.
+_ghost_sessions: dict[str, float] = {}
+
+
+def issue_ghost_session() -> str:
+    """Terbitkan token acak setelah PIN Ghost terverifikasi (A-01)."""
+    now = time.time()
+    for token in [t for t, exp in _ghost_sessions.items() if exp <= now]:
+        _ghost_sessions.pop(token, None)
+    token = secrets.token_urlsafe(32)
+    _ghost_sessions[token] = now + GHOST_SESSION_TTL_SECONDS
+    return token
+
+
+def revoke_ghost_session(token: Optional[str]) -> None:
+    if token:
+        _ghost_sessions.pop(token, None)
+
+
+def has_ghost_session(request: Optional[Any]) -> bool:
+    cookies = getattr(request, "cookies", None) or {}
+    token = cookies.get(GHOST_SESSION_COOKIE)
+    expiry = _ghost_sessions.get(token) if token else None
+    return expiry is not None and expiry > time.time()
+
+
 def resolve_workspace(request: Optional[Any] = None) -> str:
+    """Workspace request. 'ghost' hanya diberikan bila cookie sesi ghost valid; header/cookie nama saja tidak cukup."""
     if request is not None and hasattr(request, "headers"):
-        ws = request.headers.get("X-Workspace") or request.headers.get("x-workspace")
-        if ws and str(ws).lower() in ["main", "ghost"]:
-            return str(ws).lower()
-        if hasattr(request, "cookies"):
-            cookie_ws = request.cookies.get("readomni_workspace")
-            if cookie_ws and str(cookie_ws).lower() in ["main", "ghost"]:
-                return str(cookie_ws).lower()
+        requested = request.headers.get("X-Workspace") or request.headers.get("x-workspace")
+        if not requested and hasattr(request, "cookies"):
+            requested = request.cookies.get("readomni_workspace")
+        if requested and str(requested).lower() == "ghost" and has_ghost_session(request):
+            return "ghost"
         return "main"
     if ACTIVE_WORKSPACE in ["main", "ghost"]:
         return ACTIVE_WORKSPACE

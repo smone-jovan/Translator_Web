@@ -419,9 +419,7 @@ export default function SettingsPage() {
   const [showOpenrouterKey, setShowOpenrouterKey] = useState(false);
 
   // Ghost Mode PIN State
-  const [ghostPin, setGhostPin] = useState(
-    () => localStorage.getItem("ghost_pin") || "03697"
-  );
+  const [currentGhostPinInput, setCurrentGhostPinInput] = useState("");
   const [newGhostPinInput, setNewGhostPinInput] = useState("");
   const [showGhostPinText, setShowGhostPinText] = useState(false);
   const [ghostPinStatus, setGhostPinStatus] = useState<string | null>(null);
@@ -470,10 +468,6 @@ export default function SettingsPage() {
       if (data.openrouter_api_key !== undefined) {
         setOpenrouterApiKey(data.openrouter_api_key);
         localStorage.setItem("openrouter_api_key", data.openrouter_api_key);
-      }
-      if (data.ghost_pin) {
-        setGhostPin(data.ghost_pin);
-        localStorage.setItem("ghost_pin", data.ghost_pin);
       }
       // Multiple API keys
       if (data.gemini_api_keys) {
@@ -684,14 +678,29 @@ export default function SettingsPage() {
     saveSettingsToServer({ [`${provider}_active_key_index`]: index });
   };
 
-  const handleUpdateGhostPin = () => {
-    if (!newGhostPinInput.trim()) return;
-    const pin = newGhostPinInput.trim();
-    setGhostPin(pin);
-    localStorage.setItem("ghost_pin", pin);
-    saveSettingsToServer({ ghost_pin: pin });
-    setNewGhostPinInput("");
-    setGhostPinStatus("Ghost Mode PIN berhasil diperbarui!");
+  const handleUpdateGhostPin = async () => {
+    if (!newGhostPinInput.trim() || !currentGhostPinInput.trim()) return;
+    try {
+      const res = await fetch(getApiUrl("/api/settings"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ghost_pin: newGhostPinInput.trim(),
+          current_ghost_pin: currentGhostPinInput.trim(),
+        }),
+      });
+      if (!res.ok) {
+        setGhostPinStatus(
+          res.status === 403 ? "PIN lama salah." : "Gagal memperbarui PIN."
+        );
+      } else {
+        setNewGhostPinInput("");
+        setCurrentGhostPinInput("");
+        setGhostPinStatus("Ghost Mode PIN berhasil diperbarui!");
+      }
+    } catch {
+      setGhostPinStatus("Gagal memperbarui PIN.");
+    }
     setTimeout(() => setGhostPinStatus(null), 3000);
   };
 
@@ -726,9 +735,6 @@ export default function SettingsPage() {
   useEffect(() => {
     localStorage.setItem("openrouter_api_key", openrouterApiKey);
   }, [openrouterApiKey]);
-  useEffect(() => {
-    localStorage.setItem("ghost_pin", ghostPin);
-  }, [ghostPin]);
 
   useEffect(() => {
     if (!isSettingsLoadedRef.current) return;
@@ -2299,22 +2305,25 @@ export default function SettingsPage() {
                   Ghost Mode Authentication PIN
                 </h3>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                  Atur PIN rahasia untuk berpindah ke Ghost Mode workspace. PIN
-                  standar bawaan:{" "}
-                  <span className="font-mono font-bold text-[var(--foreground)]">
-                    03697
-                  </span>
-                  .
+                  Atur PIN rahasia untuk berpindah ke Ghost Mode workspace.
+                  Mengganti PIN memerlukan PIN lama.
                 </p>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <input
+                  type="password"
+                  value={currentGhostPinInput}
+                  onChange={(e) => setCurrentGhostPinInput(e.target.value)}
+                  placeholder="PIN lama"
+                  className="bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all w-32"
+                />
                 <div className="relative">
                   <input
                     type={showGhostPinText ? "text" : "password"}
                     value={newGhostPinInput}
                     onChange={(e) => setNewGhostPinInput(e.target.value)}
-                    placeholder={`Current PIN: ${ghostPin}`}
+                    placeholder="PIN baru"
                     className="bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all w-48"
                   />
                   <button
@@ -2331,7 +2340,7 @@ export default function SettingsPage() {
                 </div>
                 <Button
                   onClick={handleUpdateGhostPin}
-                  disabled={!newGhostPinInput.trim()}
+                  disabled={!newGhostPinInput.trim() || !currentGhostPinInput.trim()}
                   className="rounded-xl font-bold"
                 >
                   Save PIN

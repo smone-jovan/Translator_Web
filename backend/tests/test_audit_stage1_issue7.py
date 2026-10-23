@@ -200,13 +200,13 @@ async def test_epub_image_extraction_unique_subfolders(test_db_setup, tmp_path, 
         uid="img1",
         file_name="OEBPS/ch1/001.jpg",
         media_type="image/jpeg",
-        content=b"IMAGE_CONTENT_1",
+        content=b"\xff\xd8\xff" + b"IMAGE_CONTENT_1",
     )
     img2 = epub.EpubItem(
         uid="img2",
         file_name="OEBPS/ch2/001.jpg",
         media_type="image/jpeg",
-        content=b"IMAGE_CONTENT_2",
+        content=b"\xff\xd8\xff" + b"IMAGE_CONTENT_2",
     )
     book.add_item(img1)
     book.add_item(img2)

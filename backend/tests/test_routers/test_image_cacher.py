@@ -25,7 +25,8 @@ def test_guess_image_ext():
     assert guess_image_ext_from_bytes(b"\xff\xd8\xff\xe0") == "jpeg"
     assert guess_image_ext_from_bytes(b"RIFF\x00\x00\x00\x00WEBP") == "webp"
     assert guess_image_ext_from_bytes(b"GIF89a\x01\x00") == "gif"
-    assert guess_image_ext_from_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'>") == "svg+xml"
+    # SVG tidak lagi dikenali (A-04): jatuh ke default jpeg, tidak pernah svg+xml
+    assert guess_image_ext_from_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'>") == "jpeg"
     assert guess_image_ext_from_bytes(b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00") == "avif"
     assert guess_image_ext_from_bytes(b"BM\x00\x00\x00\x00") == "bmp"
 

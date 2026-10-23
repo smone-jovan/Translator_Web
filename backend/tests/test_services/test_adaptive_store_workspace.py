@@ -187,7 +187,7 @@ def test_html_to_markdown_in_ghost_saves_only_to_ghost_store():
 async def test_scrape_route_in_ghost_learns_only_in_ghost(monkeypatch):
     monkeypatch.setattr(scrape_router, "fetch_html_adaptive", _fake_fetch())
 
-    await scrape_router.scrape_url(scrape_router.ScrapeRequest(url=CH1_URL), request=None, workspace="ghost")
+    await scrape_router.scrape_url_in_workspace(scrape_router.ScrapeRequest(url=CH1_URL), "ghost")
 
     _assert_learned_only_in_ghost()
 
@@ -217,7 +217,7 @@ async def test_crawl_next_in_ghost_learns_only_in_ghost(db_session, monkeypatch)
     thread, chapter = _seed(db_session, workspace="ghost")
     monkeypatch.setattr(scrape_router, "fetch_html_adaptive", _fake_fetch())
     monkeypatch.setattr(scrape_router, "SessionLocal", lambda workspace=None: db_session)
-    request = Request({"type": "http", "headers": [(b"x-workspace", b"ghost")]})
+    request = Request({"type": "http", "headers": [(b"x-workspace", b"ghost"), (b"cookie", f"{__import__('database').GHOST_SESSION_COOKIE}={__import__('database').issue_ghost_session()}".encode())]})
 
     response = await scrape_router.crawl_next_chapters(
         thread.id, scrape_router.CrawlNextChaptersRequest(start_chapter_id=chapter.id, count=1), request

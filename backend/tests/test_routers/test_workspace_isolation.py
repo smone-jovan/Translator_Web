@@ -63,16 +63,23 @@ def test_resolve_workspace_from_headers_and_cookies():
             self.headers = headers or {}
             self.cookies = cookies or {}
 
-    # Header takes precedence
-    req1 = DummyRequest(headers={"X-Workspace": "ghost"})
+    token = database.issue_ghost_session()
+    session = {database.GHOST_SESSION_COOKIE: token}
+
+    # Header ghost tanpa sesi PIN valid -> main (A-01)
+    assert resolve_workspace(DummyRequest(headers={"X-Workspace": "ghost"})) == "main"
+
+    # Header takes precedence (dengan sesi valid)
+    req1 = DummyRequest(headers={"X-Workspace": "ghost"}, cookies=session)
     assert resolve_workspace(req1) == "ghost"
 
     req2 = DummyRequest(headers={"x-workspace": "MAIN"})
     assert resolve_workspace(req2) == "main"
 
     # Cookie fallback
-    req3 = DummyRequest(cookies={"readomni_workspace": "ghost"})
+    req3 = DummyRequest(cookies={"readomni_workspace": "ghost", **session})
     assert resolve_workspace(req3) == "ghost"
+    assert resolve_workspace(DummyRequest(cookies={"readomni_workspace": "ghost"})) == "main"
 
     # Default fallback to main on invalid or empty
     req4 = DummyRequest(headers={"X-Workspace": "invalid_subspace"})
@@ -92,6 +99,10 @@ def test_system_current_workspace_endpoint():
     assert res_main.status_code == 200
     assert res_main.json() == {"workspace": "main"}
 
+    res_forged = client.get("/api/system/workspace/current", headers={"X-Workspace": "ghost"})
+    assert res_forged.json() == {"workspace": "main"}
+
+    client.cookies.set(database.GHOST_SESSION_COOKIE, database.issue_ghost_session())
     res_ghost = client.get("/api/system/workspace/current", headers={"X-Workspace": "ghost"})
     assert res_ghost.status_code == 200
     assert res_ghost.json() == {"workspace": "ghost"}
@@ -100,6 +111,7 @@ def test_system_current_workspace_endpoint():
 def test_threads_workspace_data_isolation(mock_dual_workspaces):
     """GET /api/threads should return threads strictly isolated to the specified workspace."""
     client = TestClient(app)
+    client.cookies.set(database.GHOST_SESSION_COOKIE, database.issue_ghost_session())
 
     # 1. Fetch threads with X-Workspace: main
     resp_main = client.get("/api/threads", headers={"X-Workspace": "main"})
@@ -122,6 +134,7 @@ def test_batch_status_workspace_isolation(mock_dual_workspaces):
     """Batch progress in active_batches must not leak or collide across workspaces."""
     from services.background_translator import active_batches, ActiveBatch
     client = TestClient(app)
+    client.cookies.set(database.GHOST_SESSION_COOKIE, database.issue_ghost_session())
 
     # Simulate thread_id=1 active in ghost, but thread_id=1 NOT active in main
     ghost_batch = ActiveBatch(

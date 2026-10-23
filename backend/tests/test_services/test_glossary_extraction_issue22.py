@@ -249,7 +249,7 @@ def test_resolve_active_base_url_guards_cloud_providers_against_localhost():
     assert resolve_active_base_url(gs, "http://localhost:1234") == "https://api.openai.com/v1"
 
     gs.llm_provider = "lm_studio"
-    assert resolve_active_base_url(gs, "http://192.168.1.10:1234") == "http://192.168.1.10:1234"
+    assert resolve_active_base_url(gs, "http://192.168.1.10:1234") == "http://localhost:1234"
 
 
 def test_bulk_lorebook_endpoint_saves_and_protects_all_entries():

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import Chapter, make_workspace_key
 from services.security import validate_external_url
-from services.image_fetcher import fetch_image_adaptive
+from services.image_fetcher import fetch_image_adaptive, sniff_raster_ext
 
 CACHE_DIR = (Path("uploads") / "cache" / "images").resolve()
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,23 +20,7 @@ ACTIVE_IMAGE_JOBS: dict[tuple[str, int] | int, dict] = {}
 
 def guess_image_ext_from_bytes(data: bytes) -> str:
     """Inspect magic bytes to determine image format."""
-    if not data:
-        return "jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png"
-    if data.startswith(b"\xff\xd8"):
-        return "jpeg"
-    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
-        return "webp"
-    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
-        return "gif"
-    if len(data) >= 12 and data[4:12] in (b"ftypavif", b"ftypavis"):
-        return "avif"
-    if data.startswith(b"BM"):
-        return "bmp"
-    if data.startswith(b"<svg") or b"<svg" in data[:100].lower():
-        return "svg+xml"
-    return "jpeg"
+    return sniff_raster_ext(data) or "jpeg"
 
 
 def is_safe_cache_path(candidate: Path) -> bool:

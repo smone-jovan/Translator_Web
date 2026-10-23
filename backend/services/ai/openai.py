@@ -1,3 +1,4 @@
+from services.ai.settings import upstream_error_message
 import httpx
 import json
 from typing import List, Dict, AsyncGenerator
@@ -37,7 +38,7 @@ class OpenAIAdapter(BaseAIProviderAdapter):
                         res += f"<think>\n{msg['reasoning_content']}\n</think>\n\n"
                     res += msg.get("content", "")
                     return res
-                raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+                raise Exception(upstream_error_message(resp.status_code, resp.text))
         except Exception as e:
             raise Exception(f"OpenAI connection failed: {e}")
 
@@ -59,7 +60,7 @@ class OpenAIAdapter(BaseAIProviderAdapter):
                 async with client.stream("POST", f"{self.base_url}/chat/completions", json=payload, headers=headers) as response:
                     if response.status_code != 200:
                         error_text = await response.aread()
-                        raise Exception(f"HTTP {response.status_code}: {error_text.decode()}")
+                        raise Exception(upstream_error_message(response.status_code, error_text))
                     
                     in_reasoning = False
                     async for line in response.aiter_lines():

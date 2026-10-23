@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urlparse
 
 from database import GlobalSetting
@@ -96,10 +97,22 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
     return local_lm_model
 
 
+def upstream_error_message(status_code: int, body: str | bytes | None = None) -> str:
+    """Pesan error untuk respons upstream non-200. Body hanya masuk log, tidak dipantulkan ke klien (A-03)."""
+    if body:
+        text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+        logging.getLogger(__name__).warning("Upstream HTTP %s: %s", status_code, text[:500])
+    return f"HTTP {status_code}"
+
+
 def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None = None) -> str:
-    """Return the base URL that belongs to the currently selected provider, guarding cloud providers against local URLs."""
+    """Return the base URL that belongs to the currently selected provider, guarding cloud providers against local URLs.
+
+    URL lokal (LM Studio) hanya berasal dari pengaturan tersimpan `gs.lm_url`; `requested_url` per-request
+    diabaikan agar klien tidak bisa mengarahkan server ke host internal (A-03).
+    """
     if not gs:
-        return (requested_url or "http://localhost:1234").rstrip("/")
+        return "http://localhost:1234"
 
     provider = getattr(gs, "llm_provider", "lm_studio")
     local_lm_url = (getattr(gs, "lm_url", None) or "http://localhost:1234").rstrip("/")
@@ -122,8 +135,6 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
             return req_clean
         return OFFICIAL_PROVIDER_URLS["openrouter"]
 
-    if req_clean:
-        return req_clean
     return local_lm_url
 
 

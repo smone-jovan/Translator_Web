@@ -81,8 +81,11 @@ def test_openrouter_ignores_untrusted_requested_url(requested):
     assert resolve_active_base_url(_gs("openrouter"), requested) == OPENROUTER_OFFICIAL
 
 
-def test_lm_studio_still_accepts_lan_url():
-    assert resolve_active_base_url(_gs("lm_studio"), "http://192.168.1.10:1234") == "http://192.168.1.10:1234"
+def test_lm_studio_ignores_per_request_url_and_uses_saved_lm_url():
+    # A-03: URL per-request tidak dipercaya; LAN URL harus lewat pengaturan tersimpan (gs.lm_url)
+    gs = _gs("lm_studio")
+    gs.lm_url = "http://192.168.1.10:1234"
+    assert resolve_active_base_url(gs, "http://169.254.169.254") == "http://192.168.1.10:1234"
 
 
 # --- AIProviderFactory: kunci hanya dikirim ke host tepercaya ------------------
@@ -126,8 +129,10 @@ async def test_translate_get_lm_url_does_not_forward_untrusted_url_for_cloud_pro
 
 
 @pytest.mark.asyncio
-async def test_translate_get_lm_url_keeps_lan_url_for_lm_studio():
+async def test_translate_get_lm_url_uses_saved_lm_url_for_lm_studio():
     from routers.translate import get_lm_url
 
-    url = await get_lm_url("http://192.168.1.10:1234/", _db_with(_gs("lm_studio")))
+    gs = _gs("lm_studio")
+    gs.lm_url = "http://192.168.1.10:1234/"
+    url = await get_lm_url("http://evil.internal:1/", _db_with(gs))
     assert url == "http://192.168.1.10:1234"

@@ -157,15 +157,117 @@ async def follow_redirects_safely(
         return response, current
 
 
+def egress_proxy_url() -> str:
+    """URL proxy egress lokal yang me-resolve dan mem-pin IP publik saat connect (anti DNS-rebinding, A-18)."""
+    from services.egress_proxy import get_egress_proxy
+
+    return get_egress_proxy().server_url
+
+
+def egress_proxies() -> dict[str, str]:
+    """Argumen `proxies=` untuk curl_cffi."""
+    url = egress_proxy_url()
+    return {"http": url, "https": url}
+
+
 def create_safe_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """
     Create an httpx.AsyncClient configured to prevent SSRF bypass via HTTP 30x redirects.
+    `max_response_bytes` (opsional) membatasi ukuran body respons.
     """
+    max_response_bytes = kwargs.pop("max_response_bytes", None)
+    if not any(k in kwargs for k in ("transport", "mounts", "proxy")):
+        # Koneksi keluar lewat proxy yang memvalidasi IP tujuan saat connect (bukan hanya saat pra-validasi).
+        kwargs["proxy"] = egress_proxy_url()
     kwargs.setdefault("follow_redirects", True)
     event_hooks = dict(kwargs.pop("event_hooks", None) or {})
     res_hooks = list(event_hooks.get("response", []))
     if validate_redirect_response not in res_hooks:
         res_hooks.append(validate_redirect_response)
     event_hooks["response"] = res_hooks
-    return httpx.AsyncClient(event_hooks=event_hooks, **kwargs)
+    client = httpx.AsyncClient(event_hooks=event_hooks, **kwargs)
+    if max_response_bytes:
+        cap_response_size(client, max_response_bytes)
+    return client
 
+
+
+# --- Batas ukuran (A-31): hentikan unduh/upload sebelum seluruh body masuk memori ---
+
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_HTML_BYTES = 10 * 1024 * 1024
+MAX_ZIP_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+MAX_ZIP_COMPRESSION_RATIO = 200
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+class ResponseTooLarge(Exception):
+    """Body respons melebihi batas byte yang diizinkan."""
+
+
+class _CappedStream(httpx.AsyncByteStream):
+    """Bungkus stream respons; lempar ResponseTooLarge begitu total byte melewati batas."""
+
+    def __init__(self, inner: Any, max_bytes: int) -> None:
+        self._inner = inner
+        self._max = max_bytes
+
+    async def __aiter__(self):
+        total = 0
+        async for chunk in self._inner:
+            total += len(chunk)
+            if total > self._max:
+                raise ResponseTooLarge(f"body > {self._max} bytes")
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def cap_response_size(client: httpx.AsyncClient, max_bytes: int) -> httpx.AsyncClient:
+    """Pasang hook respons yang membatasi ukuran body (Content-Length + stream) sebelum dibaca ke memori."""
+
+    async def _hook(response: httpx.Response) -> None:
+        declared = response.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > max_bytes:
+            raise ResponseTooLarge(f"Content-Length {declared} > {max_bytes}")
+        response.stream = _CappedStream(response.stream, max_bytes)
+
+    client.event_hooks["response"] = [*client.event_hooks.get("response", []), _hook]
+    return client
+
+
+async def read_upload_limited(file: Any, *, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
+    """Baca UploadFile bertahap; 413 bila melewati max_bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="File terlalu besar")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def check_zip_safe(
+    content: bytes,
+    *,
+    max_total: int = MAX_ZIP_UNCOMPRESSED_BYTES,
+    max_ratio: int = MAX_ZIP_COMPRESSION_RATIO,
+) -> None:
+    """Tolak zip bomb: total ukuran terdekompresi dan rasio kompresi dicek dari direktori zip."""
+    import io
+    import zipfile
+
+    try:
+        infos = zipfile.ZipFile(io.BytesIO(content)).infolist()
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=422, detail="Arsip tidak valid")
+    total = sum(i.file_size for i in infos)
+    if total > max_total:
+        raise HTTPException(status_code=413, detail="Isi arsip terlalu besar setelah dekompresi")
+    if any(i.compress_size and i.file_size / i.compress_size > max_ratio for i in infos):
+        raise HTTPException(status_code=413, detail="Rasio kompresi arsip mencurigakan")

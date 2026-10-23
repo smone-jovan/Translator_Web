@@ -103,7 +103,7 @@ async def test_crawl_next_uses_adaptive_fetch_with_request_workspace(db_session,
     fetch = _fake_fetch()
     monkeypatch.setattr(scrape_router, "fetch_html_adaptive", fetch)
     monkeypatch.setattr(scrape_router, "SessionLocal", lambda workspace=None: db_session)
-    request = Request({"type": "http", "headers": [(b"x-workspace", b"ghost")]})
+    request = Request({"type": "http", "headers": [(b"x-workspace", b"ghost"), (b"cookie", f"{__import__('database').GHOST_SESSION_COOKIE}={__import__('database').issue_ghost_session()}".encode())]})
 
     response = await scrape_router.crawl_next_chapters(
         thread.id, scrape_router.CrawlNextChaptersRequest(start_chapter_id=chapter.id, count=1), request

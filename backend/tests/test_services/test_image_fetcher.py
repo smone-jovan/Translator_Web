@@ -26,7 +26,7 @@ def test_is_image_bytes_accepts_known_formats_and_rejects_html():
     assert imf.is_image_bytes(b"\xff\xd8\xff\xe0JFIF")
     assert imf.is_image_bytes(b"RIFF\x00\x00\x00\x00WEBPVP8X")
     assert imf.is_image_bytes(b"GIF89a\x01\x00")
-    assert imf.is_image_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+    assert not imf.is_image_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>")  # A-04: SVG ditolak
     assert not imf.is_image_bytes(CF_HTML)
     assert not imf.is_image_bytes(b"")
 

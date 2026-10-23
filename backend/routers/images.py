@@ -9,6 +9,7 @@ from services.image_cacher import (
     CACHE_DIR,
     ACTIVE_IMAGE_JOBS,
     guess_image_ext_from_bytes,
+    sniff_raster_ext,
     get_cached_image,
     is_safe_cache_path,
     get_thread_remote_image_urls,
@@ -18,6 +19,12 @@ from services.image_cacher import (
 )
 
 router = APIRouter(prefix="/api", tags=["Images"])
+
+# Konten yang disajikan same-origin tidak boleh dieksekusi sebagai dokumen aktif.
+IMAGE_HARDENING_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+}
 
 
 @router.get("/images/proxy")
@@ -55,15 +62,17 @@ async def proxy_image(
         cached = get_cached_image(url)
         if cached:
             data, ext, _ = cached
-            media_type = f"image/{ext}" if ext != "svg+xml" else "image/svg+xml"
-            return Response(
-                content=data,
-                media_type=media_type,
-                headers={
-                    "Cache-Control": "public, max-age=31536000, immutable",
-                    "X-Cache-Status": "HIT",
-                }
-            )
+            # Cache lama dapat berisi SVG/HTML (bukan raster) -> perlakukan sebagai miss
+            if sniff_raster_ext(data):
+                return Response(
+                    content=data,
+                    media_type=f"image/{sniff_raster_ext(data)}",
+                    headers={
+                        **IMAGE_HARDENING_HEADERS,
+                        "Cache-Control": "public, max-age=31536000, immutable",
+                        "X-Cache-Status": "HIT",
+                    }
+                )
 
     # 2. Skip obvious dummy/placeholder domains
     if any(d in url.lower() for d in ["example.com", "placeholder", "test.com"]):
@@ -83,11 +92,11 @@ async def proxy_image(
         if is_safe_cache_path(cache_file):
             cache_file.write_bytes(data)
 
-        media_type = f"image/{ext}" if ext != "svg+xml" else "image/svg+xml"
         return Response(
             content=data,
-            media_type=media_type,
+            media_type=f"image/{ext}",
             headers={
+                **IMAGE_HARDENING_HEADERS,
                 "Cache-Control": "public, max-age=31536000, immutable",
                 "X-Cache-Status": "MISS",
             }

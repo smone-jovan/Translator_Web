@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 import urllib.parse
 
 from services.cleaner_tools import CleanerTools
+from services.security import read_upload_limited
 
 
 router = APIRouter(prefix="/api/tools", tags=["Tools"])
@@ -17,7 +18,7 @@ async def clean_txt_file(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".txt"):
         raise HTTPException(400, "File must be .txt")
 
-    raw = await file.read()
+    raw = await read_upload_limited(file)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:

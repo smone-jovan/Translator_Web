@@ -1,3 +1,4 @@
+from services.ai.settings import upstream_error_message
 import httpx
 import json
 from typing import List, Dict, AsyncGenerator
@@ -46,7 +47,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
                             res += f"<think>\n{msg['reasoning_content']}\n</think>\n\n"
                         res += msg.get("content", "")
                         return res
-                    last_error = f"HTTP {resp.status_code}: {resp.text}"
+                    last_error = upstream_error_message(resp.status_code, resp.text)
             except Exception as e:
                 last_error = str(e)
                 continue
@@ -74,7 +75,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
                     async with client.stream("POST", f"{url}/chat/completions", json=payload) as response:
                         if response.status_code != 200:
                             error_text = await response.aread()
-                            last_error = f"HTTP {response.status_code}: {error_text.decode()}"
+                            last_error = upstream_error_message(response.status_code, error_text)
                             continue
                         
                         success = True

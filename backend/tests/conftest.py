@@ -1,3 +1,6 @@
+import os
+
+os.environ.setdefault("ALLOWED_HOSTS", "testserver,test")  # Host default TestClient & ASGITransport
 import sys
 import os
 

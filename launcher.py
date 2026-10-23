@@ -63,6 +63,8 @@ VERSION       = "2.0"
 ROOT_DIR      = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR   = os.path.join(ROOT_DIR, "backend")
 BACKEND_PORT  = 8000
+# Backend hanya loopback: akses LAN/HP lewat proxy Vite (target 127.0.0.1) sehingga API tidak terbuka ke jaringan (A-02)
+BACKEND_HOST  = os.environ.get("READOMNI_BACKEND_HOST", "127.0.0.1")
 FRONTEND_PORT = 5173
 
 # ─── State ───────────────────────────────────────────────────────────────────
@@ -395,7 +397,7 @@ def start_backend():
     log("backend", "Memulai FastAPI server...", TEAL)
 
     cmd = [sys.executable, "-u", "-m", "uvicorn", "main:app",
-           "--reload", "--host", "0.0.0.0", "--port", str(BACKEND_PORT)]
+           "--reload", "--host", BACKEND_HOST, "--port", str(BACKEND_PORT)]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"

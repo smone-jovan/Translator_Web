@@ -18,7 +18,9 @@ import httpx
 from fastapi import HTTPException
 
 from services.security import (
+    ResponseTooLarge,
     create_safe_async_client,
+    egress_proxies,
     follow_redirects_safely,
     validate_external_url,
 )
@@ -54,18 +56,31 @@ class TierResult(NamedTuple):
     escalate: bool
 
 
+RASTER_IMAGE_EXTS = frozenset({"png", "jpeg", "gif", "webp", "avif", "bmp"})
+
+
+def sniff_raster_ext(data: bytes) -> Optional[str]:
+    """Ekstensi gambar raster dari magic bytes, atau None. SVG sengaja tidak dikenali (vektor aktif -> XSS)."""
+    if not data:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[4:12] in (b"ftypavif", b"ftypavis"):
+        return "avif"
+    if data.startswith(b"BM"):
+        return "bmp"
+    return None
+
+
 def is_image_bytes(data: bytes) -> bool:
     """Sniff magic bytes. Berbeda dari guess_image_ext_from_bytes, tidak default ke jpeg."""
-    if not data:
-        return False
-    if data.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8", b"GIF87a", b"GIF89a", b"BM")):
-        return True
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return True
-    if data[4:12] in (b"ftypavif", b"ftypavis"):
-        return True
-    head = data[:256].lstrip().lower()
-    return head.startswith(b"<svg") or (head.startswith(b"<?xml") and b"<svg" in head)
+    return sniff_raster_ext(data) is not None
 
 
 def _ext_for(data: bytes) -> str:
@@ -102,12 +117,16 @@ def _headers(url: str, referer: Optional[str]) -> dict:
 async def _fetch_httpx(url: str, referer: Optional[str]) -> TierResult:
     try:
         async with create_safe_async_client(
-            follow_redirects=True, timeout=httpx.Timeout(12.0, connect=4.0)
+            follow_redirects=True,
+            timeout=httpx.Timeout(12.0, connect=4.0),
+            max_response_bytes=MAX_IMAGE_BYTES,
         ) as client:
             resp = await client.get(url, headers=_headers(url, referer))
         return classify_response(resp.status_code, resp.content)
     except HTTPException:
         raise
+    except ResponseTooLarge:
+        return TierResult(None, False)
     except httpx.HTTPError:
         return TierResult(None, True)
 
@@ -121,6 +140,7 @@ async def _fetch_curl(url: str, referer: Optional[str]) -> TierResult:
             headers=_headers(url, referer),
             timeout=20.0,
             allow_redirects=False,
+            proxies=egress_proxies(),
         ) as session:
             resp, _ = await follow_redirects_safely(
                 lambda u: session.get(u, allow_redirects=False), url

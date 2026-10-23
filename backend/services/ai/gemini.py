@@ -1,3 +1,4 @@
+from services.ai.settings import upstream_error_message
 import httpx
 import json
 import logging
@@ -68,7 +69,7 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 else:
                     raise Exception(f"'choices' was missing or empty. Response: {json.dumps(data)}")
             else:
-                raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+                raise Exception(upstream_error_message(resp.status_code, resp.text))
 
     async def _chat_completion_with_status(
         self,
