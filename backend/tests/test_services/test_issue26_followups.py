@@ -4,18 +4,18 @@ A-12: switching workspace is per client; it must not move the process-wide ACTIV
       unscoped fallbacks of every other device use.
 A-16: Gemini rotation spreads requests evenly over the keys still usable today.
 A-23: deleting a main book keeps its legacy image folder while a ghost book with the same id
-      exists: before per-workspace folders, ghost thread N wrote its images there too."""
+      still links to it: before per-workspace folders, ghost thread N wrote its images there too."""
 import json
 from collections import Counter
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import database
-from database import Base, GlobalSetting, Thread
+from database import Base, Chapter, GlobalSetting, Thread
 from main import app
 from services.ai import secrets
 
@@ -29,12 +29,18 @@ def _memory_factory():
 
 
 def test_switching_to_ghost_changes_only_the_requesting_clients_workspace(monkeypatch):
+    # Own databases and session registry: the PIN check, the key sync and the issued ghost
+    # session token must not touch state other tests share.
+    main_factory, ghost_factory = _memory_factory(), _memory_factory()
+    with main_factory() as db:
+        db.add(GlobalSetting(ghost_pin="24680"))
+        db.commit()
+    monkeypatch.setattr(database, "SessionLocalMain", main_factory)
+    monkeypatch.setattr(database, "SessionLocalGhost", ghost_factory)
+    monkeypatch.setattr(database, "_ghost_sessions", {})
     monkeypatch.setattr(database, "ACTIVE_WORKSPACE", "main")
-    with database.SessionLocalMain() as db:
-        gs = db.execute(select(GlobalSetting)).scalars().first()
-        pin = gs.ghost_pin if (gs and gs.ghost_pin) else "03697"
 
-    res = TestClient(app).post("/api/system/workspace", json={"workspace": "ghost", "pin": pin})
+    res = TestClient(app).post("/api/system/workspace", json={"workspace": "ghost", "pin": "24680"})
 
     assert res.status_code == 200
     assert database.ACTIVE_WORKSPACE == "main"  # other devices keep their own workspace
@@ -62,19 +68,52 @@ def workspaces(monkeypatch, tmp_path):
         database, "get_session_factory",
         lambda ws="main": factories["ghost" if str(ws).lower() == "ghost" else "main"],
     )
-    for factory in factories.values():
-        with factory() as db:
-            db.add(Thread(id=1, title="Buku"))
-            db.commit()
+    with factories["main"]() as db:
+        db.add(Thread(id=1, title="Buku"))
+        db.commit()
     return factories
 
 
-def test_main_image_folder_is_kept_while_a_ghost_book_may_still_use_it(workspaces, tmp_path):
+def _main_image_folder(tmp_path):
     main_dir = tmp_path / "uploads" / "images" / "thread_1"
     main_dir.mkdir(parents=True)
-    (main_dir / "images_cover.jpg").write_bytes(b"\xff\xd8GHOST-LEGACY")
+    (main_dir / "images_cover.jpg").write_bytes(b"\xff\xd8IMG")
+    return main_dir
+
+
+def test_main_image_folder_is_kept_while_a_ghost_book_still_uses_it(workspaces, tmp_path):
+    with workspaces["ghost"]() as db:
+        db.add(Thread(id=1, title="Buku Ghost", cover_image="/images/thread_1/images_cover.jpg"))
+        db.commit()
+    main_dir = _main_image_folder(tmp_path)
 
     res = TestClient(app).delete("/api/threads/1", headers={"X-Workspace": "main"})
 
     assert res.status_code == 200
     assert (main_dir / "images_cover.jpg").exists()
+
+
+def test_main_image_folder_is_kept_while_a_ghost_chapter_still_links_to_it(workspaces, tmp_path):
+    with workspaces["ghost"]() as db:
+        db.add(Thread(id=1, title="Buku Ghost"))
+        db.add(Chapter(thread_id=1, order=1, content_original="![x](/images/thread_1/images_cover.jpg)"))
+        db.commit()
+    main_dir = _main_image_folder(tmp_path)
+
+    res = TestClient(app).delete("/api/threads/1", headers={"X-Workspace": "main"})
+
+    assert res.status_code == 200
+    assert (main_dir / "images_cover.jpg").exists()
+
+
+def test_main_image_folder_is_removed_when_the_ghost_book_with_that_id_does_not_use_it(workspaces, tmp_path):
+    # Ids start at 1 in both databases, so most main books share an id with some ghost book.
+    with workspaces["ghost"]() as db:
+        db.add(Thread(id=1, title="Buku Ghost", cover_image="/images/ghost/thread_1/images_cover.jpg"))
+        db.commit()
+    main_dir = _main_image_folder(tmp_path)
+
+    res = TestClient(app).delete("/api/threads/1", headers={"X-Workspace": "main"})
+
+    assert res.status_code == 200
+    assert not main_dir.exists()

@@ -325,3 +325,25 @@ def test_stealth_playwright_page_carries_adapter_workspace(monkeypatch):
     page.css("#content", auto_save=True)
 
     _assert_learned_only_in_ghost()
+
+
+@pytest.mark.asyncio
+async def test_ghost_split_chapter_subpages_learn_only_in_ghost(monkeypatch):
+    # Issue 26 follow-up: the sub-page parse dropped the workspace, so it fell back to the
+    # process-wide default (main) and wrote a ghost site's selectors to the main store.
+    import database
+
+    monkeypatch.setattr(database, "ACTIVE_WORKSPACE", "main")
+    first_url = f"https://{DOMAIN}/book/1/101.html"
+    sub_url = f"https://{DOMAIN}/book/1/101_2.html"
+    first_html = (
+        f"<html><body><h1>第一章</h1><div id='content'>{_PROSE}</div>"
+        "<a href='101_2.html'>下一页</a></body></html>"
+    )
+    monkeypatch.setattr(
+        scrape_router, "fetch_html_adaptive", _fake_fetch({sub_url: (_chapter_html("第一章"), sub_url)})
+    )
+
+    await scrape_router.stitch_subpages_markdown(first_html, first_url, "第一页", workspace="ghost")
+
+    _assert_learned_only_in_ghost()

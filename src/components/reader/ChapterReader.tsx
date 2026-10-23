@@ -656,9 +656,15 @@ export default function ChapterReader({
 
   // Save scroll position immediately on mobile screen-lock / visibility change
   useEffect(() => {
-    const handlePageHide = () => {
-      // visibilitychange also fires when the tab comes back; only leaving needs a save
-      if (document.visibilityState !== "hidden") return;
+    const handlePageHide = (e: Event) => {
+      // visibilitychange also fires when the tab comes back; only leaving needs a save. pagehide
+      // may fire before the page is marked hidden (and is the only event on some browsers), so
+      // it always saves.
+      if (
+        e.type === "visibilitychange" &&
+        document.visibilityState !== "hidden"
+      )
+        return;
       if (
         chapterContent &&
         !loadingContentRef.current &&

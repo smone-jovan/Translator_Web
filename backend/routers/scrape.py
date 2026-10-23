@@ -545,7 +545,7 @@ async def stitch_subpages_markdown(
         try:
             validate_external_url(next_sub_url)
             sub_html, sub_final_url = await fetch_html_adaptive(next_sub_url, workspace=workspace)
-            _, sub_md = html_to_markdown(sub_html, url=sub_final_url)
+            _, sub_md = html_to_markdown(sub_html, url=sub_final_url, workspace=workspace)
             if sub_md:
                 # Strip duplicate leading # Title header on continuation sub-pages
                 cleaned_sub = re.sub(r"^#{1,3}\s+[^\n]+\n+", "", sub_md.strip()).strip()

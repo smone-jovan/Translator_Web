@@ -1385,12 +1385,31 @@ def delete_thread(thread_id: int, db: Session = Depends(get_db)):
 
 def _image_folder_shared_with_ghost(workspace: str, thread_id: int) -> bool:
     """Before per-workspace folders, ghost thread N also wrote its images into main's thread_N
-    folder. Keep that folder while a ghost book with that id exists rather than delete images
-    it may still use."""
+    folder. Keep that folder while the ghost book with that id still links to it. This read-only
+    look into the ghost database is the one exception to keeping a request inside its workspace;
+    nothing from it reaches the response. When unsure, keep the folder."""
     if workspace != "main":
         return False
-    with get_session("ghost") as ghost_db:
-        return ghost_db.get(Thread, thread_id) is not None
+    legacy_prefix = f"/images/thread_{int(thread_id)}/"
+    legacy_like = "%" + legacy_prefix.replace("_", "\\_") + "%"
+    try:
+        with get_session("ghost") as ghost_db:
+            ghost_thread = ghost_db.get(Thread, thread_id)
+            if ghost_thread is None:
+                return False
+            if legacy_prefix in (ghost_thread.cover_image or ""):
+                return True
+            linked = ghost_db.execute(
+                select(Chapter.id).where(
+                    Chapter.thread_id == thread_id,
+                    Chapter.content_original.like(legacy_like, escape="\\")
+                    | Chapter.content_translated.like(legacy_like, escape="\\"),
+                ).limit(1)
+            ).first()
+            return linked is not None
+    except Exception as e:
+        print(f"[WARN] Could not check ghost book {thread_id} for legacy images; keeping the folder: {e}")
+        return True
 
 
 class TranslationUpdate(BaseModel):
