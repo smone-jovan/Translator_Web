@@ -1283,7 +1283,7 @@ async def delete_all_translations(thread_id: int, db: Session = Depends(get_db))
 
     # Cancel any running batch translation first to prevent database conflicts
     from services.background_translator import BackgroundTranslator
-    await BackgroundTranslator.stop_batch(thread_id)
+    await BackgroundTranslator.stop_batch(thread_id, workspace=get_db_workspace(db))
 
     from sqlalchemy import update, delete
 

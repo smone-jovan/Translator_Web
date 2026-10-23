@@ -734,6 +734,22 @@ export default function ReaderPage({
     };
   }, [prefetchEnabled, fetchThread, thread?.chapters]);
 
+  // Live translation stream. Aborted when the selected chapter id changes or the reader unmounts:
+  // a stream for chapter A must never write into, and then get saved as, chapter B.
+  const translateAbortRef = useRef<AbortController | null>(null);
+  const selectedChapterIdRef = useRef<number | null>(null);
+  const selectedChapterId =
+    selectedChapterIdx !== null
+      ? (thread?.chapters?.[selectedChapterIdx]?.id ?? null)
+      : null;
+  useEffect(() => {
+    selectedChapterIdRef.current = selectedChapterId;
+    return () => {
+      translateAbortRef.current?.abort();
+      translateAbortRef.current = null;
+    };
+  }, [selectedChapterId]);
+
   const handleTranslateChapter = useCallback(
     async (
       isResume = false,
@@ -746,7 +762,13 @@ export default function ReaderPage({
         overrideContent || chapterContent?.content_original || "";
       const chId = overrideId || chapterContent?.id;
 
-      if (isTranslating || !chId) return;
+      // Only the selected chapter may start a stream: while the next chapter loads, the button
+      // still shows the previous chapterContent, and a delayed auto-translate can fire late.
+      if (isTranslating || !chId || chId !== selectedChapterIdRef.current) return;
+      translateAbortRef.current?.abort();
+      const controller = new AbortController();
+      translateAbortRef.current = controller;
+      const isActiveStream = () => translateAbortRef.current === controller;
       setIsTranslating(true);
       if (!isResume) setTranslatedText("");
       else setTranslatedText(initialText);
@@ -768,6 +790,7 @@ export default function ReaderPage({
             chapter_id: chId,
             force_overwrite: forceOverwrite,
           }),
+          signal: controller.signal,
         });
 
         if (!res.body) throw new Error("No stream");
@@ -779,6 +802,8 @@ export default function ReaderPage({
 
         while (true) {
           const { done, value } = await reader.read();
+          // A chunk can resolve just before the abort lands; drop it once superseded.
+          if (!isActiveStream()) return;
           buffer += done
             ? decoder.decode()
             : decoder.decode(value, { stream: true });
@@ -793,7 +818,7 @@ export default function ReaderPage({
                 if (data.final_text) {
                   setTranslatedText(data.final_text);
                   setChapterContent((prev) =>
-                    prev
+                    prev && prev.id === chId
                       ? { ...prev, content_translated: data.final_text }
                       : prev
                   );
@@ -829,10 +854,14 @@ export default function ReaderPage({
         // Update thread state from server
         await fetchThread({ force: true });
       } catch (err) {
+        if (!isActiveStream()) return; // aborted by a chapter switch, not a failure
         console.error("Translation error:", err);
         setTranslatedText((prev) => prev + "\n⚠️ Translation failed.");
       } finally {
-        setIsTranslating(false);
+        if (translateAbortRef.current === controller)
+          translateAbortRef.current = null;
+        // Once superseded, the newer stream owns the flag.
+        if (translateAbortRef.current === null) setIsTranslating(false);
       }
     },
     [
