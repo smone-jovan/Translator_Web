@@ -1,7 +1,10 @@
 import httpx
 import json
+import logging
 from typing import List, Dict, AsyncGenerator, Tuple
 from services.ai.base import BaseAIProviderAdapter, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
+
+logger = logging.getLogger(__name__)
 
 class GeminiAdapter(BaseAIProviderAdapter):
     """
@@ -88,7 +91,8 @@ class GeminiAdapter(BaseAIProviderAdapter):
                 )
                 
                 print(f"[DEBUG] Gemini API returned HTTP 200. finish_reason={finish_reason}, model={model}")
-                
+                logger.info("Gemini finish_reason=%s model=%s output_chars=%d", finish_reason, model, len(content or ""))
+
                 if finish_reason == "length":
                     return content or "", True, False
                 fr_str = str(finish_reason).lower() if finish_reason else ""

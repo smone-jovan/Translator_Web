@@ -19,7 +19,9 @@ from services.prompt_templates import (
     LOOP_DETECTION_THRESHOLD,
     STREAM_SAVE_INTERVAL,
     build_continuation_prompt,
+    build_anti_summary_instruction,
 )
+from services.translation_recovery import complete_truncated_translation, retry_if_summarized, trim_runaway_round
 from routers.scrape import html_to_markdown
 import httpx
 
@@ -404,8 +406,13 @@ class BackgroundTranslator:
                     r"(?:^|\n)[ \t]*(?:#+\s*|\*\*\s*)?(?:Translato(?:r|ion)['’]?s?[ \t]+Notes?|Glossary|New[ \t]+Terms)(?:[ \t]*:[ \t]*[-—*_#]*|[ \t]+[-—*_#]+|[ \t]*\n|$)",
                     re.IGNORECASE,
                 )
+                def _clean_for_check(raw: str) -> str:
+                    return ContextEngine.clean_final_translation(raw, always_hide_thoughts=bool(always_hide_thoughts))
+
                 continuation_round = 0
+                completed_naturally = False
                 while continuation_round <= MAX_CONTINUATIONS:
+                    content_before_round = full_content
                     # Build messages: first round uses original prompt, continuation rounds use "continue" prompt
                     if continuation_round == 0:
                         messages = [
@@ -478,6 +485,12 @@ class BackgroundTranslator:
                                     ch.content_translated = clean_partial
                                     db.commit()
 
+                    if continuation_round > 0:
+                        # A continuation must not write past the end of the source (invented scenes).
+                        full_content = trim_runaway_round(
+                            content_original, content_before_round, full_content, clean_fn=_clean_for_check
+                        )
+
                     # Handle prohibited/filtered response — skip this chapter entirely
                     if round_prohibited:
                         print(f"[PROHIBITED] Chapter {chapter_id} was blocked by AI content filter. Skipping.")
@@ -492,6 +505,7 @@ class BackgroundTranslator:
                         return False
 
                     if not round_truncated:
+                        completed_naturally = True
                         break  # Translation complete, no truncation
 
                     # ----- ANTI 40K TOKEN LEAK & WORD-SOUP PREVENTION -----
@@ -530,6 +544,42 @@ class BackgroundTranslator:
                         {"role": "user", "content": content_original},
                     ]
                     full_content = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
+                    completed_naturally = True
+
+                # Self-healing: providers can stop early with a normal finish_reason (so no TRUNCATED_MARKER),
+                # which leaves a translation cut mid-sentence or summarized. Repair it before saving.
+                if completed_naturally and full_content.strip():
+                    async def _collect(recovery_messages: list) -> str:
+                        collected = ""
+                        async for piece in provider.stream_chat(messages=recovery_messages, temperature=0.3, max_tokens=max_tokens):
+                            if piece not in (TRUNCATED_MARKER, PROHIBITED_MARKER):
+                                collected += piece
+                        return collected
+
+                    async def _continue_partial(partial: str) -> str:
+                        return await _collect([
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": protected_content},
+                            {"role": "assistant", "content": f"... {partial[-CONTINUATION_TAIL_CHARS:]}"},
+                            {"role": "user", "content": build_continuation_prompt()},
+                        ])
+
+                    async def _retranslate_faithfully() -> str:
+                        return await _collect([
+                            {"role": "system", "content": system_prompt + build_anti_summary_instruction()},
+                            {"role": "user", "content": protected_content},
+                        ])
+
+                    full_content, healed_rounds = await complete_truncated_translation(
+                        content_original, full_content, _continue_partial, clean_fn=_clean_for_check
+                    )
+                    if healed_rounds:
+                        print(f"[RECOVERY] Chapter {chapter_id} ended mid-sentence without a length signal; continued {healed_rounds} round(s).")
+                    full_content, was_retried = await retry_if_summarized(
+                        content_original, full_content, _retranslate_faithfully, clean_fn=_clean_for_check
+                    )
+                    if was_retried:
+                        print(f"[RECOVERY] Chapter {chapter_id} was summarized; re-translated faithfully.")
 
                 # Selesai! Simpan hasil final dan update lorebook kalau ada istilah baru
                 with get_session(workspace) as db:

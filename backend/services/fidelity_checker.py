@@ -98,6 +98,21 @@ CHAPTER_END_PATTERN = re.compile(
 )
 
 
+# Author footers appended after the story body: date stamps (2025/04/18/21/29) and source URLs.
+_FOOTER_WRAP = r"[\s *_`~]*"
+FOOTER_LINE_RE = re.compile(
+    rf"^{_FOOTER_WRAP}(?:\d{{4}}[/.\-]\d{{1,2}}[/.\-]\d{{1,2}}(?:[/.\-:\s]+\d{{1,2}})*(?:[\s ]*[x×]\d+)?|https?://\S+){_FOOTER_WRAP}$"
+)
+
+
+def _strip_trailing_footer(text: str) -> str:
+    """Drop trailing date-stamp / URL lines so they are not mistaken for the end of the prose."""
+    lines = text.rstrip().splitlines()
+    while lines and (not lines[-1].strip() or FOOTER_LINE_RE.match(lines[-1])):
+        lines.pop()
+    return "\n".join(lines).rstrip()
+
+
 def is_truncated_mid_sentence(text: str, original_text: str | None = None) -> bool:
     """
     Check if a translation was cut off mid-sentence.
@@ -108,12 +123,14 @@ def is_truncated_mid_sentence(text: str, original_text: str | None = None) -> bo
     if not text or not text.strip():
         return True  # Empty text is considered truncated
     
-    cleaned = text.rstrip()
+    cleaned = _strip_trailing_footer(text)
+    if not cleaned:
+        return True  # Footer-only text has no prose ending
     if CHAPTER_END_PATTERN.search(cleaned):
         return False
-        
-    # Trim markdown emphasis wrappers (like * or _ or ` or \) from the tail
-    trimmed = cleaned.rstrip('*_`~\\ \t\r\n')
+
+    # Trim markdown emphasis wrappers (like * or _ or ` or \) from the tail; '~' is a valid ending
+    trimmed = cleaned.rstrip('*_`\\ \t\r\n')
     if not trimmed:
         trimmed = cleaned
         
@@ -123,9 +140,12 @@ def is_truncated_mid_sentence(text: str, original_text: str | None = None) -> bo
         
     # If original text is provided, check if the original also ended without sentence-ending punctuation or with an em-dash
     if original_text and original_text.strip():
-        orig_cleaned = original_text.rstrip().rstrip('*_`~\\ \t\r\n')
+        orig_cleaned = _strip_trailing_footer(original_text).rstrip('*_`~\\ \t\r\n')
         orig_last = orig_cleaned[-1:] if orig_cleaned else ""
         if orig_last in '—-—―~～' or orig_cleaned.endswith(('——', '...')):
+            return False
+        # Authors end notes with digit emoticons ("0.0"); a translation mirroring that is complete.
+        if orig_last.isdigit() and last_char.isdigit():
             return False
             
     return True

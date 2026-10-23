@@ -421,6 +421,15 @@ def build_continuation_prompt() -> str:
     )
 
 
+def build_anti_summary_instruction() -> str:
+    """Extra system instruction for re-translating a chapter whose paragraphs were dropped."""
+    return (
+        "\n\nCRITICAL: A previous attempt SUMMARIZED this chapter and skipped paragraphs. "
+        "Translate EVERY paragraph and line of the source faithfully, in order, from the first "
+        "to the very last sentence. Do NOT summarize, merge, condense, or omit anything."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Title Translation Prompts (used by polish.py)
 # ---------------------------------------------------------------------------

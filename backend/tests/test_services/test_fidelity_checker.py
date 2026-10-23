@@ -72,6 +72,35 @@ def test_valid_novel_endings_no_false_positive():
     assert is_truncated_mid_sentence("Taking the first step toward the judgment of the Beldia family", original_text="向着审判贝尔迪亚家族的第一步——") is False
 
 
+def test_trailing_tilde_is_valid_ending():
+    assert is_truncated_mid_sentence("She hadn't settled the grudge from her past life yet~") is False
+    assert is_truncated_mid_sentence("Then I'll play along until you've had enough~", original_text="那我就陪你演个够好了~") is False
+
+
+def test_author_footer_timestamp_and_url_ignored():
+    """Author footers (date stamps, source URLs) must not be judged as sentence endings."""
+    assert is_truncated_mid_sentence("He smiled.\n\n2025/04/18/21/29") is False
+    assert is_truncated_mid_sentence("He smiled.\n\n*2025/05/09/22/09") is False
+    assert is_truncated_mid_sentence("Warmth.\n\n2026/01/14/22/55\n\nhttps://m.example.com/0_8/5517.html") is False
+    # Footer variants: repeat suffix (x5) and doubled separators
+    assert is_truncated_mid_sentence("What was he thinking?!\n\n2026/06/06/23/30 x5") is False
+    assert is_truncated_mid_sentence("The sword flickered.\n\n2026/07/10/23/31 x8") is False
+    assert is_truncated_mid_sentence("Rest assured.)\n\n2026/08/07//22/09") is False
+    # Truncation before the footer is still detected
+    assert is_truncated_mid_sentence("The fanatic flew backward,\n\n2025/05/14/21/39") is True
+    # Footer-only text is not silently accepted as complete prose
+    assert is_truncated_mid_sentence("2025/05/14/21/39") is True
+
+
+def test_ending_mirrors_original_digit_emoticon_not_truncated():
+    """Authors end notes with emoticons like '0.0'; a translation mirroring that is complete."""
+    original = "给读者们带来不便，抱歉0.0\n\n2026/04/15/21/36"
+    translated = "I apologize for any inconvenience caused 0.0\n\n2026/04/15/21/36"
+    assert is_truncated_mid_sentence(translated, original_text=original) is False
+    # A digit ending with a non-digit original is still a truncation signal
+    assert is_truncated_mid_sentence("He counted to 5", original_text="他数到了五。") is True
+
+
 def test_real_truncations_detected():
     """Test that genuine mid-sentence cutoffs are properly flagged."""
     assert is_truncated_mid_sentence("Tiba-tiba dia berkata bahwa") is True
