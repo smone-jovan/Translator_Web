@@ -3,6 +3,8 @@
 Thread ids are allocated per database, so main and ghost routinely both have a thread 1."""
 import pytest
 from fastapi.testclient import TestClient
+
+import database
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -51,7 +53,9 @@ def test_clearing_ghost_translations_stops_only_the_ghost_batch(dual_workspaces)
     main_batch = _register_batch("main")
     ghost_batch = _register_batch("ghost")
 
-    res = TestClient(app).delete("/api/threads/1/translations", headers={"X-Workspace": "ghost"})
+    client = TestClient(app)
+    client.cookies.set(database.GHOST_SESSION_COOKIE, database.issue_ghost_session())  # sesi PIN valid
+    res = client.delete("/api/threads/1/translations", headers={"X-Workspace": "ghost"})
 
     assert res.status_code == 200
     assert ghost_batch.is_stopped is True
