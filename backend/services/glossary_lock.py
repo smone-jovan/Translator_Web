@@ -41,6 +41,34 @@ class GlossaryLockRule:
         return len(self.source_term)
 
 
+_ALIAS_LINE_RE = re.compile(
+    r"^(?P<head>[ \t]*(?:alias|aka|also known as|nama lain|variasi)[ \t]*:[ \t]*)(?P<body>[^\n\r]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def append_replaced_alias(notes: str | None, old_term: str | None, new_term: str | None) -> str | None:
+    """
+    Catat terjemahan lama sebagai alias di catatan entri saat terjemahannya diubah, supaya
+    'Sync to Chapters' ikut menulis ulang ejaan lama (termasuk koreksi huruf besar-kecil).
+    """
+    old = (old_term or "").strip()
+    new = (new_term or "").strip()
+    if not old or old == new or CHINESE_CHAR_PATTERN.search(old) or "," in old or "." in old:
+        return notes
+
+    notes = notes or ""
+    match = _ALIAS_LINE_RE.search(notes)
+    if match:
+        existing = [a.strip() for a in match.group("body").split(",") if a.strip()]
+        if old in existing:
+            return notes
+        merged = match.group("head") + ", ".join(existing + [old])
+        return notes[:match.start()] + merged + notes[match.end():]
+
+    return f"{notes}\nAlias: {old}" if notes else f"Alias: {old}"
+
+
 def extract_pinyin_aliases(raw_term: str) -> List[str]:
     """
     Mengekstrak alias Pinyin dari sebuah istilah, termasuk penanganan pemisah slash (/),
@@ -249,9 +277,8 @@ def apply_glossary_lock(text: str, rules: List[GlossaryLockRule]) -> str:
         if repl[-1].isalnum():
             pattern_str = pattern_str + r"(?=(?:-?(?:nya|mu|ku))?\b)"
 
-        # Gunakan case-sensitive matching jika istilah pendek / stopword agar tidak memakan kata umum
-        is_stopword = repl.lower() in COMMON_COLLISION_STOPWORDS or len(repl) <= 3
-        flags = 0 if is_stopword else re.IGNORECASE
+        # Case-sensitive: varian huruf besar-kecil lain dari target boleh ditulis ulang oleh aturan alias
+        flags = 0
 
         try:
             for m in re.finditer(pattern_str, text, flags=flags):

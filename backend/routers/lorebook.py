@@ -12,6 +12,7 @@ from sqlalchemy import select, func
 
 from database import get_db, LorebookEntry, Thread, GlobalSetting
 from services.context_engine import ContextEngine
+from services.glossary_lock import append_replaced_alias
 
 router = APIRouter(prefix="/api", tags=["Lorebook"])
 
@@ -219,9 +220,10 @@ def _upsert_single_lorebook_entry(
     existing_entry = db.execute(existing_stmt).scalars().first()
     if existing_entry:
         existing_entry.is_archived = False if body.is_archived is None else body.is_archived
-        existing_entry.translated_term = trans_clean
         if body.notes is not None:
             existing_entry.notes = body.notes
+        existing_entry.notes = append_replaced_alias(existing_entry.notes, existing_entry.translated_term, trans_clean)
+        existing_entry.translated_term = trans_clean
         if body.gender is not None:
             existing_entry.gender = _resolve_gender(body.gender, existing_entry.original_term, trans_clean, existing_entry.notes)
         elif not existing_entry.gender and existing_entry.notes:
@@ -338,9 +340,9 @@ def update_lorebook_entry(
         if conflict:
             raise HTTPException(409, f"An entry with original_term '{body.original_term}' already exists in this thread.")
 
+    entry.notes = append_replaced_alias(body.notes, entry.translated_term, body.translated_term)
     entry.original_term = body.original_term
     entry.translated_term = body.translated_term
-    entry.notes = body.notes
     entry.gender = _resolve_gender(body.gender, entry.original_term, entry.translated_term, entry.notes)
     if body.is_locked is not None:
         entry.is_locked = body.is_locked
@@ -437,9 +439,10 @@ def bulk_lorebook_action(
                 )
             ).scalars().first()
             if existing:
-                existing.translated_term = trans
                 if item.notes is not None:
                     existing.notes = item.notes
+                existing.notes = append_replaced_alias(existing.notes, existing.translated_term, trans)
+                existing.translated_term = trans
                 if item.gender is not None:
                     existing.gender = _resolve_gender(item.gender, orig, trans, item.notes)
                 if item.is_locked is not None:
