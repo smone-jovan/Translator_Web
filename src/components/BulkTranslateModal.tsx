@@ -1046,6 +1046,7 @@ export default function BulkTranslateModal({
                       "gemini-3.5-flash-lite": 15,
                       "gemma-4-31b": 30,
                       "gemma-4-26b": 30,
+                      "gemini-3.8-flash": 5,
                       "gemini-3.6-flash": 5,
                       "gemini-3.5-flash": 5,
                       "gemini-3-flash": 5,
@@ -1249,7 +1250,7 @@ export default function BulkTranslateModal({
             }}
           >
             {translationMode === "quality"
-              ? "✨ Quality: Full glossary (30 terms), style guide injection, higher token cap. Best for Gemini."
+              ? `✨ Quality: Full glossary (${parseInt(localStorage.getItem("max_context_terms") || "150")} terms), style guide injection, higher token cap. Best for Gemini.`
               : "⚡ Fast: Minimal glossary (10 terms), no style guide, 10K token cap. Best for LM Studio."}
           </Typography>
         </Box>

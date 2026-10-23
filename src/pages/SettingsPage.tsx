@@ -64,6 +64,7 @@ const GEMINI_MODELS = [
   { id: "gemini-3.5-flash-lite", free: true, rpm: 15, rpd: 500 },
   { id: "gemma-4-31b", free: true, rpm: 30, rpd: 14400 },
   { id: "gemma-4-26b", free: true, rpm: 30, rpd: 14400 },
+  { id: "gemini-3.8-flash", free: true, rpm: 5, rpd: 20 },
   { id: "gemini-3.6-flash", free: true, rpm: 5, rpd: 20 },
   { id: "gemini-3.5-flash", free: true, rpm: 5, rpd: 20 },
   { id: "gemini-3-flash", free: true, rpm: 5, rpd: 20 },
@@ -1456,7 +1457,7 @@ export default function SettingsPage() {
                     Default Translation Quality
                   </h3>
                   <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                    Quality mode uses full glossary (30 terms), style guide
+                    Quality mode uses full glossary ({maxContextTerms} terms), style guide
                     injection, and higher token caps. Fast mode uses minimal
                     glossary (10 terms) and 10K token cap for local LLMs.
                   </p>
@@ -1491,7 +1492,7 @@ export default function SettingsPage() {
                       Quality
                     </span>
                     <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
-                      Full context, style guide, 30 glossary terms
+                      Full context, style guide, {maxContextTerms} glossary terms
                     </span>
                     {translationMode === "quality" && (
                       <div className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white rounded-full p-0.5 shadow-sm">

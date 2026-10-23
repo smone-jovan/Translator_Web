@@ -1074,7 +1074,7 @@ class BackgroundTranslator:
                         raise
                     except Exception as e:
                         if isinstance(e, QuotaExhaustedError):
-                            fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemma-4-31b', 'gemma-4-26b', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+                            fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemma-4-31b', 'gemma-4-26b', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
                             with get_session(ws) as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 current_model = gs_fresh.gemini_model if (gs_fresh and gs_fresh.gemini_model) else ""
