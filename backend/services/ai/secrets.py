@@ -203,24 +203,27 @@ def get_active_api_key(provider: str, gs=None, auto_advance: bool = False) -> st
                 keys = []
             if keys:
                 # Find all healthy keys that haven't hit their daily quota
-                healthy_keys = [
-                    k for k in keys 
-                    if (f"{k}::{model}" if model else k) not in exhausted_gemini_keys
-                ]
+                def _is_healthy(k):
+                    return (f"{k}::{model}" if model else k) not in exhausted_gemini_keys
+
+                healthy_keys = [k for k in keys if _is_healthy(k)]
                 if not healthy_keys:
                     model_str = f" for model '{model}'" if model else ""
                     raise QuotaExhaustedError(f"All available Gemini API keys ({len(keys)} keys) have hit their daily quota limit{model_str}.")
                 
                 if hasattr(gs, 'gemini_active_key_index') and gs.gemini_active_key_index is not None:
-                    chosen_idx = gs.gemini_active_key_index % len(healthy_keys)
+                    # Index is relative to the FULL list; walk forward past exhausted keys.
+                    start = gs.gemini_active_key_index % len(keys)
                 else:
                     current_count = _key_rotation_counters["gemini"]
-                    chosen_idx = current_count % len(healthy_keys)
+                    start = current_count % len(keys)
                     if auto_advance:
                         _key_rotation_counters["gemini"] = (current_count + 1) % 1_000_000
-                
-                chosen_key = healthy_keys[chosen_idx]
-                return chosen_key
+
+                for offset in range(len(keys)):
+                    candidate = keys[(start + offset) % len(keys)]
+                    if _is_healthy(candidate):
+                        return candidate
         
         single_key = secrets.get("gemini_api_key", "")
         if single_key:

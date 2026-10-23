@@ -19,6 +19,7 @@ from database import (
     make_workspace_key,
 )
 from services.cleaner_tools import CleanerTools
+from services.image_paths import delete_thread_images
 from services.hallucination_detector import HallucinationDetector
 from services.scrapers.generic_cleanup import VIP_PLACEHOLDER, is_extraction_empty, is_vip_chapter
 
@@ -1374,8 +1375,10 @@ def delete_thread(thread_id: int, db: Session = Depends(get_db)):
     if not thread:
         raise HTTPException(404, "Thread not found")
 
+    ws = get_db_workspace(db)
     db.delete(thread)
     db.commit()
+    delete_thread_images(ws, thread_id)  # after commit: a failed delete must not orphan the DB row
     return {"deleted": True, "id": thread_id}
 
 

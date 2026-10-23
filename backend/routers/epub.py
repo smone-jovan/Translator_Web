@@ -18,7 +18,8 @@ try:
 except ImportError:
     HAS_EBOOKLIB = False
 
-from database import get_db, Thread, Chapter
+from database import get_db, get_db_workspace, Thread, Chapter
+from services.image_paths import thread_image_subdir
 from services.image_fetcher import sniff_raster_ext
 from services.security import check_zip_safe, read_upload_limited
 
@@ -172,7 +173,8 @@ async def upload_epub(
 
     # Extract images and store them
     image_map = {}
-    thread_img_dir = os.path.join("uploads", "images", f"thread_{thread.id}")
+    image_subdir = thread_image_subdir(get_db_workspace(db), thread.id)
+    thread_img_dir = os.path.join("uploads", "images", *image_subdir.split("/"))
 
     # Only create the directory if there are images
     image_items = []
@@ -207,7 +209,7 @@ async def upload_epub(
                 with open(candidate_path, "wb") as f:
                     f.write(content)
                 # Add to map (public url) for both raw path and basename
-                img_url = f"/images/thread_{thread.id}/{clean_name}"
+                img_url = f"/images/{image_subdir}/{clean_name}"
                 image_map[raw_name] = img_url
                 base_name = os.path.basename(raw_name)
                 if base_name and base_name not in image_map:

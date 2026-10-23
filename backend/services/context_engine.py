@@ -950,7 +950,6 @@ class ContextEngine:
         from services.ai.factory import AIProviderFactory
         from database import GlobalSetting, CharacterRelationship
         from sqlalchemy import select
-        import json
 
         source_lang = ContextEngine.detect_source_language(original_text)
         sys_prompt = build_relationship_extraction_prompt(target_lang, source_lang=source_lang)

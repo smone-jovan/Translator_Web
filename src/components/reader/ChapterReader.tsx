@@ -1802,7 +1802,7 @@ export default function ChapterReader({
                     (c) => c.id === ch.id
                   );
                   const isCurrent = actualIdx === selectedChapterIdx;
-                  const isTrs = ch.translation_status === "translated";
+                  const isTrs = ch.has_translation;
 
                   return (
                     <button

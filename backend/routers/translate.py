@@ -18,6 +18,8 @@ from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 from services.task_registry import spawn_background_task
 
+SSE_HEARTBEAT_SECONDS = 15
+
 router = APIRouter(prefix="/api", tags=["Translation"])
 
 class TranslateRequest(BaseModel):
@@ -36,7 +38,7 @@ class TranslateResponse(BaseModel):
     thread_id: int | None = None
     chapter_id: int | None = None
 
-from services.background_translator import BackgroundTranslator, translation_queues
+from services.background_translator import BackgroundTranslator, translation_queues, active_tasks
 
 async def get_lm_url(req_lm_url: str | None, db: Session) -> str:
     # URL dari klien selalu lewat resolver: untuk provider cloud hanya host tepercaya
@@ -59,6 +61,12 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
 
     ws = get_db_workspace(db)
 
+    # Register the listener BEFORE the job exists, so a job that finishes instantly
+    # (error / skip / chapter missing) still delivers [DONE] to this client.
+    q = asyncio.Queue()
+    queue_key = make_workspace_key(ws, req.chapter_id)
+    translation_queues.setdefault(queue_key, []).append(q)
+
     # Start the persistent background job if needed
     spawn_background_task(
         BackgroundTranslator.run_chapter_translation(
@@ -73,15 +81,15 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
     )
 
     async def sse_wrapper():
-        q = asyncio.Queue()
-        queue_key = make_workspace_key(ws, req.chapter_id)
-        if queue_key not in translation_queues:
-            translation_queues[queue_key] = []
-        translation_queues[queue_key].append(q)
-
         try:
             while True:
-                content = await q.get()
+                try:
+                    content = await asyncio.wait_for(q.get(), timeout=SSE_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    if queue_key not in active_tasks and q.empty():
+                        break  # no job is producing for this chapter any more
+                    yield ": keep-alive\n\n"
+                    continue
                 if content == "[DONE]":
                     break
                 if isinstance(content, dict) and "final_text" in content:

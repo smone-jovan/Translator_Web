@@ -455,6 +455,8 @@ export default function ReaderPage({
         }
         const data: ThreadDetail = await res.json();
         window.clearTimeout(slowTimer);
+        // A newer response already landed: this stale one must not overwrite it
+        if (requestId < threadSuccessIdRef.current) return;
         threadSuccessIdRef.current = Math.max(
           threadSuccessIdRef.current,
           requestId
@@ -793,12 +795,15 @@ export default function ReaderPage({
           signal: controller.signal,
         });
 
-        if (!res.body) throw new Error("No stream");
+        if (!res.ok || !res.body) {
+          throw new Error(`Stream gagal (HTTP ${res.status})`);
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         // An SSE event can span network chunks (final_text carries the whole chapter), so
         // keep the incomplete last line in the buffer until the rest arrives.
         let buffer = "";
+        let receivedFinalText = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -816,6 +821,7 @@ export default function ReaderPage({
               try {
                 const data = JSON.parse(dataStr);
                 if (data.final_text) {
+                  receivedFinalText = true;
                   setTranslatedText(data.final_text);
                   setChapterContent((prev) =>
                     prev && prev.id === chId
@@ -835,8 +841,9 @@ export default function ReaderPage({
           if (done) break;
         }
 
-        // Optimistically update thread state so green dot lights up immediately
-        if (chId) {
+        // Optimistically update thread state so green dot lights up immediately,
+        // but only when a translation actually arrived
+        if (chId && receivedFinalText) {
           invalidateThreadCache(threadId, chId);
           setThread((prev) => {
             if (!prev) return prev;

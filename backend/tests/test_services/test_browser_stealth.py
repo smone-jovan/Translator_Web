@@ -399,7 +399,7 @@ def test_solver_does_not_click_non_interactive():
 def test_thread_browser_launches_full_chromium(monkeypatch):
     import threading
 
-    import patchright.sync_api as patchright_api
+    patchright_api = pytest.importorskip("patchright.sync_api")
     import services.scrapers.novalpie as nv
 
     pw, full, _ = _fake_pw()
@@ -580,7 +580,7 @@ def _forget_registry(nv, pw):
 
 def test_tier2_browser_and_tier3_launcher_share_one_playwright_per_thread(monkeypatch):
     """Sync API menolak instance Playwright kedua di thread yang sama ('inside the asyncio loop')."""
-    import patchright.sync_api as patchright_api
+    patchright_api = pytest.importorskip("patchright.sync_api")
     import services.scrapers.novalpie as nv
 
     monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")
@@ -600,7 +600,7 @@ def test_tier2_browser_and_tier3_launcher_share_one_playwright_per_thread(monkey
 
 
 def test_broken_profile_launcher_is_replaced_on_next_call(monkeypatch):
-    import patchright.sync_api as patchright_api
+    patchright_api = pytest.importorskip("patchright.sync_api")
     import services.scrapers.novalpie as nv
 
     monkeypatch.setattr(bs, "_driven_version", lambda: "148.0.7778.96")

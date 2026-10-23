@@ -129,7 +129,17 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Transparent fetch wrapper ensuring X-Workspace is included on all /api requests
+// Only same-origin /api/ requests get X-Workspace; never leak it to third-party hosts
+function isSameOriginApiUrl(urlStr: string): boolean {
+  try {
+    const url = new URL(urlStr, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
+
+// Transparent fetch wrapper ensuring X-Workspace is included on all same-origin /api requests
 if (typeof window !== "undefined" && window.fetch) {
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -140,7 +150,7 @@ if (typeof window !== "undefined" && window.fetch) {
           : input instanceof URL
             ? input.toString()
             : (input as Request).url;
-      if (urlStr && urlStr.includes("/api/")) {
+      if (urlStr && isSameOriginApiUrl(urlStr)) {
         const workspace = getActiveWorkspace();
         const customInit = init ? { ...init } : {};
         const headers = new Headers(

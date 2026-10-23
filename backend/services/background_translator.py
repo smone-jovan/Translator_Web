@@ -140,6 +140,10 @@ class BackgroundTranslator:
         translation_mode: str = "quality",
         workspace: str = "main",
     ) -> bool:
+        if make_workspace_key(workspace, chapter_id) in active_tasks:
+            # Duplicate request: the running owner streams to every listener and sends [DONE] itself.
+            print(f"[WARN] Chapter {chapter_id} ({workspace}) is already being translated. Ignoring duplicate request.")
+            return False
         try:
             return await cls._run_translation_internal(
                 chapter_id, thread_id, target_lang, model, lm_url, force_extract, force_overwrite, translation_mode,
@@ -199,6 +203,25 @@ class BackgroundTranslator:
             return False
         finally:
             active_tasks.pop(task_key, None)
+
+    @staticmethod
+    async def _translate_registered(workspace: str, chapter_id: int, **kwargs) -> bool:
+        """Run _do_translate as a task registered in active_tasks so stop_batch and the
+        Reader/stream duplicate guards can see chapters that a batch is processing."""
+        task_key = make_workspace_key(workspace, chapter_id)
+        existing = active_tasks.get(task_key)
+        if existing is not None and not existing.done():
+            await asyncio.wait({existing})
+            return not existing.cancelled() and existing.exception() is None and bool(existing.result())
+        task = asyncio.create_task(
+            BackgroundTranslator._do_translate(chapter_id=chapter_id, workspace=workspace, **kwargs)
+        )
+        active_tasks[task_key] = task
+        try:
+            return await task
+        finally:
+            if active_tasks.get(task_key) is task:
+                active_tasks.pop(task_key, None)
 
     @staticmethod
     async def _do_translate(
@@ -388,7 +411,11 @@ class BackgroundTranslator:
 
             # 3. Panggil AI-nya (LM Studio)
             try:
-                provider = AIProviderFactory.get_provider(base_url=lm_url or "http://localhost:1234", model=model)
+                # Resolve settings from this job's own workspace DB, never the process-global ACTIVE_WORKSPACE.
+                with get_session(workspace) as provider_db:
+                    provider = AIProviderFactory.get_provider(
+                        base_url=lm_url or "http://localhost:1234", model=model, db_session=provider_db
+                    )
 
                 always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
                 max_tokens = get_chapter_translation_max_tokens(gs)
@@ -544,7 +571,7 @@ class BackgroundTranslator:
                     print(f"[WARN] Empty stream for chapter {chapter_id}; retrying with non-streaming completion.")
                     messages = [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": content_original},
+                        {"role": "user", "content": protected_content},
                     ]
                     full_content = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
                     completed_naturally = True
@@ -642,6 +669,18 @@ class BackgroundTranslator:
                 # Dihapus dari sini karena prefetch hanya dipicu saat pengguna mengakses bab, mencegah infinite runaway translation.
                 return True
 
+            except asyncio.CancelledError:
+                # Batch stop / client cancel is a BaseException: reset the status, else the
+                # chapter stays "processing" and auto-translate/prefetch skip it forever.
+                try:
+                    with get_session(workspace) as db:
+                        ch = db.get(Chapter, chapter_id)
+                        if ch and ch.translation_status == "processing":
+                            ch.translation_status = "idle"
+                            db.commit()
+                except Exception as reset_err:
+                    print(f"[WARN] Could not reset chapter {chapter_id} status after cancel: {reset_err}")
+                raise
             except Exception as e:
                 # For retryable errors (429/503/etc), re-raise so batch worker can retry
                 if _is_retryable_error(e):
@@ -930,8 +969,14 @@ class BackgroundTranslator:
                     rotate_api_key(llm_provider, gs)
                     sess.commit()
                 elif db_session:
-                    rotate_api_key(llm_provider, gs)
-                    db_session.commit()
+                    # gs may be detached (its own session closed): rotate the row bound to db_session.
+                    gs_live = db_session.execute(select(GlobalSetting)).scalar_one_or_none()
+                    if gs_live:
+                        rotate_api_key(llm_provider, gs_live)
+                        db_session.commit()
+                        idx_attr = f"{llm_provider}_active_key_index"
+                        if hasattr(gs, idx_attr):
+                            setattr(gs, idx_attr, getattr(gs_live, idx_attr))
                 else:
                     with get_session(workspace) as db_pacing:
                         gs_pacing = db_pacing.execute(select(GlobalSetting)).scalar_one_or_none()
@@ -1047,14 +1092,14 @@ class BackgroundTranslator:
                                 if batch.extract_count >= extract_limit:
                                     print(f"[EXTRACT] Reached extraction limit ({extract_limit} chapters). Disabling glossary scan for remaining chapters.")
 
-                        success = await BackgroundTranslator._do_translate(
-                            chapter_id=ch_id, thread_id=batch.thread_id,
+                        success = await BackgroundTranslator._translate_registered(
+                            ws, ch_id,
+                            thread_id=batch.thread_id,
                             target_lang=batch.target_lang, model=batch.model,
                             lm_url=batch.lm_url, force_extract=should_extract,
                             force_overwrite=batch.force_overwrite,
                             translation_mode=batch.translation_mode, fetch_only=batch.fetch_only,
                             load_mode=batch.load_mode,
-                            workspace=ws,
                         )
 
                         if batch.fetch_only and success:
