@@ -812,7 +812,9 @@ export default function ContextLibraryPage() {
   const saveThreadRulesAndStyle = async () => {
     if (!selectedThreadId) return;
     if (contextLoadedForRef.current !== selectedThreadId) {
-      toast.error("Konteks novel belum termuat. Tunggu sebentar lalu coba lagi.");
+      toast.error(
+        "Konteks novel belum termuat. Tunggu sebentar lalu coba lagi."
+      );
       return;
     }
     setIsSavingThreadCtx(true);

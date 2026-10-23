@@ -280,7 +280,17 @@ def rotate_api_key(provider: str, gs) -> str:
             try:
                 keys = json.loads(gs.gemini_api_keys)
                 if keys:
-                    gs.gemini_active_key_index = ((gs.gemini_active_key_index or 0) + 1) % len(keys)
+                    # Step onto the next key still usable today. get_active_api_key scans forward
+                    # from the index, so stepping onto an exhausted key would hand its turn to the
+                    # next healthy key (e.g. 3 keys, 1 exhausted: one key got 2 of every 3 requests).
+                    _clear_stale_exhausted_keys()
+                    model = gs.gemini_model or ""
+                    idx = gs.gemini_active_key_index or 0
+                    for _ in range(len(keys)):
+                        idx = (idx + 1) % len(keys)
+                        if (f"{keys[idx]}::{model}" if model else keys[idx]) not in exhausted_gemini_keys:
+                            break
+                    gs.gemini_active_key_index = idx
                     _key_rotation_counters["gemini"] = gs.gemini_active_key_index
             except Exception:
                 pass

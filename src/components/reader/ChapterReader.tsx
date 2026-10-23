@@ -657,6 +657,8 @@ export default function ChapterReader({
   // Save scroll position immediately on mobile screen-lock / visibility change
   useEffect(() => {
     const handlePageHide = () => {
+      // visibilitychange also fires when the tab comes back; only leaving needs a save
+      if (document.visibilityState !== "hidden") return;
       if (
         chapterContent &&
         !loadingContentRef.current &&
@@ -666,19 +668,22 @@ export default function ChapterReader({
         const top = lastSavedScrollTopRef.current ?? undefined;
         saveScrollPosition(pct, top);
 
-        try {
-          const blob = new Blob([JSON.stringify({ scroll_progress: pct })], {
-            type: "application/json",
-          });
-          navigator.sendBeacon(
-            getApiUrl(
-              `/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`
-            ),
-            blob
-          );
-        } catch {
+        // keepalive fetch instead of sendBeacon: it survives the page going away too, and goes
+        // through the fetch wrapper that adds X-Workspace (a beacon cannot carry headers, so a
+        // ghost tab's progress fell back to the cookie or to main).
+        fetch(
+          getApiUrl(
+            `/api/threads/${thread.id}/chapters/${chapterContent.id}/progress`
+          ),
+          {
+            method: "POST",
+            keepalive: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scroll_progress: pct }),
+          }
+        ).catch(() => {
           /* ignore */
-        }
+        });
       }
     };
 
@@ -864,75 +869,76 @@ export default function ChapterReader({
         ? "font-sans"
         : "font-mono";
 
-  // Keyboard navigation shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable ||
-          target.tagName === "SELECT")
-      ) {
-        if (e.key === "Escape") {
-          setIsTocOpen(false);
-          setIsAppearanceOpen(false);
-        }
-        return;
-      }
-
+  // Keyboard navigation shortcuts. An effect event, so each key press acts on the chapter
+  // (and bookmark state) on screen now, not the one shown when the listener was attached.
+  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.tagName === "SELECT")
+    ) {
       if (e.key === "Escape") {
         setIsTocOpen(false);
         setIsAppearanceOpen(false);
-        return;
       }
+      return;
+    }
 
-      if (e.key === "[" || (e.altKey && e.key === "ArrowLeft")) {
-        e.preventDefault();
-        handlePrevChapter();
-      } else if (e.key === "]" || (e.altKey && e.key === "ArrowRight")) {
-        e.preventDefault();
-        handleNextChapter();
-      } else if (e.key === "j" || e.key === "J") {
-        e.preventDefault();
-        const container =
-          translatedScrollContainerRef.current ||
-          originalScrollContainerRef.current;
-        if (container) {
-          container.scrollBy({ top: 250, behavior: "smooth" });
-        } else {
-          window.scrollBy({ top: 250, behavior: "smooth" });
-        }
-      } else if (e.key === "k" || e.key === "K") {
-        e.preventDefault();
-        const container =
-          translatedScrollContainerRef.current ||
-          originalScrollContainerRef.current;
-        if (container) {
-          container.scrollBy({ top: -250, behavior: "smooth" });
-        } else {
-          window.scrollBy({ top: -250, behavior: "smooth" });
-        }
-      } else if (e.key === "t" || e.key === "T") {
-        e.preventDefault();
-        setDisplayMode(
-          displayMode === "translated"
-            ? "original"
-            : displayMode === "original"
-              ? "both"
-              : "translated"
-        );
-      } else if (e.key === "b" || e.key === "B") {
-        e.preventDefault();
-        toggleBookmark();
+    if (e.key === "Escape") {
+      setIsTocOpen(false);
+      setIsAppearanceOpen(false);
+      return;
+    }
+
+    if (e.key === "[" || (e.altKey && e.key === "ArrowLeft")) {
+      e.preventDefault();
+      handlePrevChapter();
+    } else if (e.key === "]" || (e.altKey && e.key === "ArrowRight")) {
+      e.preventDefault();
+      handleNextChapter();
+    } else if (e.key === "j" || e.key === "J") {
+      e.preventDefault();
+      const container =
+        translatedScrollContainerRef.current ||
+        originalScrollContainerRef.current;
+      if (container) {
+        container.scrollBy({ top: 250, behavior: "smooth" });
+      } else {
+        window.scrollBy({ top: 250, behavior: "smooth" });
       }
-    };
+    } else if (e.key === "k" || e.key === "K") {
+      e.preventDefault();
+      const container =
+        translatedScrollContainerRef.current ||
+        originalScrollContainerRef.current;
+      if (container) {
+        container.scrollBy({ top: -250, behavior: "smooth" });
+      } else {
+        window.scrollBy({ top: -250, behavior: "smooth" });
+      }
+    } else if (e.key === "t" || e.key === "T") {
+      e.preventDefault();
+      setDisplayMode(
+        displayMode === "translated"
+          ? "original"
+          : displayMode === "original"
+            ? "both"
+            : "translated"
+      );
+    } else if (e.key === "b" || e.key === "B") {
+      e.preventDefault();
+      toggleBookmark();
+    }
+  });
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => onKeyDown(e);
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedChapterIdx, thread.chapters?.length, displayMode, isBookmarked]);
+  }, []);
 
   const filteredChapters = useMemo(() => {
     if (!thread.chapters) return [];

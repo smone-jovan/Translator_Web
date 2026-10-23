@@ -26,10 +26,21 @@ def test_delete_thread_images_missing_folder_is_noop(tmp_path):
 
 
 def test_delete_thread_endpoint_removes_image_folder(db_session, tmp_path, monkeypatch):
-    from database import Thread
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import database
+    from database import Base, Thread
     from routers import threads
     from services import image_paths
 
+    # No ghost book shares this id (one that does keeps main's legacy folder, see issue 26 follow-ups).
+    ghost_engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(bind=ghost_engine)
+    monkeypatch.setattr(database, "get_session_factory", lambda ws="main": sessionmaker(bind=ghost_engine))
     monkeypatch.setattr(image_paths, "IMAGES_ROOT", tmp_path)
     monkeypatch.setattr(
         threads, "delete_thread_images",

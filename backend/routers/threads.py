@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from database import (
     get_db, Thread, Chapter, TranslationSegment, GlobalSetting, UserBookmark, get_db_workspace,
-    make_workspace_key,
+    make_workspace_key, get_session,
 )
 from services.cleaner_tools import CleanerTools
 from services.image_paths import delete_thread_images
@@ -1378,8 +1378,19 @@ def delete_thread(thread_id: int, db: Session = Depends(get_db)):
     ws = get_db_workspace(db)
     db.delete(thread)
     db.commit()
-    delete_thread_images(ws, thread_id)  # after commit: a failed delete must not orphan the DB row
+    if not _image_folder_shared_with_ghost(ws, thread_id):
+        delete_thread_images(ws, thread_id)  # after commit: a failed delete must not orphan the DB row
     return {"deleted": True, "id": thread_id}
+
+
+def _image_folder_shared_with_ghost(workspace: str, thread_id: int) -> bool:
+    """Before per-workspace folders, ghost thread N also wrote its images into main's thread_N
+    folder. Keep that folder while a ghost book with that id exists rather than delete images
+    it may still use."""
+    if workspace != "main":
+        return False
+    with get_session("ghost") as ghost_db:
+        return ghost_db.get(Thread, thread_id) is not None
 
 
 class TranslationUpdate(BaseModel):
