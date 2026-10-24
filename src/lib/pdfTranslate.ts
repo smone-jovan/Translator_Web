@@ -1,8 +1,22 @@
 import { getApiUrl } from "@/lib/api";
 
+export interface OverlayBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  text: string;
+}
+
 export type PdfTranslateEvent =
   | { type: "start"; pages: number }
-  | { type: "page"; index: number; mode: "text" | "image"; translation: string }
+  | {
+      type: "page";
+      index: number;
+      mode: "text" | "image" | "overlay";
+      translation: string;
+      boxes?: OverlayBox[];
+    }
   | { type: "page_error"; index: number; error: string }
   | { type: "done"; model_used: string };
 
@@ -21,6 +35,14 @@ export interface ImagesTranslateOptions extends StreamOptions {
   files: readonly File[];
   model?: string;
   targetLang?: string;
+  /** Detect text boxes and translate each one so the PDF export can draw it over the page. */
+  overlay?: boolean;
+}
+
+export interface ExportImagesPdfOptions {
+  /** One list of boxes per image, same order as the files. */
+  boxes?: readonly (readonly OverlayBox[])[];
+  includeTextPages?: boolean;
 }
 
 async function throwHttpError(res: Response, fallback: string): Promise<never> {
@@ -92,22 +114,24 @@ export function translateImages({
   files,
   model,
   targetLang,
+  overlay,
   ...stream
 }: ImagesTranslateOptions): Promise<void> {
-  return streamNdjson(
-    "/api/translate/images",
-    buildForm(files, "files", model, targetLang),
-    stream
-  );
+  const form = buildForm(files, "files", model, targetLang);
+  if (overlay) form.append("overlay", "true");
+  return streamNdjson("/api/translate/images", form, stream);
 }
 
 /** Returns the PDF (each image followed by its translation) built from the same files, in the same order. */
 export async function exportImagesPdf(
   files: readonly File[],
-  translations: readonly string[]
+  translations: readonly string[],
+  { boxes, includeTextPages = true }: ExportImagesPdfOptions = {}
 ): Promise<Blob> {
   const form = buildForm(files, "files");
   form.append("translations", JSON.stringify(translations));
+  if (boxes) form.append("boxes", JSON.stringify(boxes));
+  if (!includeTextPages) form.append("include_text_pages", "false");
   const res = await fetch(getApiUrl("/api/translate/images/export-pdf"), {
     method: "POST",
     body: form,

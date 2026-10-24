@@ -166,3 +166,131 @@ def test_export_pdf_rejects_non_image(client):
     )
 
     assert resp.status_code == 400
+
+
+# ---- overlay mode -----------------------------------------------------------------------------
+
+from services.manga_detector import DetectedBox, DetectorUnavailableError, TEXT_BUBBLE  # noqa: E402
+
+
+def _detector(*rects):
+    return lambda _bytes: [DetectedBox(x0, y0, x1, y1, TEXT_BUBBLE, 0.9) for x0, y0, x1, y1 in rects]
+
+
+def _post_overlay(client, provider, payloads, detector, available=True):
+    def fake_load():
+        if not available:
+            raise DetectorUnavailableError("missing")
+
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider), patch(
+        "routers.image_batch_translate.detect_text_boxes", detector
+    ), patch("routers.image_batch_translate.load_detector", fake_load):
+        return client.post(
+            "/api/translate/images",
+            files=_files(payloads),
+            data={"model": INDEX_MODEL, "target_lang": "Indonesian", "overlay": "true"},
+        )
+
+
+def test_overlay_translates_each_box_and_returns_boxes(client):
+    provider = RecordingProvider()
+    resp = _post_overlay(client, provider, [make_image()], _detector((300, 20, 400, 100), (20, 20, 120, 100)))
+
+    events = _events(resp)
+    assert [e["type"] for e in events] == ["start", "page", "done"]
+    page = events[1]
+    assert page["mode"] == "overlay"
+    assert page["boxes"] == [
+        {"x0": 300, "y0": 20, "x1": 400, "y1": 100, "text": "terjemahan-1"},
+        {"x0": 20, "y0": 20, "x1": 120, "y1": 100, "text": "terjemahan-2"},
+    ]
+    assert page["translation"] == "terjemahan-1\n\nterjemahan-2"
+    assert len(provider.calls) == 2
+
+
+def test_overlay_without_detected_boxes_falls_back_to_whole_image(client):
+    provider = RecordingProvider()
+    resp = _post_overlay(client, provider, [make_image()], _detector())
+
+    page = _events(resp)[1]
+    assert page["mode"] == "image" and "boxes" not in page
+    assert len(provider.calls) == 1
+
+
+def test_overlay_with_missing_model_is_rejected_before_streaming(client):
+    provider = RecordingProvider()
+    resp = _post_overlay(client, provider, [make_image()], _detector(), available=False)
+
+    assert resp.status_code == 400
+    assert provider.calls == []
+
+
+def test_overlay_provider_down_reports_page_error_without_leaking(client):
+    class Down(RecordingProvider):
+        async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+            raise Exception("connection refused to http://secret-host")
+
+    rects = [(i * 60, 10, i * 60 + 50, 60) for i in range(5)]
+    resp = _post_overlay(client, Down(), [make_image(600, 300)], _detector(*rects))
+
+    assert [e["type"] for e in _events(resp)] == ["start", "page_error", "done"]
+    assert "secret-host" not in resp.text
+
+
+def test_overlay_flag_is_off_by_default(client):
+    provider = RecordingProvider()
+    with patch("routers.image_batch_translate.detect_text_boxes") as detector:
+        _post(client, provider, [make_image()])
+
+    detector.assert_not_called()
+
+
+# ---- export with boxes ------------------------------------------------------------------------
+
+def _export(client, payloads, translations, **data):
+    return client.post(
+        "/api/translate/images/export-pdf",
+        files=_files(payloads),
+        data={"translations": json.dumps(translations), **data},
+    )
+
+
+def test_export_with_boxes_and_without_text_pages(client):
+    boxes = [[{"x0": 50, "y0": 50, "x1": 300, "y1": 200, "text": "Halo"}], []]
+    resp = _export(
+        client,
+        [make_image(), make_image()],
+        ["a", "b"],
+        boxes=json.dumps(boxes),
+        include_text_pages="false",
+    )
+
+    assert resp.status_code == 200
+    assert len(pymupdf.open(stream=resp.content, filetype="pdf")) == 2
+
+
+def test_export_with_boxes_keeps_text_pages_by_default(client):
+    boxes = [[{"x0": 50, "y0": 50, "x1": 300, "y1": 200, "text": "Halo"}]]
+    resp = _export(client, [make_image()], ["a"], boxes=json.dumps(boxes))
+
+    assert len(pymupdf.open(stream=resp.content, filetype="pdf")) == 2
+
+
+@pytest.mark.parametrize(
+    "boxes",
+    [
+        "not json",
+        json.dumps({"a": 1}),
+        json.dumps([[], []]),  # wrong page count
+        json.dumps([[{"x0": "1", "y0": 0, "x1": 10, "y1": 10, "text": "x"}]]),
+        json.dumps([[{"x0": 0, "y0": 0, "x1": 10, "y1": 10}]]),  # no text
+        json.dumps([[{"x0": 0, "y0": 0, "x1": 10, "y1": 10, "text": 5}]]),
+        json.dumps([[{"x0": 0, "y0": 0, "x1": 10, "y1": 10, "text": "x" * 2001}]]),
+        json.dumps([[{"x0": 0, "y0": 0, "x1": 10, "y1": 10, "text": "x"}] * 101]),
+        json.dumps([[{"x0": 0, "y0": 0, "x1": 10**9, "y1": 10, "text": "x"}]]),
+    ],
+)
+def test_export_rejects_bad_boxes(client, boxes):
+    resp = _export(client, [make_image()], ["a"], boxes=boxes)
+
+    assert resp.status_code == 400

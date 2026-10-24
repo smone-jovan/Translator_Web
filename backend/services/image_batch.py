@@ -6,11 +6,12 @@ Only PNG and JPEG are accepted (what manga scans ship as). Images are decoded by
 downscaled to the official 2048 px longest edge before they are sent to the model.
 """
 import base64
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 import pymupdf
 
 from services.ai.index_translate import MAX_IMAGE_BYTES, ImageTooLargeError, validate_image_data_url
+from services.manga_overlay import Box, render_overlay
 
 __all__ = ["ImageRejectedError", "ImageTooLargeError", "build_translated_pdf", "prepare_image_data_url"]
 
@@ -108,15 +109,24 @@ def _add_text_pages(doc: pymupdf.Document, heading: str, text: str) -> None:
             y += _LINE_HEIGHT
 
 
-def build_translated_pdf(images: Sequence[bytes], translations: Sequence[str]) -> bytes:
-    """One image page followed by its translation page(s), for every image in order."""
-    if len(images) != len(translations):
+def build_translated_pdf(
+    images: Sequence[bytes],
+    translations: Sequence[str],
+    overlays: Optional[Sequence[Sequence[Box]]] = None,
+    include_text_pages: bool = True,
+) -> bytes:
+    """One image page (with the translation drawn over its text boxes when given) plus its translation page(s)."""
+    if len(images) != len(translations) or (overlays is not None and len(overlays) != len(images)):
         raise ValueError("Every image needs exactly one translation")
     doc = pymupdf.open()
     try:
         for number, (image, translation) in enumerate(zip(images, translations), start=1):
+            boxes = overlays[number - 1] if overlays is not None else ()
+            if any(box.text.strip() for box in boxes):
+                image = render_overlay(image, boxes)
             _add_image_page(doc, image)
-            _add_text_pages(doc, f"Terjemahan halaman {number}", translation)
+            if include_text_pages:
+                _add_text_pages(doc, f"Terjemahan halaman {number}", translation)
         return doc.tobytes()
     finally:
         doc.close()

@@ -87,3 +87,53 @@ class TestBuildTranslatedPdf:
 
         doc = pymupdf.open(stream=pdf, filetype="pdf")
         assert "你好" in doc[1].get_text()
+
+
+class TestBuildTranslatedPdfWithOverlays:
+    def _darkness_in_box(self, doc, page_number, box):
+        page = doc[page_number]
+        zoom = 2
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+        scale = pix.width / page.rect.width
+        sx = pix.width / 600  # source image is 600 px wide and fills the page width
+        x0, y0, x1, y1 = (int(v * sx) for v in box)
+        samples = pix.samples_mv
+        dark = 0
+        for y in range(y0, min(y1, pix.height)):
+            row = y * pix.stride
+            for x in range(x0, min(x1, pix.width)):
+                if samples[row + x * pix.n] < 100:
+                    dark += 1
+        return dark
+
+    def test_overlay_page_replaces_the_original_image_page(self):
+        from services.manga_overlay import Box
+
+        box = Box(100, 100, 400, 300, "Halo dunia")
+        pdf = build_translated_pdf([make_image(600, 900)], ["Halo dunia"], overlays=[[box]])
+
+        doc = pymupdf.open(stream=pdf, filetype="pdf")
+        assert len(doc) == 2
+        assert self._darkness_in_box(doc, 0, (100, 100, 400, 300)) > 50
+
+    def test_without_overlays_image_page_stays_blank(self):
+        pdf = build_translated_pdf([make_image(600, 900)], ["Halo dunia"])
+
+        doc = pymupdf.open(stream=pdf, filetype="pdf")
+        assert self._darkness_in_box(doc, 0, (100, 100, 400, 300)) == 0
+
+    def test_text_pages_can_be_left_out(self):
+        from services.manga_overlay import Box
+
+        pdf = build_translated_pdf(
+            [make_image(600, 900), make_image(600, 900)],
+            ["a", "b"],
+            overlays=[[Box(100, 100, 400, 300, "a")], []],
+            include_text_pages=False,
+        )
+
+        assert len(pymupdf.open(stream=pdf, filetype="pdf")) == 2
+
+    def test_overlay_count_must_match_images(self):
+        with pytest.raises(ValueError):
+            build_translated_pdf([make_image(100, 100)], ["a"], overlays=[[], []])

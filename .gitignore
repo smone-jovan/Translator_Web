@@ -103,3 +103,5 @@ progress.md
 # Temporary folders
 temp_polish_2/
 .mimocode/
+# Local manga text-detector weights (downloaded by the user, see ADR-132)
+backend/models/*.onnx

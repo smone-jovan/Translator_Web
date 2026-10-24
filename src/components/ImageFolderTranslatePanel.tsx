@@ -6,6 +6,7 @@ import {
   joinPageTranslations,
   sortImageFiles,
   translateImages,
+  type OverlayBox,
   type PdfTranslateEvent,
 } from "@/lib/pdfTranslate";
 
@@ -13,6 +14,7 @@ interface PageResult {
   index: number;
   text: string;
   failed: boolean;
+  boxes?: OverlayBox[];
 }
 
 interface ImageFolderTranslatePanelProps {
@@ -39,13 +41,20 @@ export function ImageFolderTranslatePanel({
   const [results, setResults] = useState<PageResult[]>([]);
   const [running, setRunning] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [overlay, setOverlay] = useState(false);
+  const [includeTextPages, setIncludeTextPages] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
   const handleEvent = (event: PdfTranslateEvent) => {
     if (event.type === "page") {
       setResults((prev) => [
         ...prev,
-        { index: event.index, text: event.translation, failed: false },
+        {
+          index: event.index,
+          text: event.translation,
+          failed: false,
+          boxes: event.boxes,
+        },
       ]);
     } else if (event.type === "page_error") {
       setResults((prev) => [
@@ -70,6 +79,7 @@ export function ImageFolderTranslatePanel({
       await translateImages({
         files: sorted,
         model: model || undefined,
+        overlay,
         signal: controller.signal,
         onEvent: handleEvent,
       });
@@ -94,10 +104,16 @@ export function ImageFolderTranslatePanel({
       const page = byIndex.get(i);
       return page && !page.failed ? page.text : FAILED_PAGE_TEXT;
     });
+    const boxes = files.map((_, i) => byIndex.get(i)?.boxes ?? []);
+    const hasBoxes = boxes.some((page) => page.length > 0);
     setExporting(true);
     try {
       saveBlob(
-        await exportImagesPdf(files, translations),
+        await exportImagesPdf(files, translations, {
+          boxes: hasBoxes ? boxes : undefined,
+          // Without overlaid pages the translation text would be missing from the PDF entirely.
+          includeTextPages: hasBoxes ? includeTextPages : true,
+        }),
         "translated-images.pdf"
       );
     } catch (error) {
@@ -121,6 +137,27 @@ export function ImageFolderTranslatePanel({
         gambar. Urutan mengikuti nama file. Hasilnya bisa diunduh sebagai PDF
         (gambar lalu terjemahannya). Butuh model Index-Translate.
       </p>
+      <div className="mb-4 space-y-1 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={overlay}
+            disabled={running}
+            onChange={(e) => setOverlay(e.target.checked)}
+          />
+          Timpa terjemahan ke gambar (manga, jauh lebih lambat: satu permintaan
+          per gelembung teks)
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={includeTextPages}
+            disabled={!overlay}
+            onChange={(e) => setIncludeTextPages(e.target.checked)}
+          />
+          Sertakan juga halaman teks terjemahan di PDF
+        </label>
+      </div>
       <div className="flex flex-wrap items-center gap-4">
         <label className="text-sm">
           <span className="mr-2">Folder:</span>
