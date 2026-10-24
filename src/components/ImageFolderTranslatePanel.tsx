@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,8 +18,14 @@ interface PageResult {
   boxes?: OverlayBox[];
 }
 
+export interface ImageFolderPanelHandle {
+  /** Start translating picked files (a ZIP, or PNG/JPG images) as if chosen in this panel. */
+  start: (files: File[]) => Promise<void>;
+}
+
 interface ImageFolderTranslatePanelProps {
   model: string;
+  ref?: Ref<ImageFolderPanelHandle>;
 }
 
 const FAILED_PAGE_TEXT = "[halaman ini gagal diterjemahkan]";
@@ -37,7 +43,9 @@ function saveBlob(blob: Blob, filename: string) {
 
 export function ImageFolderTranslatePanel({
   model,
+  ref,
 }: ImageFolderTranslatePanelProps) {
+  const sectionRef = useRef<HTMLElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   // A ZIP is one uploaded file but many pages, so the page count and names come from the server.
   const [pageNames, setPageNames] = useState<string[]>([]);
@@ -76,14 +84,15 @@ export function ImageFolderTranslatePanel({
     }
   };
 
-  const start = async (picked: FileList | null, fromZipInput = false) => {
+  const start = async (picked: readonly File[], fromZipInput = false) => {
     // The ZIP input has no `accept`, so whatever was picked there is treated as the archive.
-    const zip = fromZipInput ? picked?.[0] : findZipFile(picked ?? []);
-    const sorted = zip ? [zip] : sortImageFiles(Array.from(picked ?? []));
+    const zip = fromZipInput ? picked[0] : findZipFile(picked);
+    const sorted = zip ? [zip] : sortImageFiles(picked);
     if (sorted.length === 0) {
       toast.error("Tidak ada gambar PNG/JPG atau file ZIP di pilihan ini.");
       return;
     }
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     const controller = new AbortController();
     abortRef.current = controller;
     setSelection(
@@ -114,6 +123,8 @@ export function ImageFolderTranslatePanel({
       abortRef.current = null;
     }
   };
+
+  useImperativeHandle(ref, () => ({ start }));
 
   const goodPages = results.filter((r) => !r.failed);
   const combined = joinPageTranslations(goodPages);
@@ -148,7 +159,10 @@ export function ImageFolderTranslatePanel({
   const finished = !running && results.length > 0;
 
   return (
-    <section className="rounded-3xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-6 mb-8">
+    <section
+      ref={sectionRef}
+      className="rounded-3xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-6 mb-8"
+    >
       <h2 className="text-lg font-semibold text-[var(--foreground)] mb-1">
         Terjemahkan folder gambar
       </h2>
@@ -188,7 +202,7 @@ export function ImageFolderTranslatePanel({
               disabled={running}
               {...FOLDER_ATTRIBUTES}
               onChange={(e) => {
-                void start(e.target.files);
+                void start(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />
@@ -202,7 +216,7 @@ export function ImageFolderTranslatePanel({
                 type="file"
                 disabled={running}
                 onChange={(e) => {
-                  void start(e.target.files, true);
+                  void start(Array.from(e.target.files ?? []), true);
                   e.target.value = "";
                 }}
               />
@@ -215,7 +229,7 @@ export function ImageFolderTranslatePanel({
                 accept="image/png,image/jpeg"
                 disabled={running}
                 onChange={(e) => {
-                  void start(e.target.files);
+                  void start(Array.from(e.target.files ?? []));
                   e.target.value = "";
                 }}
               />
@@ -231,7 +245,7 @@ export function ImageFolderTranslatePanel({
               multiple
               disabled={running}
               onChange={(e) => {
-                void start(e.target.files);
+                void start(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />

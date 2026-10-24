@@ -15,9 +15,17 @@ interface PageResult {
 
 interface PdfTranslatePanelProps {
   model: string;
+  /** ZIPs and images picked here are handed to the image folder panel. */
+  onOtherFiles: (files: File[]) => void;
 }
 
-export function PdfTranslatePanel({ model }: PdfTranslatePanelProps) {
+const PDF_NAME = /\.pdf$/i;
+const isPdf = (file: File) => PDF_NAME.test(file.name) || file.type === "application/pdf";
+
+export function PdfTranslatePanel({
+  model,
+  onOtherFiles,
+}: PdfTranslatePanelProps) {
   const [totalPages, setTotalPages] = useState(0);
   const [results, setResults] = useState<PageResult[]>([]);
   const [running, setRunning] = useState(false);
@@ -83,24 +91,31 @@ export function PdfTranslatePanel({ model }: PdfTranslatePanelProps) {
   return (
     <section className="rounded-3xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-6 mb-8">
       <h2 className="text-lg font-semibold text-[var(--foreground)] mb-1">
-        Terjemahkan PDF
+        Terjemahkan PDF, ZIP, atau gambar
       </h2>
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
-        Maks. 20 MB dan 50 halaman. Halaman berteks diterjemahkan langsung,
-        halaman scan/komik dibaca sebagai gambar. Butuh model Index-Translate.
-        Punya file ZIP atau banyak gambar? Pakai panel "Terjemahkan folder
-        gambar" di bawah ini.
+        Pilih satu PDF (maks. 20 MB, 50 halaman), satu ZIP berisi gambar, atau
+        banyak gambar PNG/JPG sekaligus. Halaman PDF berteks diterjemahkan
+        langsung, halaman scan/komik dibaca sebagai gambar. Hasil ZIP dan
+        gambar tampil di panel di bawah ini. Butuh model Index-Translate.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf"
+          multiple
           disabled={running}
           className="text-sm"
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void handleFile(file);
+            // No `accept`: Chrome on Android greys out files that do not match it (e.g. .zip).
+            const picked = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            const pdfs = picked.filter(isPdf);
+            if (picked.length === 0) return;
+            if (pdfs.length === 0) onOtherFiles(picked);
+            else if (pdfs.length === picked.length)
+              void handleFile(pdfs[0]);
+            else toast.error("Pilih PDF saja, atau ZIP/gambar saja.");
           }}
         />
         {running && (

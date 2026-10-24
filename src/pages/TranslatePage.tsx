@@ -23,7 +23,10 @@ import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { toast } from "sonner";
 import { TocImportModal, type TocChapter } from "@/components/TocImportModal";
 import { PdfTranslatePanel } from "@/components/PdfTranslatePanel";
-import { ImageFolderTranslatePanel } from "@/components/ImageFolderTranslatePanel";
+import {
+  ImageFolderTranslatePanel,
+  type ImageFolderPanelHandle,
+} from "@/components/ImageFolderTranslatePanel";
 
 interface BookCardProps {
   id?: number;
@@ -109,6 +112,7 @@ export default function TranslatePage({
   onNavigateToSettings,
   onNavigateToLibrary,
 }: TranslatePageProps) {
+  const imageFolderRef = useRef<ImageFolderPanelHandle>(null);
   const [inputText, setInputText] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [recentThreads, setRecentThreads] = useState<ThreadItem[]>([]);
@@ -833,8 +837,11 @@ export default function TranslatePage({
           </CardContent>
         </Card>
 
-        <PdfTranslatePanel model={selectedModel} />
-        <ImageFolderTranslatePanel model={selectedModel} />
+        <PdfTranslatePanel
+          model={selectedModel}
+          onOtherFiles={(files) => void imageFolderRef.current?.start(files)}
+        />
+        <ImageFolderTranslatePanel ref={imageFolderRef} model={selectedModel} />
 
         <div className="w-full">
           <div className="flex items-center justify-between mb-8">
