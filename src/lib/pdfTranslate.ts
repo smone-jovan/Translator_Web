@@ -6,38 +6,40 @@ export type PdfTranslateEvent =
   | { type: "page_error"; index: number; error: string }
   | { type: "done"; model_used: string };
 
-export interface PdfTranslateOptions {
-  file: File;
-  model?: string;
-  targetLang?: string;
+interface StreamOptions {
   signal?: AbortSignal;
   onEvent: (event: PdfTranslateEvent) => void;
 }
 
-/** Streams NDJSON page events from POST /api/translate/pdf; throws with the server's message on HTTP errors. */
-export async function translatePdf({
-  file,
-  model,
-  targetLang,
-  signal,
-  onEvent,
-}: PdfTranslateOptions): Promise<void> {
-  const form = new FormData();
-  form.append("file", file);
-  if (model) form.append("model", model);
-  if (targetLang) form.append("target_lang", targetLang);
+export interface PdfTranslateOptions extends StreamOptions {
+  file: File;
+  model?: string;
+  targetLang?: string;
+}
 
-  const res = await fetch(getApiUrl("/api/translate/pdf"), {
+export interface ImagesTranslateOptions extends StreamOptions {
+  files: readonly File[];
+  model?: string;
+  targetLang?: string;
+}
+
+async function throwHttpError(res: Response, fallback: string): Promise<never> {
+  const err = await res.json().catch(() => ({}));
+  throw new Error(typeof err.detail === "string" ? err.detail : fallback);
+}
+
+/** POSTs a multipart form and reads the NDJSON page events; throws with the server's message on HTTP errors. */
+async function streamNdjson(
+  path: string,
+  form: FormData,
+  { signal, onEvent }: StreamOptions
+): Promise<void> {
+  const res = await fetch(getApiUrl(path), {
     method: "POST",
     body: form,
     signal,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(
-      typeof err.detail === "string" ? err.detail : "PDF translation failed"
-    );
-  }
+  if (!res.ok) return throwHttpError(res, "Translation failed");
 
   const reader = res.body?.getReader();
   if (!reader) throw new Error("Response body is not readable");
@@ -58,6 +60,70 @@ export async function translatePdf({
     lines.forEach(flush);
   }
   flush(buffer);
+}
+
+function buildForm(
+  files: readonly File[],
+  fileField: string,
+  model?: string,
+  targetLang?: string
+): FormData {
+  const form = new FormData();
+  files.forEach((file) => form.append(fileField, file));
+  if (model) form.append("model", model);
+  if (targetLang) form.append("target_lang", targetLang);
+  return form;
+}
+
+export function translatePdf({
+  file,
+  model,
+  targetLang,
+  ...stream
+}: PdfTranslateOptions): Promise<void> {
+  return streamNdjson(
+    "/api/translate/pdf",
+    buildForm([file], "file", model, targetLang),
+    stream
+  );
+}
+
+export function translateImages({
+  files,
+  model,
+  targetLang,
+  ...stream
+}: ImagesTranslateOptions): Promise<void> {
+  return streamNdjson(
+    "/api/translate/images",
+    buildForm(files, "files", model, targetLang),
+    stream
+  );
+}
+
+/** Returns the PDF (each image followed by its translation) built from the same files, in the same order. */
+export async function exportImagesPdf(
+  files: readonly File[],
+  translations: readonly string[]
+): Promise<Blob> {
+  const form = buildForm(files, "files");
+  form.append("translations", JSON.stringify(translations));
+  const res = await fetch(getApiUrl("/api/translate/images/export-pdf"), {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) return throwHttpError(res, "PDF export failed");
+  return res.blob();
+}
+
+const IMAGE_NAME = /\.(png|jpe?g)$/i;
+
+/** Keeps PNG/JPEG files and orders them like a file manager does (page2 before page10). */
+export function sortImageFiles(files: Iterable<File>): File[] {
+  const key = (file: File) => file.webkitRelativePath || file.name;
+  return [...files]
+    .filter((file) => IMAGE_NAME.test(file.name))
+    .sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true }));
 }
 
 export function joinPageTranslations(

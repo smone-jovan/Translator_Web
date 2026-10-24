@@ -23,6 +23,7 @@ import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { toast } from "sonner";
 import { TocImportModal, type TocChapter } from "@/components/TocImportModal";
 import { PdfTranslatePanel } from "@/components/PdfTranslatePanel";
+import { ImageFolderTranslatePanel } from "@/components/ImageFolderTranslatePanel";
 
 interface BookCardProps {
   id?: number;
@@ -833,6 +834,7 @@ export default function TranslatePage({
         </Card>
 
         <PdfTranslatePanel model={selectedModel} />
+        <ImageFolderTranslatePanel model={selectedModel} />
 
         <div className="w-full">
           <div className="flex items-center justify-between mb-8">
