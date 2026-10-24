@@ -311,6 +311,7 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-111**: Adaptive Multi-Language Source Detection (CJK, Korean, Japanese).
 - **ADR-121**: MTL Quality Guards — preservasi output terpotong, deteksi kebocoran aksara sumber & loop frasa.
 - **ADR-122 & ADR-123**: Siklus hidup glosarium tanpa self-eviction, ekstraksi bersampel, relasi karakter di prompt, dan sinkronisasi Settings ↔ Lorebook.
+- **ADR-129**: Profil prompt Index-Translate (satu pesan native + glosarium `instTrans`), greedy decoding, chunking 2500 karakter untuk model lokal kecil, dan endpoint `POST /api/translate/image`.
 
 ### 4. Reader UX, Scroll Geometry & Mobile Layout
 - **ADR-019**: Dynamic Client-Side Cover Engine & Canvas Compression.
