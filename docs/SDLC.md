@@ -311,6 +311,7 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-111**: Adaptive Multi-Language Source Detection (CJK, Korean, Japanese).
 - **ADR-121**: MTL Quality Guards — preservasi output terpotong, deteksi kebocoran aksara sumber & loop frasa.
 - **ADR-122 & ADR-123**: Siklus hidup glosarium tanpa self-eviction, ekstraksi bersampel, relasi karakter di prompt, dan sinkronisasi Settings ↔ Lorebook.
+- **ADR-128**: Polish judul khusus Index-Translate — template native tanpa label, batching 10 judul per request; provider lain tidak berubah.
 - **ADR-129**: Profil prompt Index-Translate (satu pesan native + glosarium `instTrans`), greedy decoding, chunking 2500 karakter untuk model lokal kecil, dan endpoint `POST /api/translate/image`.
 
 ### 4. Reader UX, Scroll Geometry & Mobile Layout
@@ -333,6 +334,13 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 ### 6. Desktop Launcher & Tooling
 - **ADR-119**: Desktop Control Hub GUI & Zero-Console Launch (`pythonw.exe`, `CREATE_NO_WINDOW`).
 - **ADR-125 (Tooling)**: Test suite hermetik (`pytest-asyncio`, fixture `hermetic_dns`).
+
+### 7. Image, PDF & Vision Translation (Index-Translate)
+- **ADR-130**: Terjemahan PDF per halaman (`POST /api/translate/pdf`): lapisan teks atau render gambar, streaming NDJSON, batas 20 MB / 50 halaman; dependensi baru `pymupdf` (lisensi AGPL-3.0, perlu ditinjau bila didistribusikan).
+- **ADR-131**: Terjemahan folder gambar (`POST /api/translate/images`) dan ekspor PDF gambar + teks terjemahan.
+- **ADR-132**: Terjemahan overlay manga dengan detektor teks ONNX lokal (opt-in `overlay=true`; model diunduh manual lewat `scripts.fetch_detector_model`).
+- **ADR-133**: Unggah ZIP berisi gambar, dibuka di memori dengan pengaman zip bomb dan path traversal.
+- **ADR-134**: Pengaman balasan bukan-terjemahan (penolakan, deskripsi, loop) dan penalti pengulangan untuk balasan gambar.
 
 ---
 

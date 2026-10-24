@@ -3,6 +3,8 @@
 ## Status
 Accepted (2026-10-24). Diimplementasikan di commit `e158ca5` (profil, chunking, suhu) dan `3f54f8d` (endpoint gambar). Belum diuji pada bab novel nyata dengan model 2B (lihat Negative / Residual).
 
+Tindak lanjut: butir residual "endpoint gambar belum punya antarmuka frontend" ditindaklanjuti oleh ADR-130 (PDF) dan ADR-131 (folder gambar, ekspor PDF); ADR-132 sampai ADR-135 memperluasnya (overlay manga, ZIP, pengaman balasan, WebP). Teks keputusan di bawah dibiarkan sebagai catatan historis.
+
 ## Date
 2026-10-24
 

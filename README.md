@@ -206,7 +206,7 @@ Translator_Web/
     ├── overview.md             # High-level system architecture & data flows
     ├── Handoff.md              # Developer onboarding guide & Agent Playbook
     ├── SDLC.md                 # 31-phase development lifecycle & Categorized ADR Index
-    └── decisions/              # 122 Architectural Decision Records (ADR-004 to ADR-125)
+    └── decisions/              # 131 Architectural Decision Records (ADR-004 to ADR-134)
 ```
 
 ---
@@ -218,7 +218,7 @@ Translator_Web/
 | [Architecture Overview](docs/overview.md) | High-level system architecture, data flows, and key entry points |
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview, and Agent Playbook |
 | [SDLC](docs/SDLC.md) | Software development lifecycle (Phases 1–31) & Categorized ADR Index |
-| [ADRs](docs/decisions/) | 122 architectural decision records (ADR-004 to ADR-125) |
+| [ADRs](docs/decisions/) | 131 architectural decision records (ADR-004 to ADR-134) |
 | [Configuration Guide](docs/Configuration_setting.md) | Detailed setup and multi-device sync instructions |
 | [Implementation Plan](docs/implementation_plan.md) | Historical task definitions & acceptance criteria |
 | [Ghost Mode Security Notes](docs/ghost-mode-security.md) | Known limitation: the Ghost PIN hides the UI but does not protect `ghost.db` from other devices on the LAN |
