@@ -42,6 +42,7 @@ export function ImageFolderTranslatePanel({
   // A ZIP is one uploaded file but many pages, so the page count and names come from the server.
   const [pageNames, setPageNames] = useState<string[]>([]);
   const [results, setResults] = useState<PageResult[]>([]);
+  const [selection, setSelection] = useState("");
   // Phone browsers cannot pick a folder (the folder input degrades to a plain file picker).
   const [canPickFolder] = useState(
     () => !window.matchMedia("(pointer: coarse)").matches
@@ -85,6 +86,11 @@ export function ImageFolderTranslatePanel({
     }
     const controller = new AbortController();
     abortRef.current = controller;
+    setSelection(
+      zip
+        ? `${zip.name} (${(zip.size / (1024 * 1024)).toFixed(1)} MB)`
+        : `${sorted.length} gambar`
+    );
     setFiles(sorted);
     setPageNames(zip ? [] : sorted.map((file) => file.name));
     setResults([]);
@@ -188,36 +194,49 @@ export function ImageFolderTranslatePanel({
             />
           </label>
         )}
-        <label className="text-sm">
-          <span className="mr-2">ZIP berisi gambar:</span>
-          {/* No `accept`: Android pickers grey out .zip files whose MIME type differs
-              (application/x-zip, octet-stream...). The server checks the real content. */}
-          <input
-            type="file"
-            disabled={running}
-            onChange={(e) => {
-              void start(e.target.files, true);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <label className="text-sm">
-          <span className="mr-2">
-            {canPickFolder
-              ? "atau gambar:"
-              : "atau pilih gambar (bisa banyak sekaligus):"}
-          </span>
-          <input
-            type="file"
-            multiple
-            accept="image/png,image/jpeg"
-            disabled={running}
-            onChange={(e) => {
-              void start(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </label>
+        {canPickFolder ? (
+          <>
+            <label className="text-sm">
+              <span className="mr-2">ZIP berisi gambar:</span>
+              <input
+                type="file"
+                disabled={running}
+                onChange={(e) => {
+                  void start(e.target.files, true);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mr-2">atau gambar:</span>
+              <input
+                type="file"
+                multiple
+                accept="image/png,image/jpeg"
+                disabled={running}
+                onChange={(e) => {
+                  void start(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </>
+        ) : (
+          <label className="text-sm">
+            <span className="mr-2">Pilih file ZIP atau banyak gambar:</span>
+            {/* One input without `accept`: Chrome on Android then opens the full file browser, where
+                .zip files stay selectable. A ZIP is detected by name/type, otherwise the picks are images. */}
+            <input
+              type="file"
+              multiple
+              disabled={running}
+              onChange={(e) => {
+                void start(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
         {running && (
           <Button variant="outline" onClick={() => abortRef.current?.abort()}>
             Batal
@@ -237,6 +256,11 @@ export function ImageFolderTranslatePanel({
           </>
         )}
       </div>
+      {selection && (
+        <p className="mt-3 text-sm text-[var(--muted-foreground)]">
+          Dipilih: {selection}
+        </p>
+      )}
       {pageNames.length > 0 && (
         <p
           className="mt-3 text-sm text-[var(--muted-foreground)]"
