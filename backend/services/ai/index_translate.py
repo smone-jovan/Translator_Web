@@ -7,10 +7,17 @@ small variants (2B) tend to echo it back, so for these models the whole request 
 message built from the official templates (github.com/bilibili/Index-Translate,
 inference/llm/translate.py).
 """
+import base64
+import binascii
 import re
 from typing import Dict, List, Sequence, Tuple
 
 GlossaryPair = Tuple[str, str]
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# The official image client caps output at 1024 tokens per image.
+IMAGE_MAX_TOKENS = 1024
+_IMAGE_DATA_URL = re.compile(r"data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})")
 
 DEFAULT_GLOSSARY_LIMIT = 30
 _MODEL_MARKER = "indextranslate"
@@ -53,6 +60,38 @@ def build_index_translate_messages(
     text: str, target_lang: str, glossary: Sequence[GlossaryPair] = ()
 ) -> List[Dict[str, str]]:
     return [{"role": "user", "content": build_index_translate_prompt(text, target_lang, glossary)}]
+
+
+class ImageTooLargeError(ValueError):
+    pass
+
+
+def validate_image_data_url(data_url: str) -> str:
+    """Accept only base64 png/jpeg/webp data URLs: the server never fetches a URL on the client's behalf."""
+    match = _IMAGE_DATA_URL.fullmatch(data_url or "")
+    if not match:
+        raise ValueError("Image must be a base64 data URL (png, jpeg or webp)")
+    payload = match.group(1)
+    if len(payload) * 3 // 4 > MAX_IMAGE_BYTES:
+        raise ImageTooLargeError(f"Image is too large (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)")
+    try:
+        base64.b64decode(payload, validate=True)
+    except binascii.Error:
+        raise ValueError("Image data is not valid base64") from None
+    return data_url
+
+
+def build_index_translate_image_messages(image_data_url: str, target_lang: str) -> List[Dict[str, object]]:
+    prompt = f"请将图片中的文本翻译为{_target_name(target_lang)}，{_PLAIN_SUFFIX}"
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ],
+        }
+    ]
 
 
 def collect_glossary_pairs(

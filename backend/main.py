@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from services.image_fetcher import sniff_raster_ext
 
-from routers import scrape, epub, translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images
+from routers import scrape, epub, translate, image_translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images
 
 
 @asynccontextmanager
@@ -174,6 +174,7 @@ def health_check():
 app.include_router(scrape.router)
 app.include_router(epub.router)
 app.include_router(translate.router)
+app.include_router(image_translate.router)
 app.include_router(threads.router)
 app.include_router(lorebook.router)
 app.include_router(context.router)
