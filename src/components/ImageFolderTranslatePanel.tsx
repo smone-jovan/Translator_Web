@@ -75,8 +75,9 @@ export function ImageFolderTranslatePanel({
     }
   };
 
-  const start = async (picked: FileList | null) => {
-    const zip = findZipFile(picked ?? []);
+  const start = async (picked: FileList | null, fromZipInput = false) => {
+    // The ZIP input has no `accept`, so whatever was picked there is treated as the archive.
+    const zip = fromZipInput ? picked?.[0] : findZipFile(picked ?? []);
     const sorted = zip ? [zip] : sortImageFiles(Array.from(picked ?? []));
     if (sorted.length === 0) {
       toast.error("Tidak ada gambar PNG/JPG atau file ZIP di pilihan ini.");
@@ -189,12 +190,13 @@ export function ImageFolderTranslatePanel({
         )}
         <label className="text-sm">
           <span className="mr-2">ZIP berisi gambar:</span>
+          {/* No `accept`: Android pickers grey out .zip files whose MIME type differs
+              (application/x-zip, octet-stream...). The server checks the real content. */}
           <input
             type="file"
-            accept=".zip,application/zip,application/x-zip-compressed"
             disabled={running}
             onChange={(e) => {
-              void start(e.target.files);
+              void start(e.target.files, true);
               e.target.value = "";
             }}
           />
