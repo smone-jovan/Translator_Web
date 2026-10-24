@@ -15,6 +15,12 @@ from sqlalchemy import select, func
 from database import get_db, LorebookEntry, Chapter, Thread, SessionLocal, GlobalSetting, get_db_workspace, make_workspace_key
 from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
+from services.ai.chunking import maybe_chunk
+from services.ai.index_translate import (
+    build_index_translate_messages,
+    collect_glossary_pairs,
+    is_index_translate_model,
+)
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 from services.task_registry import spawn_background_task
 
@@ -138,13 +144,24 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     for i, img_md in enumerate(protected_images):
         protected_text = protected_text.replace(img_md, f"\n❖IMAGE_{i}❖\n")
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": protected_text},
-    ]
+    if is_index_translate_model(selected_model):
+        # Index-Translate expects its own single-message template, not the long system prompt.
+        glossary = collect_glossary_pairs(db, req.thread_id, req.text)
+
+        def build_request(text: str) -> list:
+            return build_index_translate_messages(text, target_lang, glossary)
+
+        messages = build_request(protected_text)
+        provider = maybe_chunk(provider, source_text=protected_text, message_builder=build_request)
+    else:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": protected_text},
+        ]
+        provider = maybe_chunk(provider)
 
     try:
-        translation = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
+        translation = await provider.chat_completion(messages=messages, temperature=getattr(provider, "translation_temperature", 0.3), max_tokens=max_tokens)
         model_used = selected_model or "unknown"
 
         always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1

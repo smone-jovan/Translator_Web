@@ -3,12 +3,18 @@ import httpx
 import json
 from typing import List, Dict, AsyncGenerator
 from services.ai.base import BaseAIProviderAdapter, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
+from services.ai.index_translate import is_index_translate_model
 
 class LMStudioAdapter(BaseAIProviderAdapter):
     """
     Concrete adapter for LM Studio (Local LLM) using OpenAI-compatible HTTP interface.
     Handles robust connectivity and dual-stack localhost/127.0.0.1 fallback.
     """
+    # Small local translation models (e.g. Index-Translate) recommend greedy decoding.
+    translation_temperature = 0.0
+    # Small local models echo the prompt on chapter-length input; keep each request short.
+    translation_chunk_chars = 2500
+
     def __init__(self, base_url: str = "http://localhost:1234", model: str = None):
         self.model = model
         self.primary_url = base_url.rstrip("/")
@@ -20,6 +26,12 @@ class LMStudioAdapter(BaseAIProviderAdapter):
             self.urls_to_try.append(self.primary_url.replace("localhost", "127.0.0.1"))
         elif "127.0.0.1" in self.primary_url:
             self.urls_to_try.append(self.primary_url.replace("127.0.0.1", "localhost"))
+
+    def _extra_payload(self) -> Dict[str, object]:
+        # Index-Translate is a Qwen3.5 base; its model card says to run it with thinking disabled.
+        if is_index_translate_model(self.model):
+            return {"chat_template_kwargs": {"enable_thinking": False}}
+        return {}
 
     async def chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None) -> str:
         payload = {
@@ -33,6 +45,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
             payload["max_tokens"] = -1
         if self.model:
             payload["model"] = self.model
+        payload.update(self._extra_payload())
 
         last_error = ""
         for url in self.urls_to_try:
@@ -65,6 +78,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
         # If max_tokens is huge or None, omit it entirely so LM Studio handles it natively
         if self.model:
             payload["model"] = self.model
+        payload.update(self._extra_payload())
 
         last_error = ""
         success = False

@@ -10,6 +10,12 @@ from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 from services.ai.base import TRUNCATED_MARKER, PROHIBITED_MARKER
+from services.ai.chunking import maybe_chunk
+from services.ai.index_translate import (
+    build_index_translate_messages,
+    collect_glossary_pairs,
+    is_index_translate_model,
+)
 from services.fidelity_checker import verify_translation_fidelity
 from services.prompt_templates import (
     MAX_CONTINUATIONS,
@@ -405,6 +411,8 @@ class BackgroundTranslator:
                     model=model
                 )
                 print(f"[DEBUG] Chapter {chapter_id} - System Prompt Length: {len(system_prompt)} chars, Original Content Length: {len(content_original)} chars")
+                use_index_prompt = is_index_translate_model(model)
+                index_glossary = collect_glossary_pairs(db, thread_id, content_original) if use_index_prompt else []
 
             # Pace the API requests based on selected model's strict RPM limits (ADR-029)
             await BackgroundTranslator._enforce_pacing(model, gs, workspace=workspace)
@@ -413,9 +421,23 @@ class BackgroundTranslator:
             try:
                 # Resolve settings from this job's own workspace DB, never the process-global ACTIVE_WORKSPACE.
                 with get_session(workspace) as provider_db:
-                    provider = AIProviderFactory.get_provider(
+                    raw_provider = AIProviderFactory.get_provider(
                         base_url=lm_url or "http://localhost:1234", model=model, db_session=provider_db
                     )
+
+                if use_index_prompt:
+                    # Index-Translate expects its own single-message template, not the long system prompt.
+                    def build_request(text: str) -> list:
+                        return build_index_translate_messages(text, target_lang, index_glossary)
+
+                    base_messages = build_request(protected_content)
+                    provider = maybe_chunk(raw_provider, source_text=protected_content, message_builder=build_request)
+                else:
+                    base_messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": protected_content},
+                    ]
+                    provider = maybe_chunk(raw_provider)
 
                 always_hide_thoughts = getattr(gs, "always_hide_thoughts", 1) if gs else 1
                 max_tokens = get_chapter_translation_max_tokens(gs)
@@ -445,24 +467,19 @@ class BackgroundTranslator:
                     content_before_round = full_content
                     # Build messages: first round uses original prompt, continuation rounds use "continue" prompt
                     if continuation_round == 0:
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": protected_content},
-                        ]
+                        messages = base_messages
                     else:
                         print(f"[CONTINUE] Chapter {chapter_id} was truncated. Auto-continuing (round {continuation_round}/{MAX_CONTINUATIONS})...")
                         # Send the last CONTINUATION_TAIL_CHARS as context so the AI knows where it left off
                         tail = full_content[-CONTINUATION_TAIL_CHARS:] if len(full_content) > CONTINUATION_TAIL_CHARS else full_content
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": protected_content},
+                        messages = base_messages + [
                             {"role": "assistant", "content": f"... {tail}"},
                             {"role": "user", "content": build_continuation_prompt()},
                         ]
 
                     round_truncated = False
                     round_prohibited = False
-                    async for content in provider.stream_chat(messages=messages, temperature=0.3, max_tokens=max_tokens):
+                    async for content in provider.stream_chat(messages=messages, temperature=getattr(provider, "translation_temperature", 0.3), max_tokens=max_tokens):
                         # Check for truncation marker
                         if content == TRUNCATED_MARKER:
                             round_truncated = True
@@ -569,11 +586,8 @@ class BackgroundTranslator:
 
                 if not full_content.strip():
                     print(f"[WARN] Empty stream for chapter {chapter_id}; retrying with non-streaming completion.")
-                    messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": protected_content},
-                    ]
-                    full_content = await provider.chat_completion(messages=messages, temperature=0.3, max_tokens=max_tokens)
+                    messages = base_messages
+                    full_content = await provider.chat_completion(messages=messages, temperature=getattr(provider, "translation_temperature", 0.3), max_tokens=max_tokens)
                     completed_naturally = True
 
                 # Self-healing: providers can stop early with a normal finish_reason (so no TRUNCATED_MARKER),
@@ -581,20 +595,20 @@ class BackgroundTranslator:
                 if completed_naturally and full_content.strip():
                     async def _collect(recovery_messages: list) -> str:
                         collected = ""
-                        async for piece in provider.stream_chat(messages=recovery_messages, temperature=0.3, max_tokens=max_tokens):
+                        async for piece in provider.stream_chat(messages=recovery_messages, temperature=getattr(provider, "translation_temperature", 0.3), max_tokens=max_tokens):
                             if piece not in (TRUNCATED_MARKER, PROHIBITED_MARKER):
                                 collected += piece
                         return collected
 
                     async def _continue_partial(partial: str) -> str:
-                        return await _collect([
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": protected_content},
+                        return await _collect(base_messages + [
                             {"role": "assistant", "content": f"... {partial[-CONTINUATION_TAIL_CHARS:]}"},
                             {"role": "user", "content": build_continuation_prompt()},
                         ])
 
                     async def _retranslate_faithfully() -> str:
+                        if use_index_prompt:
+                            return await _collect(base_messages)
                         return await _collect([
                             {"role": "system", "content": system_prompt + build_anti_summary_instruction()},
                             {"role": "user", "content": protected_content},

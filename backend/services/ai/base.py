@@ -18,6 +18,10 @@ class BaseAIProviderAdapter(ABC):
     Port definition for AI Provider clients (e.g. LM Studio, OpenAI, Anthropic).
     Concrete adapters implement this to decouple completion requests from core logic.
     """
+    translation_temperature: float = 0.3
+    # Max source chars per translation request; 0 sends the whole text at once.
+    translation_chunk_chars: int = 0
+
     @abstractmethod
     async def chat_completion(
         self,
