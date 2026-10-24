@@ -10,6 +10,12 @@ from database import get_db, Thread, Chapter, GlobalSetting
 from services.ai.factory import AIProviderFactory
 from services.context_engine import ContextEngine
 from services.ai.settings import resolve_active_base_url, resolve_active_model
+from services.ai.index_translate import (
+    build_index_translate_messages,
+    clean_index_title_output,
+    collect_glossary_pairs,
+    is_index_translate_model,
+)
 from services.prompt_templates import (
     build_title_cleaning_prompt,
     build_synopsis_translation_prompt,
@@ -19,17 +25,43 @@ from services.prompt_templates import (
 
 router = APIRouter(prefix="/api", tags=["Polish"])
 
+_QUOTE_EDGES = "'\"“”«»「」"
+_BRACKET_PAIRS = {"(": ")", "[": "]"}
+
+
+def _strip_edge_wrappers(text: str) -> str:
+    """Strip edge quotes/whitespace and brackets that wrap the whole title or have no partner.
+
+    Brackets that belong to the title itself, like the "(2)" in "Run (2)", are kept.
+    """
+    t = text.strip(_QUOTE_EDGES + " \t")
+    while t:
+        opener, closer = t[0], t[-1]
+        if opener in _BRACKET_PAIRS and closer == _BRACKET_PAIRS[opener] and t.count(opener) == t.count(closer):
+            wrapped_whole = all(t[:i].count(opener) > t[:i].count(closer) for i in range(1, len(t)))
+            if wrapped_whole:
+                t = t[1:-1].strip(_QUOTE_EDGES + " \t")
+                continue
+        if closer in _BRACKET_PAIRS.values() and t.count(closer) > t.count(
+            next(o for o, c in _BRACKET_PAIRS.items() if c == closer)
+        ):
+            t = t[:-1].rstrip(_QUOTE_EDGES + " \t")
+            continue
+        if opener in _BRACKET_PAIRS and t.count(opener) > t.count(_BRACKET_PAIRS[opener]):
+            t = t[1:].lstrip(_QUOTE_EDGES + " \t")
+            continue
+        break
+    return t
+
+
 def clean_and_format_chapter_title(title: str, order_num: int, total_chapters: int, volume_num: int = None) -> str:
     """
     Cleans chapter title of redundant numbers, prefixes (e.g. Bab, Chapter, Vol, 第几章),
     and formats it in a beautiful zero-padded style (e.g., '01. Title Name', 'V2-01. Title Name').
     """
-    t = title.strip()
-    
-    # 1. Clean out common brackets, quotes, braces at the edges
-    t = re.sub(r'^[\'"“«「\[\(\s]+', '', t)
-    t = re.sub(r'[\'"”»」\]\)\s]+$', '', t)
-    
+    # 1. Clean out wrapping brackets and quotes at the edges (keeps balanced brackets like "(2)")
+    t = _strip_edge_wrappers(title)
+
     # 2. Repeatedly strip common prefixes (nested loop for safety)
     while True:
         prev = t
@@ -51,8 +83,7 @@ def clean_and_format_chapter_title(title: str, order_num: int, total_chapters: i
             break
             
     # 3. Clean up residual wrapping characters again
-    t = re.sub(r'^[\'"“«「\[\(\s]+', '', t)
-    t = re.sub(r'[\'"”»」\]\)\s]+$', '', t)
+    t = _strip_edge_wrappers(t)
 
     # 4. Calculate dynamic padding width based on total number of chapters
     width = 2
@@ -154,6 +185,7 @@ async def translate_titles(
     active_model = resolve_active_model(gs)
     polish_mode = gs.polish_mode if gs else "soft"
     polish_soft_limit = gs.polish_soft_limit if gs else 100
+    use_index_prompt = is_index_translate_model(active_model)
 
     thread_stmt = select(Thread).where(Thread.id == thread_id)
     thread = db.execute(thread_stmt).scalar_one_or_none()
@@ -175,7 +207,8 @@ async def translate_titles(
     # Clean thread original title and translate thread synopsis/description if bulk polishing
     if not chapter_id:
         # A. Clean Original Title (ADR-020 Compliance)
-        if thread.original_title and contains_source_script(thread.original_title):
+        # Index-Translate only translates; asked to "clean" it would translate and overwrite original_title.
+        if thread.original_title and contains_source_script(thread.original_title) and not use_index_prompt:
             print(f"🔄 [ADR-020] Cleansing original title: {thread.original_title}")
             sys_prompt_clean = build_title_cleaning_prompt()
             user_prompt_clean = f"Please clean this title: {thread.original_title}"
@@ -202,11 +235,19 @@ async def translate_titles(
             user_prompt_syn = thread.synopsis
             try:
                 provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
-                messages_syn = [
-                    {"role": "system", "content": sys_prompt_syn},
-                    {"role": "user", "content": user_prompt_syn}
-                ]
-                translated_syn = await provider.chat_completion(messages=messages_syn, temperature=0.3)
+                if use_index_prompt:
+                    messages_syn = build_index_translate_messages(
+                        user_prompt_syn, target_lang, collect_glossary_pairs(db, thread_id, user_prompt_syn)
+                    )
+                else:
+                    messages_syn = [
+                        {"role": "system", "content": sys_prompt_syn},
+                        {"role": "user", "content": user_prompt_syn}
+                    ]
+                translated_syn = await provider.chat_completion(
+                    messages=messages_syn,
+                    temperature=getattr(provider, "translation_temperature", 0.3) if use_index_prompt else 0.3,
+                )
                 translated_syn = translated_syn.strip()
                 if translated_syn.startswith("```") and translated_syn.endswith("```"):
                     translated_syn = re.sub(r"^```[a-zA-Z]*\n?", "", translated_syn)
@@ -416,12 +457,28 @@ async def translate_titles(
             try:
                 print(f"🔄 Processing title batch {chunk_num}...")
                 provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
-                messages = [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-                response = await provider.chat_completion(messages=messages, temperature=0.3)
-                translated_lines = [line.strip() for line in response.split("\n") if line.strip()]
+                if use_index_prompt:
+                    # One request per title, in the model's native template; labels are re-attached here.
+                    translated_lines = []
+                    for prompt_line, title in zip(prompt_lines, chunk_titles):
+                        label = prompt_line.split("]:", 1)[0].lstrip("[")
+                        title_messages = build_index_translate_messages(
+                            title, target_lang, collect_glossary_pairs(db, thread_id, title)
+                        )
+                        reply = await provider.chat_completion(
+                            messages=title_messages,
+                            temperature=getattr(provider, "translation_temperature", 0.0),
+                        )
+                        clean_title = clean_index_title_output(reply)
+                        if clean_title:
+                            translated_lines.append(f"[{label}]: {clean_title}")
+                else:
+                    messages = [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                    response = await provider.chat_completion(messages=messages, temperature=0.3)
+                    translated_lines = [line.strip() for line in response.split("\n") if line.strip()]
                 
                 for line in translated_lines:
                     match = re.search(r'(BOOK_TITLE|CHAPTER_\d+)[\]\-\:\s]*(.*)', line, re.IGNORECASE)

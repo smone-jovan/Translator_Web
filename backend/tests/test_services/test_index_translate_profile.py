@@ -5,6 +5,7 @@ from services.ai.chunking import maybe_chunk
 from services.ai.index_translate import (
     build_index_translate_messages,
     build_index_translate_prompt,
+    clean_index_title_output,
     collect_glossary_pairs,
     is_index_translate_model,
 )
@@ -53,6 +54,23 @@ class TestPrompt:
     def test_messages_are_a_single_user_message_without_system_prompt(self):
         messages = build_index_translate_messages("你好", "Indonesian")
         assert messages == [{"role": "user", "content": build_index_translate_prompt("你好", "Indonesian")}]
+
+
+class TestCleanTitleOutput:
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("Penguasa Misteri", "Penguasa Misteri"),
+            ("  \"Penguasa Misteri\"  ", "Penguasa Misteri"),
+            ("<think>\nhmm\n</think>\n\nPenguasa Misteri", "Penguasa Misteri"),
+            ("[BOOK_TITLE]: Penguasa Misteri", "Penguasa Misteri"),
+            ("[CHAPTER_3]: Bab 1: Awal", "Bab 1: Awal"),
+            ("Penguasa Misteri\n\nCatatan: ini terjemahan", "Penguasa Misteri"),
+            ("", ""),
+        ],
+    )
+    def test_reduces_model_output_to_a_single_title_line(self, raw, expected):
+        assert clean_index_title_output(raw) == expected
 
 
 class TestGlossaryCollection:

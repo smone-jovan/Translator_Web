@@ -62,6 +62,18 @@ def build_index_translate_messages(
     return [{"role": "user", "content": build_index_translate_prompt(text, target_lang, glossary)}]
 
 
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_ECHOED_LABEL = re.compile(r"^\[?(?:BOOK_TITLE|CHAPTER_\d+)\]?[\]\-:\s]*", re.IGNORECASE)
+_TITLE_WRAPPERS = " \t\"'“”«»「」"
+
+
+def clean_index_title_output(raw: str) -> str:
+    """Reduce a model reply to one bare title line (no think block, echoed label, quotes or notes)."""
+    text = _THINK_BLOCK.sub("", raw or "").strip()
+    first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    return _ECHOED_LABEL.sub("", first_line).strip(_TITLE_WRAPPERS)
+
+
 class ImageTooLargeError(ValueError):
     pass
 
