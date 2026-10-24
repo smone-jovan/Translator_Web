@@ -12,9 +12,9 @@ from services.context_engine import ContextEngine
 from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.ai.index_translate import (
     build_index_translate_messages,
-    clean_index_title_output,
     collect_glossary_pairs,
     is_index_translate_model,
+    translate_titles_with_index,
 )
 from services.prompt_templates import (
     build_title_cleaning_prompt,
@@ -25,7 +25,15 @@ from services.prompt_templates import (
 
 router = APIRouter(prefix="/api", tags=["Polish"])
 
-_QUOTE_EDGES = "'\"“”«»「」"
+_TITLE_ANNOTATION_CHARS = re.compile(r"[【】（）()\[\]［］《》]")
+
+
+def title_needs_cleaning(title: str) -> bool:
+    """Cleaning only strips tags and bracketed notes, so a title without any needs no LLM request."""
+    return bool(title) and bool(_TITLE_ANNOTATION_CHARS.search(title))
+
+
+_QUOTE_EDGES ="'\"“”«»「」"
 _BRACKET_PAIRS = {"(": ")", "[": "]"}
 
 
@@ -208,7 +216,13 @@ async def translate_titles(
     if not chapter_id:
         # A. Clean Original Title (ADR-020 Compliance)
         # Index-Translate only translates; asked to "clean" it would translate and overwrite original_title.
-        if thread.original_title and contains_source_script(thread.original_title) and not use_index_prompt:
+        # Skipped when the title carries no annotations, to save a request on quota-limited providers.
+        if (
+            thread.original_title
+            and contains_source_script(thread.original_title)
+            and title_needs_cleaning(thread.original_title)
+            and not use_index_prompt
+        ):
             print(f"🔄 [ADR-020] Cleansing original title: {thread.original_title}")
             sys_prompt_clean = build_title_cleaning_prompt()
             user_prompt_clean = f"Please clean this title: {thread.original_title}"
@@ -458,20 +472,16 @@ async def translate_titles(
                 print(f"🔄 Processing title batch {chunk_num}...")
                 provider = AIProviderFactory.get_provider(base_url=lm_url, model=active_model, db_session=db)
                 if use_index_prompt:
-                    # One request per title, in the model's native template; labels are re-attached here.
-                    translated_lines = []
-                    for prompt_line, title in zip(prompt_lines, chunk_titles):
-                        label = prompt_line.split("]:", 1)[0].lstrip("[")
-                        title_messages = build_index_translate_messages(
-                            title, target_lang, collect_glossary_pairs(db, thread_id, title)
-                        )
-                        reply = await provider.chat_completion(
-                            messages=title_messages,
-                            temperature=getattr(provider, "translation_temperature", 0.0),
-                        )
-                        clean_title = clean_index_title_output(reply)
-                        if clean_title:
-                            translated_lines.append(f"[{label}]: {clean_title}")
+                    # Native template, no labels in the request; labels are re-attached here.
+                    clean_titles = await translate_titles_with_index(
+                        provider, chunk_titles, target_lang,
+                        lambda text: collect_glossary_pairs(db, thread_id, text),
+                    )
+                    translated_lines = [
+                        f"[{prompt_line.split(']:', 1)[0].lstrip('[')}]: {clean_title}"
+                        for prompt_line, clean_title in zip(prompt_lines, clean_titles)
+                        if clean_title
+                    ]
                 else:
                     messages = [
                         {"role": "system", "content": sys_prompt},

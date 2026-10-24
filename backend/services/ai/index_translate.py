@@ -10,7 +10,7 @@ inference/llm/translate.py).
 import base64
 import binascii
 import re
-from typing import Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Sequence, Tuple
 
 GlossaryPair = Tuple[str, str]
 
@@ -72,6 +72,43 @@ def clean_index_title_output(raw: str) -> str:
     text = _THINK_BLOCK.sub("", raw or "").strip()
     first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
     return _ECHOED_LABEL.sub("", first_line).strip(_TITLE_WRAPPERS)
+
+
+TITLE_BATCH_SIZE = 10
+
+
+async def translate_titles_with_index(
+    provider,
+    titles: Sequence[str],
+    target_lang: str,
+    glossary_for: Callable[[str], Sequence[GlossaryPair]],
+    batch_size: int = TITLE_BATCH_SIZE,
+) -> List[str]:
+    """Translate titles one line each, `batch_size` per request; '' marks a title with no usable reply.
+
+    A batch whose reply has a different line count than its input cannot be matched back
+    reliably, so it is retried one title per request.
+    """
+    temperature = getattr(provider, "translation_temperature", 0.0)
+
+    async def ask(lines: Sequence[str]) -> List[str]:
+        joined = "\n".join(lines)
+        messages = build_index_translate_messages(joined, target_lang, glossary_for(joined))
+        reply = _THINK_BLOCK.sub("", await provider.chat_completion(messages=messages, temperature=temperature))
+        return [clean_index_title_output(line) for line in reply.splitlines() if line.strip()]
+
+    flattened = [" ".join(title.split()) for title in titles]
+    results: List[str] = []
+    for start in range(0, len(flattened), batch_size):
+        group = flattened[start:start + batch_size]
+        translated = await ask(group)
+        if len(translated) != len(group):
+            translated = []
+            for title in group:
+                single = await ask([title])
+                translated.append(single[0] if single else "")
+        results.extend(translated)
+    return results
 
 
 class ImageTooLargeError(ValueError):

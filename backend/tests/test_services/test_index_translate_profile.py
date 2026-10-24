@@ -8,6 +8,7 @@ from services.ai.index_translate import (
     clean_index_title_output,
     collect_glossary_pairs,
     is_index_translate_model,
+    translate_titles_with_index,
 )
 from services.ai.lm_studio import LMStudioAdapter
 
@@ -71,6 +72,44 @@ class TestCleanTitleOutput:
     )
     def test_reduces_model_output_to_a_single_title_line(self, raw, expected):
         assert clean_index_title_output(raw) == expected
+
+
+class ScriptedProvider:
+    translation_temperature = 0.0
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.prompts = []
+
+    async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+        self.prompts.append(messages[0]["content"])
+        return self.replies.pop(0)
+
+
+class TestBatchedTitleTranslation:
+    @pytest.mark.asyncio
+    async def test_one_request_per_batch_when_line_count_matches(self):
+        provider = ScriptedProvider(["A\nB\nC", "D"])
+        result = await translate_titles_with_index(
+            provider, ["a", "b", "c", "d"], "Indonesian", lambda text: [], batch_size=3
+        )
+        assert result == ["A", "B", "C", "D"]
+        assert len(provider.prompts) == 2
+        assert provider.prompts[0].endswith("\n\na\nb\nc")
+
+    @pytest.mark.asyncio
+    async def test_mismatched_line_count_falls_back_to_one_request_per_title(self):
+        provider = ScriptedProvider(["only one line", "A", "B"])
+        result = await translate_titles_with_index(provider, ["a", "b"], "Indonesian", lambda text: [], batch_size=2)
+        assert result == ["A", "B"]
+        assert len(provider.prompts) == 3
+
+    @pytest.mark.asyncio
+    async def test_multiline_source_title_is_flattened_and_blank_replies_become_empty(self):
+        provider = ScriptedProvider(["<think>x</think>\nA\n\n[CHAPTER_1]: B"])
+        result = await translate_titles_with_index(provider, ["a\nb", "c"], "Indonesian", lambda text: [])
+        assert result == ["A", "B"]
+        assert "a b\nc" in provider.prompts[0]
 
 
 class TestGlossaryCollection:

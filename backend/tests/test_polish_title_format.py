@@ -1,6 +1,22 @@
 import pytest
 
-from routers.polish import clean_and_format_chapter_title
+from routers.polish import clean_and_format_chapter_title, title_needs_cleaning
+
+
+@pytest.mark.parametrize(
+    "title, expected",
+    [
+        ("我怎么可能是圣女？（无女主，变百，轻松）", True),
+        ("【完结】诡秘之主", True),
+        ("诡秘之主(轻松)", True),
+        ("[Tag] 诡秘之主", True),
+        ("诡秘之主", False),
+        ("TS女性没有人权是常识", False),
+        ("", False),
+    ],
+)
+def test_title_cleaning_request_is_only_needed_for_annotated_titles(title, expected):
+    assert title_needs_cleaning(title) is expected
 
 
 @pytest.mark.parametrize(
