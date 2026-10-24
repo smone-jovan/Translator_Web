@@ -12,7 +12,7 @@ from typing import List
 
 from services.ai.index_translate import MAX_IMAGE_BYTES
 
-MAX_IMAGES = 60
+MAX_IMAGES = 200
 MAX_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_ENTRIES = 1000
 MAX_COMPRESSION_RATIO = 200

@@ -9,7 +9,7 @@ Browser HP tidak punya pemilih folder, sehingga satu bab manga harus dipilih gam
 ## Decision
 - `POST /api/translate/images` dan `.../export-pdf` menerima **satu** berkas ZIP di field `files` (deteksi lewat magic bytes `PK`). Campuran ZIP dan gambar, atau lebih dari satu ZIP, ditolak 400.
 - Pembukaan ZIP dilakukan **di server, di memori**, dengan `zipfile` dari stdlib (`backend/services/image_zip.py`); tidak ada dependensi baru dan tidak ada unzip di klien.
-- Zip bomb: ukuran dan rasio kompresi yang dideklarasikan tidak dipercaya; setiap entri dibaca bertahap dan berhenti di 10 MB per gambar dan 100 MB total; rasio deklarasi > 200 ditolak; maksimal 1000 entri dipindai dan 60 gambar (413); ZIP bersarang tidak dibuka.
+- Zip bomb: ukuran dan rasio kompresi yang dideklarasikan tidak dipercaya; setiap entri dibaca bertahap dan berhenti di 10 MB per gambar dan 100 MB total; rasio deklarasi > 200 ditolak; maksimal 1000 entri dipindai dan 200 gambar (413); ZIP bersarang tidak dibuka.
 - Path traversal: tidak ada ekstraksi ke disk; nama entri tidak pernah menjadi path. Nama tampilan = komponen terakhir, karakter kontrol dibuang, maksimal 120 karakter. Direktori, `__MACOSX`, berkas titik, symlink/berkas non-reguler, dan ekstensi selain PNG/JPG dilewati; ZIP terenkripsi atau korup ditolak 400.
 - Urutan halaman: natural sort pada path penuh (`p2` sebelum `p10`), deterministik sehingga ekspor yang mengirim ulang ZIP yang sama tetap sejajar dengan `translations`/`boxes`.
 - Event `start` kini membawa `names` (nama tampilan per halaman) untuk unggahan ZIP maupun gambar biasa.

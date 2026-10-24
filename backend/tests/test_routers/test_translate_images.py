@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from database import get_db
 from main import app
 from services.ai.base import BaseAIProviderAdapter
+from services.image_zip import MAX_IMAGES
 
 INDEX_MODEL = "index-translate-2b"
 
@@ -116,7 +117,7 @@ def test_rejects_non_index_model(client):
 
 def test_too_many_images_returns_413(client):
     provider = RecordingProvider()
-    resp = _post(client, provider, [make_image(10, 10)] * 61)
+    resp = _post(client, provider, [make_image(10, 10)] * (MAX_IMAGES + 1))
 
     assert resp.status_code == 413
     assert provider.calls == []
@@ -363,7 +364,7 @@ def test_unusable_zip_returns_400_without_calling_the_model(client, archive):
 
 
 def test_zip_with_too_many_images_returns_413(client):
-    archive = make_zip([(f"{i}.png", make_image(10, 10)) for i in range(61)])
+    archive = make_zip([(f"{i}.png", make_image(10, 10)) for i in range(MAX_IMAGES + 1)])
 
     resp = _post_zip(client, RecordingProvider(), archive)
 
@@ -413,3 +414,20 @@ def test_export_pdf_zip_translation_count_must_match_extracted_images(client):
     )
 
     assert resp.status_code == 400
+
+
+def test_zip_accepts_a_long_webtoon_chapter(client):
+    """Webtoon chapters are often 100+ slices: a ZIP above the old 60-image limit must still work."""
+    count = 120
+    provider = RecordingProvider()
+    archive = make_zip([(f"{i:03d}.png", make_image(10, 10)) for i in range(count)])
+
+    resp = _post_zip(client, provider, archive)
+
+    events = _events(resp)
+    assert events[0]["pages"] == count
+    assert len(provider.calls) == count
+
+
+def test_image_limit_is_at_least_200():
+    assert MAX_IMAGES >= 200

@@ -167,7 +167,7 @@ export function ImageFolderTranslatePanel({
         Terjemahkan folder gambar
       </h2>
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
-        Pilih folder (atau banyak gambar) PNG/JPG, maks. 60 gambar, 10 MB per
+        Pilih folder (atau banyak gambar) PNG/JPG, maks. 200 gambar, 10 MB per
         gambar. Urutan mengikuti nama file. Hasilnya bisa diunduh sebagai PDF
         (gambar lalu terjemahannya). Butuh model Index-Translate.
       </p>
