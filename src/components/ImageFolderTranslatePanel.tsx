@@ -16,7 +16,13 @@ interface PageResult {
   text: string;
   failed: boolean;
   boxes?: OverlayBox[];
+  reason?: string;
+  truncated?: boolean;
 }
+
+// Replies where the model answered but did not translate (see services/translation_guard.py).
+const NON_TRANSLATION_REASONS = ["refusal", "description", "loop", "empty"];
+const SUGGEST_OVERLAY_RATIO = 0.3;
 
 export interface ImageFolderPanelHandle {
   /** Start translating picked files (a ZIP, or PNG/JPG images) as if chosen in this panel. */
@@ -74,12 +80,18 @@ export function ImageFolderTranslatePanel({
           text: event.translation,
           failed: false,
           boxes: event.boxes,
+          truncated: event.truncated,
         },
       ]);
     } else if (event.type === "page_error") {
       setResults((prev) => [
         ...prev,
-        { index: event.index, text: event.error, failed: true },
+        {
+          index: event.index,
+          text: event.error,
+          failed: true,
+          reason: event.reason,
+        },
       ]);
     }
   };
@@ -157,6 +169,14 @@ export function ImageFolderTranslatePanel({
   };
 
   const finished = !running && results.length > 0;
+  const notTranslated = results.filter(
+    (r) => r.failed && NON_TRANSLATION_REASONS.includes(r.reason ?? "")
+  ).length;
+  const suggestOverlay =
+    finished &&
+    !overlay &&
+    pageNames.length > 0 &&
+    notTranslated / pageNames.length >= SUGGEST_OVERLAY_RATIO;
 
   return (
     <section
@@ -169,7 +189,8 @@ export function ImageFolderTranslatePanel({
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
         Pilih folder (atau banyak gambar) PNG/JPG, maks. 200 gambar, 10 MB per
         gambar. Urutan mengikuti nama file. Hasilnya bisa diunduh sebagai PDF
-        (gambar lalu terjemahannya). Butuh model Index-Translate.
+        (gambar lalu terjemahannya). Butuh model Index-Translate. Bahasa target
+        mengikuti Pengaturan.
       </p>
       <div className="mb-4 space-y-1 text-sm">
         <label className="flex items-center gap-2">
@@ -283,6 +304,17 @@ export function ImageFolderTranslatePanel({
           Gambar {results.length}/{pageNames.length}
         </p>
       )}
+      {suggestOverlay && (
+        <p
+          role="status"
+          className="mt-3 rounded-xl border border-[var(--border)] p-3 text-sm text-[var(--foreground)]"
+        >
+          {notTranslated} dari {pageNames.length} halaman tidak berisi
+          terjemahan (model menolak, menjelaskan gambar, atau mengulang). Coba
+          aktifkan "Timpa terjemahan ke gambar" supaya model hanya melihat satu
+          gelembung teks sekali jalan.
+        </p>
+      )}
       <div className="mt-3 space-y-3">
         {results.map((r) => (
           <div key={r.index}>
@@ -293,6 +325,7 @@ export function ImageFolderTranslatePanel({
               className={`whitespace-pre-wrap text-sm ${r.failed ? "text-red-500" : "text-[var(--foreground)]"}`}
             >
               {r.text}
+              {r.truncated && " (terpotong)"}
             </p>
           </div>
         ))}

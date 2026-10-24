@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from database import GlobalSetting, get_db
 from routers.image_translate import resolve_target_lang, safe_provider_error, translate_image_data_url
+from services.translation_guard import NonTranslationError
 from services.ai.chunking import split_into_chunks
 from services.ai.factory import AIProviderFactory
 from services.ai.index_translate import build_index_translate_messages, is_index_translate_model
@@ -103,6 +104,9 @@ async def translate_pdf(
                     else:
                         data_url = await asyncio.to_thread(render_page_png_data_url, page)
                         translation = await translate_image_data_url(provider, gs, data_url, lang)
+                except NonTranslationError as e:
+                    yield _line({"type": "page_error", "index": index, "error": e.message, "reason": e.reason})
+                    continue
                 except Exception as e:
                     yield _line({"type": "page_error", "index": index, "error": safe_provider_error(e, "Page translation")})
                     continue

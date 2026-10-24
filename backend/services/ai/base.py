@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, List, Dict
+from dataclasses import dataclass
+from typing import AsyncGenerator, List, Dict, Optional
 
 # Sentinel yielded by streaming adapters when the AI hit max_tokens (finish_reason="length").
 # The background translator detects this and auto-continues the translation.
@@ -11,6 +12,13 @@ PROHIBITED_MARKER = "[[PROHIBITED]]"
 
 # Recognized prohibited/filtered finish reasons from AI providers
 PROHIBITED_FINISH_REASONS = {"prohibited", "content_filter", "safety", "blocked"}
+
+
+@dataclass(frozen=True)
+class Completion:
+    """A non-streaming reply plus why the model stopped ("stop", "length", ...), when the provider says."""
+    text: str
+    finish_reason: Optional[str] = None
 
 
 class BaseAIProviderAdapter(ABC):

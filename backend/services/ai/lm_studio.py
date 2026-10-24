@@ -2,8 +2,11 @@ from services.ai.settings import upstream_error_message
 import httpx
 import json
 from typing import List, Dict, AsyncGenerator
-from services.ai.base import BaseAIProviderAdapter, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
+from services.ai.base import BaseAIProviderAdapter, Completion, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
 from services.ai.index_translate import is_index_translate_model
+
+_PROTECTED_PAYLOAD_KEYS = {"messages", "model", "stream"}
+
 
 class LMStudioAdapter(BaseAIProviderAdapter):
     """
@@ -34,6 +37,16 @@ class LMStudioAdapter(BaseAIProviderAdapter):
         return {}
 
     async def chat_completion(self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None) -> str:
+        return (await self.chat_completion_detailed(messages, temperature, max_tokens)).text
+
+    async def chat_completion_detailed(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        extra: Dict[str, object] | None = None,
+    ) -> Completion:
+        """Like chat_completion but also reports finish_reason, and accepts extra sampling parameters."""
         payload = {
             "messages": messages,
             "temperature": temperature,
@@ -46,6 +59,9 @@ class LMStudioAdapter(BaseAIProviderAdapter):
         if self.model:
             payload["model"] = self.model
         payload.update(self._extra_payload())
+        if extra:
+            # Extra sampling parameters only; the request skeleton cannot be replaced.
+            payload.update({k: v for k, v in extra.items() if k not in _PROTECTED_PAYLOAD_KEYS})
 
         last_error = ""
         for url in self.urls_to_try:
@@ -54,12 +70,13 @@ class LMStudioAdapter(BaseAIProviderAdapter):
                     resp = await client.post(f"{url}/chat/completions", json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
-                        msg = data["choices"][0]["message"]
+                        choice = data["choices"][0]
+                        msg = choice["message"]
                         res = ""
                         if msg.get("reasoning_content"):
                             res += f"<think>\n{msg['reasoning_content']}\n</think>\n\n"
                         res += msg.get("content", "")
-                        return res
+                        return Completion(res, choice.get("finish_reason"))
                     last_error = upstream_error_message(resp.status_code, resp.text)
             except Exception as e:
                 last_error = str(e)

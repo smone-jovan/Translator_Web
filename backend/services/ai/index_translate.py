@@ -17,6 +17,11 @@ GlossaryPair = Tuple[str, str]
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 # The official image client caps output at 1024 tokens per image.
 IMAGE_MAX_TOKENS = 1024
+# Greedy decoding on a 2B model can loop on pages it cannot read; a mild repeat penalty (image requests only)
+# discourages that, and the one retry after a detected loop uses a stronger one.
+IMAGE_PENALTY_PARAM = "repeat_penalty"
+IMAGE_REPEAT_PENALTY = 1.1
+IMAGE_RETRY_REPEAT_PENALTY = 1.2
 _IMAGE_DATA_URL = re.compile(r"data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})")
 
 DEFAULT_GLOSSARY_LIMIT = 30

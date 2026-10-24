@@ -16,8 +16,10 @@ export type PdfTranslateEvent =
       mode: "text" | "image" | "overlay";
       translation: string;
       boxes?: OverlayBox[];
+      /** The model hit the token limit; the text is usable but cut off. */
+      truncated?: boolean;
     }
-  | { type: "page_error"; index: number; error: string }
+  | { type: "page_error"; index: number; error: string; reason?: string }
   | { type: "done"; model_used: string };
 
 interface StreamOptions {

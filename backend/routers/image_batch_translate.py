@@ -16,7 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import GlobalSetting, get_db
-from routers.image_translate import resolve_target_lang, safe_provider_error, translate_image_data_url
+from routers.image_translate import (
+    resolve_target_lang,
+    safe_provider_error,
+    translate_image_checked,
+    translate_image_data_url,
+)
 from routers.pdf_translate import UPLOAD_READ_BYTES, _line
 from services.ai.factory import AIProviderFactory
 from services.ai.index_translate import MAX_IMAGE_BYTES, is_index_translate_model
@@ -31,6 +36,7 @@ from services.image_zip import (
     extract_images,
     looks_like_zip,
 )
+from services.translation_guard import NonTranslationError
 from services.manga_detector import DetectorUnavailableError, detect_text_boxes, load_detector
 from services.manga_overlay import Box
 from services.manga_pipeline import translate_page_boxes
@@ -166,7 +172,8 @@ async def translate_images(
                     "boxes": [{"x0": b.x0, "y0": b.y0, "x1": b.x1, "y1": b.y1, "text": b.text} for b in boxes],
                 }
         data_url = await asyncio.to_thread(prepare_image_data_url, payload)
-        return {"mode": "image", "translation": await translate_image_data_url(provider, gs, data_url, lang)}
+        result = await translate_image_checked(provider, gs, data_url, lang)
+        return {"mode": "image", "translation": result.text, **({"truncated": True} if result.truncated else {})}
 
     async def stream() -> AsyncIterator[str]:
         yield _line({"type": "start", "pages": len(payloads), "names": [image.name for image in images]})
@@ -175,6 +182,9 @@ async def translate_images(
                 return
             try:
                 page = await translate_page(payload)
+            except NonTranslationError as e:
+                yield _line({"type": "page_error", "index": index, "error": e.message, "reason": e.reason})
+                continue
             except ValueError as e:  # unreadable, too large or not a PNG/JPEG
                 yield _line({"type": "page_error", "index": index, "error": str(e)})
                 continue
