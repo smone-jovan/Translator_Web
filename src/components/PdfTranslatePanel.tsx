@@ -88,6 +88,8 @@ export function PdfTranslatePanel({ model }: PdfTranslatePanelProps) {
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
         Maks. 20 MB dan 50 halaman. Halaman berteks diterjemahkan langsung,
         halaman scan/komik dibaca sebagai gambar. Butuh model Index-Translate.
+        Punya file ZIP atau banyak gambar? Pakai panel "Terjemahkan folder
+        gambar" di bawah ini.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <input
