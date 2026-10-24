@@ -21,6 +21,16 @@ from routers.pdf_translate import UPLOAD_READ_BYTES, _line
 from services.ai.factory import AIProviderFactory
 from services.ai.index_translate import MAX_IMAGE_BYTES, is_index_translate_model
 from services.ai.settings import resolve_active_base_url, resolve_active_model
+from services.image_zip import (
+    MAX_IMAGES,
+    MAX_TOTAL_BYTES,
+    ExtractedImage,
+    ZipRejectedError,
+    ZipTooLargeError,
+    display_name,
+    extract_images,
+    looks_like_zip,
+)
 from services.manga_detector import DetectorUnavailableError, detect_text_boxes, load_detector
 from services.manga_overlay import Box
 from services.manga_pipeline import translate_page_boxes
@@ -33,8 +43,6 @@ from services.image_batch import (
 
 router = APIRouter(prefix="/api", tags=["Translation"])
 
-MAX_IMAGES = 60
-MAX_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_TRANSLATION_CHARS = 50_000
 MAX_BOXES_PER_PAGE = 100
 MAX_BOX_TEXT_CHARS = 2000
@@ -42,24 +50,36 @@ MAX_COORDINATE = 100_000
 _BOX_COORDS = ("x0", "y0", "x1", "y1")
 
 
-async def _read_images(uploads: List[UploadFile]) -> List[bytes]:
-    """Read every upload with a per-file and a total cap, so no request can buffer an unbounded body."""
+async def _read_images(uploads: List[UploadFile]) -> List[ExtractedImage]:
+    """Read the uploads (capped in total, never an unbounded body); a single ZIP is expanded in memory."""
     if not uploads:
         raise HTTPException(400, "No images were uploaded")
     if len(uploads) > MAX_IMAGES:
         raise HTTPException(413, f"Too many images (max {MAX_IMAGES})")
 
-    payloads: List[bytes] = []
+    received: List[ExtractedImage] = []
     total = 0
-    for upload in uploads:
+    for number, upload in enumerate(uploads, start=1):
         data = bytearray()
-        while len(data) <= MAX_IMAGE_BYTES and (piece := await upload.read(UPLOAD_READ_BYTES)):
+        while piece := await upload.read(UPLOAD_READ_BYTES):
             data.extend(piece)
-        total += len(data)
-        if total > MAX_TOTAL_BYTES:
-            raise HTTPException(413, f"Upload is too large (max {MAX_TOTAL_BYTES // (1024 * 1024)} MB in total)")
-        payloads.append(bytes(data))
-    return payloads
+            total += len(piece)
+            if total > MAX_TOTAL_BYTES:
+                raise HTTPException(413, f"Upload is too large (max {MAX_TOTAL_BYTES // (1024 * 1024)} MB in total)")
+        received.append(ExtractedImage(display_name(upload.filename or "") or f"image{number}", bytes(data)))
+
+    if any(looks_like_zip(item.data) for item in received):
+        if len(received) != 1:
+            raise HTTPException(400, "Upload either one ZIP file or image files, not both")
+        try:
+            return extract_images(received[0].data)
+        except ZipTooLargeError as e:
+            raise HTTPException(413, str(e))
+        except ZipRejectedError as e:
+            raise HTTPException(400, str(e))
+
+    # A single image over the cap is reported per page (page_error) instead of failing the whole batch.
+    return [ExtractedImage(item.name, item.data[: MAX_IMAGE_BYTES + 1]) for item in received]
 
 
 def _parse_translations(raw: str, expected: int) -> List[str]:
@@ -124,7 +144,8 @@ async def translate_images(
         except DetectorUnavailableError:
             raise HTTPException(400, "Text detector model is not installed (see ADR-132 to download it).")
 
-    payloads = await _read_images(files)
+    images = await _read_images(files)
+    payloads = [image.data for image in images]
     lang = resolve_target_lang(gs, target_lang)
     provider = AIProviderFactory.get_provider(
         base_url=resolve_active_base_url(gs, lm_url), model=model_name, db_session=db
@@ -148,7 +169,7 @@ async def translate_images(
         return {"mode": "image", "translation": await translate_image_data_url(provider, gs, data_url, lang)}
 
     async def stream() -> AsyncIterator[str]:
-        yield _line({"type": "start", "pages": len(payloads)})
+        yield _line({"type": "start", "pages": len(payloads), "names": [image.name for image in images]})
         for index, payload in enumerate(payloads):
             if await request.is_disconnected():
                 return
@@ -173,7 +194,7 @@ async def export_images_pdf(
     boxes: Optional[str] = Form(None),
     include_text_pages: bool = Form(True),
 ):
-    payloads = await _read_images(files)
+    payloads = [image.data for image in await _read_images(files)]
     texts = _parse_translations(translations, len(payloads))
     overlays = _parse_boxes(boxes, len(payloads)) if boxes else None
     try:

@@ -294,3 +294,122 @@ def test_export_rejects_bad_boxes(client, boxes):
     resp = _export(client, [make_image()], ["a"], boxes=boxes)
 
     assert resp.status_code == 400
+
+
+# ---- ZIP uploads ------------------------------------------------------------------------------
+
+import io  # noqa: E402
+import zipfile  # noqa: E402
+
+
+def make_zip(entries):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in entries:
+            zf.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _zip_files(data, name="chapter.zip"):
+    return [("files", (name, data, "application/zip"))]
+
+
+def _post_zip(client, provider, data, **form):
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider):
+        return client.post(
+            "/api/translate/images",
+            files=_zip_files(data),
+            data={"model": INDEX_MODEL, "target_lang": "Indonesian", **form},
+        )
+
+
+def test_zip_upload_is_expanded_in_natural_order_with_names(client):
+    provider = RecordingProvider()
+    archive = make_zip([("ch/p10.png", make_image()), ("ch/p2.png", make_image(fmt="png")), ("ch/readme.txt", b"x")])
+
+    resp = _post_zip(client, provider, archive)
+
+    events = _events(resp)
+    assert events[0] == {"type": "start", "pages": 2, "names": ["p2.png", "p10.png"]}
+    assert [e["type"] for e in events] == ["start", "page", "page", "done"]
+    assert len(provider.calls) == 2
+
+
+def test_plain_uploads_also_report_their_names(client):
+    resp = _post(client, RecordingProvider(), [make_image()])
+
+    assert _events(resp)[0]["names"] == ["0.png"]
+
+
+def test_zip_with_bad_member_reports_page_error_and_continues(client):
+    archive = make_zip([("a.png", b"not really a png"), ("b.png", make_image())])
+
+    resp = _post_zip(client, RecordingProvider(), archive)
+
+    assert [e["type"] for e in _events(resp)] == ["start", "page_error", "page", "done"]
+
+
+@pytest.mark.parametrize(
+    "archive",
+    [b"PK\x03\x04 corrupt", make_zip([("readme.txt", b"x")]), make_zip([])],
+)
+def test_unusable_zip_returns_400_without_calling_the_model(client, archive):
+    provider = RecordingProvider()
+
+    resp = _post_zip(client, provider, archive)
+
+    assert resp.status_code == 400
+    assert provider.calls == []
+
+
+def test_zip_with_too_many_images_returns_413(client):
+    archive = make_zip([(f"{i}.png", make_image(10, 10)) for i in range(61)])
+
+    resp = _post_zip(client, RecordingProvider(), archive)
+
+    assert resp.status_code == 413
+
+
+def test_zip_mixed_with_other_files_is_rejected(client):
+    provider = RecordingProvider()
+    files = _zip_files(make_zip([("a.png", make_image())])) + _files([make_image()])
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider):
+        resp = client.post("/api/translate/images", files=files, data={"model": INDEX_MODEL})
+
+    assert resp.status_code == 400
+    assert provider.calls == []
+
+
+def test_two_zips_are_rejected(client):
+    files = _zip_files(make_zip([("a.png", make_image())])) * 2
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=RecordingProvider()):
+        resp = client.post("/api/translate/images", files=files, data={"model": INDEX_MODEL})
+
+    assert resp.status_code == 400
+
+
+def test_export_pdf_accepts_a_zip(client):
+    archive = make_zip([("p2.png", make_image()), ("p1.png", make_image())])
+
+    resp = client.post(
+        "/api/translate/images/export-pdf",
+        files=_zip_files(archive),
+        data={"translations": json.dumps(["satu", "dua"])},
+    )
+
+    assert resp.status_code == 200
+    doc = pymupdf.open(stream=resp.content, filetype="pdf")
+    assert len(doc) == 4
+    assert "satu" in doc[1].get_text() and "dua" in doc[3].get_text()
+
+
+def test_export_pdf_zip_translation_count_must_match_extracted_images(client):
+    archive = make_zip([("a.png", make_image()), ("b.png", make_image())])
+
+    resp = client.post(
+        "/api/translate/images/export-pdf",
+        files=_zip_files(archive),
+        data={"translations": json.dumps(["only one"])},
+    )
+
+    assert resp.status_code == 400

@@ -9,7 +9,7 @@ export interface OverlayBox {
 }
 
 export type PdfTranslateEvent =
-  | { type: "start"; pages: number }
+  | { type: "start"; pages: number; names?: string[] }
   | {
       type: "page";
       index: number;
@@ -141,6 +141,14 @@ export async function exportImagesPdf(
 }
 
 const IMAGE_NAME = /\.(png|jpe?g)$/i;
+const ZIP_NAME = /\.zip$/i;
+
+/** The first ZIP among the picked files, if any: a zipped chapter is sent as-is and expanded by the server. */
+export function findZipFile(files: Iterable<File>): File | undefined {
+  return [...files].find(
+    (file) => ZIP_NAME.test(file.name) || /zip/i.test(file.type)
+  );
+}
 
 /** Keeps PNG/JPEG files and orders them like a file manager does (page2 before page10). */
 export function sortImageFiles(files: Iterable<File>): File[] {

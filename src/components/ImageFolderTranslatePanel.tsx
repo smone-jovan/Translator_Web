@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   exportImagesPdf,
+  findZipFile,
   joinPageTranslations,
   sortImageFiles,
   translateImages,
@@ -38,7 +39,13 @@ export function ImageFolderTranslatePanel({
   model,
 }: ImageFolderTranslatePanelProps) {
   const [files, setFiles] = useState<File[]>([]);
+  // A ZIP is one uploaded file but many pages, so the page count and names come from the server.
+  const [pageNames, setPageNames] = useState<string[]>([]);
   const [results, setResults] = useState<PageResult[]>([]);
+  // Phone browsers cannot pick a folder (the folder input degrades to a plain file picker).
+  const [canPickFolder] = useState(
+    () => !window.matchMedia("(pointer: coarse)").matches
+  );
   const [running, setRunning] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [overlay, setOverlay] = useState(false);
@@ -46,7 +53,11 @@ export function ImageFolderTranslatePanel({
   const abortRef = useRef<AbortController | null>(null);
 
   const handleEvent = (event: PdfTranslateEvent) => {
-    if (event.type === "page") {
+    if (event.type === "start") {
+      setPageNames(
+        event.names ?? Array.from({ length: event.pages }, () => "")
+      );
+    } else if (event.type === "page") {
       setResults((prev) => [
         ...prev,
         {
@@ -65,14 +76,16 @@ export function ImageFolderTranslatePanel({
   };
 
   const start = async (picked: FileList | null) => {
-    const sorted = sortImageFiles(Array.from(picked ?? []));
+    const zip = findZipFile(picked ?? []);
+    const sorted = zip ? [zip] : sortImageFiles(Array.from(picked ?? []));
     if (sorted.length === 0) {
-      toast.error("Tidak ada gambar PNG/JPG di pilihan ini.");
+      toast.error("Tidak ada gambar PNG/JPG atau file ZIP di pilihan ini.");
       return;
     }
     const controller = new AbortController();
     abortRef.current = controller;
     setFiles(sorted);
+    setPageNames(zip ? [] : sorted.map((file) => file.name));
     setResults([]);
     setRunning(true);
     try {
@@ -100,11 +113,11 @@ export function ImageFolderTranslatePanel({
 
   const exportPdf = async () => {
     const byIndex = new Map(results.map((r) => [r.index, r]));
-    const translations = files.map((_, i) => {
+    const translations = pageNames.map((_, i) => {
       const page = byIndex.get(i);
       return page && !page.failed ? page.text : FAILED_PAGE_TEXT;
     });
-    const boxes = files.map((_, i) => byIndex.get(i)?.boxes ?? []);
+    const boxes = pageNames.map((_, i) => byIndex.get(i)?.boxes ?? []);
     const hasBoxes = boxes.some((page) => page.length > 0);
     setExporting(true);
     try {
@@ -159,13 +172,27 @@ export function ImageFolderTranslatePanel({
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-4">
+        {canPickFolder && (
+          <label className="text-sm">
+            <span className="mr-2">Folder:</span>
+            <input
+              type="file"
+              multiple
+              disabled={running}
+              {...FOLDER_ATTRIBUTES}
+              onChange={(e) => {
+                void start(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
         <label className="text-sm">
-          <span className="mr-2">Folder:</span>
+          <span className="mr-2">ZIP berisi gambar:</span>
           <input
             type="file"
-            multiple
+            accept=".zip,application/zip,application/x-zip-compressed"
             disabled={running}
-            {...FOLDER_ATTRIBUTES}
             onChange={(e) => {
               void start(e.target.files);
               e.target.value = "";
@@ -173,7 +200,11 @@ export function ImageFolderTranslatePanel({
           />
         </label>
         <label className="text-sm">
-          <span className="mr-2">atau gambar:</span>
+          <span className="mr-2">
+            {canPickFolder
+              ? "atau gambar:"
+              : "atau pilih gambar (bisa banyak sekaligus):"}
+          </span>
           <input
             type="file"
             multiple
@@ -204,19 +235,19 @@ export function ImageFolderTranslatePanel({
           </>
         )}
       </div>
-      {files.length > 0 && (
+      {pageNames.length > 0 && (
         <p
           className="mt-3 text-sm text-[var(--muted-foreground)]"
           aria-live="polite"
         >
-          Gambar {results.length}/{files.length}
+          Gambar {results.length}/{pageNames.length}
         </p>
       )}
       <div className="mt-3 space-y-3">
         {results.map((r) => (
           <div key={r.index}>
             <div className="text-xs font-medium text-[var(--muted-foreground)]">
-              {files[r.index]?.name ?? `Halaman ${r.index + 1}`}
+              {pageNames[r.index] || `Halaman ${r.index + 1}`}
             </div>
             <p
               className={`whitespace-pre-wrap text-sm ${r.failed ? "text-red-500" : "text-[var(--foreground)]"}`}
