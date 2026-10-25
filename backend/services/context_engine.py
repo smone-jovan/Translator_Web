@@ -1,3 +1,4 @@
+import asyncio
 import re
 import json
 from datetime import datetime, timezone
@@ -878,8 +879,12 @@ class ContextEngine:
         model: str | None = None,
         target_lang: str = "English",
         max_input_chars: int | None = None,
+        save_lock: asyncio.Lock | None = None,
     ):
-        """Dedicated pass to extract names/terms BEFORE translation, aware of existing thread glossary."""
+        """Dedicated pass to extract names/terms BEFORE translation, aware of existing thread glossary.
+
+        The LLM call runs freely so parallel chapters overlap; only the write to the lorebook takes `save_lock`.
+        """
         from services.ai.factory import AIProviderFactory
 
         source_lang = ContextEngine.detect_source_language(original_text)
@@ -931,7 +936,11 @@ class ContextEngine:
 
             response = await provider.chat_completion(messages=messages, temperature=0.2)
             cleaned_response = ContextEngine.strip_thinking_blocks(response or "")
-            ContextEngine.auto_save_glossary(db, thread_id, cleaned_response)
+            if save_lock is not None:
+                async with save_lock:
+                    ContextEngine.auto_save_glossary(db, thread_id, cleaned_response)
+            else:
+                ContextEngine.auto_save_glossary(db, thread_id, cleaned_response)
             print(f"[EXTRACT] AI glossary extraction completed for thread {thread_id}")
         except Exception as e:
             print(f"[WARN] [EXTRACT] AI glossary extraction failed: {e}")

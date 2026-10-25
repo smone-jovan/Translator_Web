@@ -148,6 +148,21 @@ def test_calculate_concurrency_limit_lm_studio():
     limit = BackgroundTranslator._calculate_concurrency_limit("lm_studio", None)
     assert limit == 1
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detected,expected", [(4, 4), (1, 1), (None, 1), (20, 8)])
+async def test_lm_studio_concurrency_follows_loaded_parallel_slots(detected, expected):
+    # Parallel load: use every slot LM Studio reports for the model (index-translate loaded with 4 -> 4)
+    with patch("services.lm_slots.detect_parallel", AsyncMock(return_value=detected)) as probe:
+        limit = await BackgroundTranslator._resolve_lm_studio_concurrency("http://localhost:1234", "index-translate")
+    assert limit == expected
+    probe.assert_awaited_once_with("http://localhost:1234", "index-translate")
+
+@pytest.mark.asyncio
+async def test_lm_studio_concurrency_is_one_without_model():
+    with patch("services.lm_slots.detect_parallel", AsyncMock(return_value=4)) as probe:
+        assert await BackgroundTranslator._resolve_lm_studio_concurrency("http://localhost:1234", None) == 1
+    probe.assert_not_awaited()
+
 def test_calculate_concurrency_limit_cloud_providers():
     # Default for cloud is 2 or 3 per key
     limit = BackgroundTranslator._calculate_concurrency_limit("gemini", None)

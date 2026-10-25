@@ -386,8 +386,10 @@ class BackgroundTranslator:
                 if force_extract:
                     print(f"[EXTRACT] Starting glossary extraction for chapter {chapter_id} before translation...")
                     await BackgroundTranslator._enforce_pacing(model, gs, db_session=db, workspace=workspace)
-                    async with get_thread_glossary_lock(workspace, thread_id):
-                        await ContextEngine.extract_glossary_pass(db, thread_id, chapter.content_original, lm_url, model, target_lang)
+                    await ContextEngine.extract_glossary_pass(
+                        db, thread_id, chapter.content_original, lm_url, model, target_lang,
+                        save_lock=get_thread_glossary_lock(workspace, thread_id),
+                    )
 
                 # Ambil konten aslinya dan set status ke processing
                 content_original = chapter.content_original
@@ -1028,6 +1030,14 @@ class BackgroundTranslator:
         return min(max(num_keys * 3, 2), 20)
 
     @staticmethod
+    async def _resolve_lm_studio_concurrency(base_url: str, model: str | None) -> int:
+        """Parallel load on LM Studio: use the slots the loaded model was started with (1 when unknown)."""
+        from services import lm_slots
+        if not model:
+            return 1
+        return lm_slots.resolve_concurrency(await lm_slots.detect_parallel(base_url, model))
+
+    @staticmethod
     async def _run_batch_worker(batch: ActiveBatch):
         """Worker loop yang mengeksekusi bab secara CONCURRENT (Ngebut Paralel)."""
         try:
@@ -1037,11 +1047,15 @@ class BackgroundTranslator:
             ws = getattr(batch, "workspace", "main")
             provider = "lm_studio"
             api_keys_json = None
+            lm_base_url = None
+            lm_model = batch.model
 
             with get_session(ws) as db:
                 gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
                 if gs:
                     provider = gs.llm_provider or "lm_studio"
+                    lm_base_url = resolve_active_base_url(gs, batch.lm_url)
+                    lm_model = lm_model or gs.lm_model
                     if provider == "gemini":
                         api_keys_json = getattr(gs, "gemini_api_keys", None)
                     elif provider == "openai":
@@ -1058,7 +1072,12 @@ class BackgroundTranslator:
                         concurrency_limit = 2
             else:
                 if getattr(batch, "load_mode", "soft") == "hard":
-                    concurrency_limit = BackgroundTranslator._calculate_concurrency_limit(provider, api_keys_json)
+                    if provider == "lm_studio":
+                        concurrency_limit = await BackgroundTranslator._resolve_lm_studio_concurrency(
+                            lm_base_url or "http://localhost:1234", lm_model
+                        )
+                    else:
+                        concurrency_limit = BackgroundTranslator._calculate_concurrency_limit(provider, api_keys_json)
                 else:
                     # Soft Load: strict sequential execution (Ch 1 -> Ch 2 -> Ch 3)
                     concurrency_limit = 1
