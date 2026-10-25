@@ -76,6 +76,12 @@ class ChunkedTranslationProvider:
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
+    def _note_chunk(self, index: int | None, total: int | None = None) -> None:
+        """Tell a diagnostic wrapper (request_trace) which chunk the next request is; no-op otherwise."""
+        note = getattr(self._inner, "note_chunk", None)
+        if note:
+            note(index, total)
+
     def _builder_requests(self, messages: List[Dict[str, str]]):
         """Prompt is built around the source text (no separate system message): rebuild it per chunk."""
         if messages != self._message_builder(self._source_text):
@@ -100,6 +106,7 @@ class ChunkedTranslationProvider:
     ) -> AsyncGenerator[str, None]:
         requests = self._chunk_requests(messages)
         if requests is None:
+            self._note_chunk(None)
             async for piece in self._inner.stream_chat(messages, temperature=temperature, max_tokens=max_tokens):
                 yield piece
             return
@@ -107,6 +114,7 @@ class ChunkedTranslationProvider:
         for index, request in enumerate(requests):
             if index:
                 yield CHUNK_SEPARATOR
+            self._note_chunk(index + 1, len(requests))
             async for piece in self._inner.stream_chat(request, temperature=temperature, max_tokens=max_tokens):
                 yield piece
                 if piece in (TRUNCATED_MARKER, PROHIBITED_MARKER):
@@ -117,11 +125,12 @@ class ChunkedTranslationProvider:
     ) -> str:
         requests = self._chunk_requests(messages)
         if requests is None:
+            self._note_chunk(None)
             return await self._inner.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
-        results = [
-            await self._inner.chat_completion(request, temperature=temperature, max_tokens=max_tokens)
-            for request in requests
-        ]
+        results = []
+        for index, request in enumerate(requests):
+            self._note_chunk(index + 1, len(requests))
+            results.append(await self._inner.chat_completion(request, temperature=temperature, max_tokens=max_tokens))
         return CHUNK_SEPARATOR.join(results)
 
 

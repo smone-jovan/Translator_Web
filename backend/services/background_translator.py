@@ -11,6 +11,7 @@ from services.ai.factory import AIProviderFactory
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
 from services.ai.base import TRUNCATED_MARKER, PROHIBITED_MARKER
 from services.ai.chunking import maybe_chunk
+from services.ai.request_trace import TracedProvider
 from services.ai.index_translate import (
     build_index_translate_messages,
     collect_glossary_pairs,
@@ -426,6 +427,7 @@ class BackgroundTranslator:
                     raw_provider = AIProviderFactory.get_provider(
                         base_url=lm_url or "http://localhost:1234", model=model, db_session=provider_db
                     )
+                raw_provider = TracedProvider(raw_provider, f"chapter {chapter_id}")
 
                 if use_index_prompt:
                     # Index-Translate expects its own single-message template, not the long system prompt.
