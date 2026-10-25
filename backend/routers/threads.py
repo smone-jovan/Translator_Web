@@ -1218,6 +1218,7 @@ async def retranslate_fidelity_chapters(thread_id: int, body: FidelityBatchActio
         force_overwrite=True,
         translation_mode=translation_mode,
         fetch_only=False,
+        load_mode=(gs.prefetch_mode if gs else None) or "soft",
         workspace=ws,
     )
     return {"queued_count": len(valid_ids)}
@@ -1269,6 +1270,7 @@ async def retranslate_chapter_fidelity(thread_id: int, chapter_id: int, db: Sess
         force_overwrite=True,
         translation_mode=translation_mode,
         fetch_only=False,
+        load_mode=(gs.prefetch_mode if gs else None) or "soft",
         workspace=ws,
     )
     return {"queued": True, "chapter_id": chapter_id}
