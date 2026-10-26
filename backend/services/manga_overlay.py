@@ -25,6 +25,7 @@ MIN_BOX_SIDE = 2
 ELLIPSIS = "…"
 FONT_ENV = "MANGA_OVERLAY_FONT"
 TEXT_COLOR = (0, 0, 0)
+ERASE_OPACITY = 1.0  # solid patch; erase_boxes still supports lower values (0.8 was tried and reverted)
 
 
 @dataclass(frozen=True)
@@ -71,17 +72,18 @@ def _background_color(image: Image.Image, box: Box) -> Tuple[int, ...]:
     return tuple(int(v) for v in np.median(edges, axis=0))
 
 
-def erase_boxes(image: Image.Image, boxes: Sequence[Box]) -> Image.Image:
-    """Fill every box with its surrounding color. Returns a new RGB image; the input is not changed."""
+def erase_boxes(image: Image.Image, boxes: Sequence[Box], opacity: float = 1.0) -> Image.Image:
+    """Cover every box with its surrounding color at the given opacity (1.0 = solid). Returns a new RGB image."""
     result = image.convert("RGB")
     if result is image:
         result = image.copy()
-    draw = ImageDraw.Draw(result)
     for raw in boxes:
         box = _clamp(raw, *result.size)
         if box is None:
             continue
-        draw.rectangle((box.x0, box.y0, box.x1 - 1, box.y1 - 1), fill=_background_color(result, box))
+        area = (box.x0, box.y0, box.x1, box.y1)
+        patch = Image.new("RGB", (box.x1 - box.x0, box.y1 - box.y0), _background_color(result, box))
+        result.paste(Image.blend(result.crop(area), patch, opacity), area)
     return result
 
 
@@ -183,7 +185,7 @@ def render_overlay(image_bytes: bytes, boxes: Sequence[Box]) -> bytes:
     """Erase the original text in every box that has a translation and draw the translation instead. Returns PNG bytes."""
     image = open_rgb(image_bytes)
     translated = [b for b in boxes if b.text.strip()]
-    result = erase_boxes(image, translated)
+    result = erase_boxes(image, translated, ERASE_OPACITY)
     for raw in translated:
         box = _clamp(raw, *result.size)
         if box is not None:

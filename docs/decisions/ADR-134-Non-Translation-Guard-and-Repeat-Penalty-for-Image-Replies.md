@@ -28,3 +28,9 @@ Satu bab 184 gambar yang diterjemahkan halaman utuh dengan `index-translate-2b` 
 
 ## Files
 `backend/services/translation_guard.py`, `backend/services/ai/base.py` (`Completion`), `backend/services/ai/lm_studio.py`, `backend/services/ai/index_translate.py` (konstanta penalti), `backend/routers/image_translate.py`, `image_batch_translate.py`, `pdf_translate.py`, `src/lib/pdfTranslate.ts`, `src/components/ImageFolderTranslatePanel.tsx`. Tes: `test_translation_guard.py`, `test_lm_studio_detailed.py`, `test_routers/test_non_translation_guard.py`.
+
+## Addendum (2026-10-24): pengulangan frasa pendek di kotak overlay
+- Kasus nyata: pada kotak teks kecil, model mengulang "...Okay? ...Okay? ..." sampai ~3000 karakter. Potongan 40 karakternya hanya punya 7 huruf berbeda (di bawah ambang 8), sehingga lolos pengaman, lalu ekspor PDF menolak dengan "boxes must be a JSON array ..." karena teks kotak > 2000 karakter.
+- `translation_guard.is_loop` kini juga menandai satu unit pendek (2-40 karakter) yang berulang berurutan >= 5 kali dan membentang >= 150 karakter; tawa/napas pendek ("Ha ha ha ha") tetap lolos. Balasan seperti ini ikut diulang sekali dengan penalti lebih kuat.
+- `manga_pipeline.MAX_BOX_TEXT_CHARS` (2000, dipakai juga oleh router): teks kotak yang lebih panjang dibuang (kotak dikosongkan) agar ekspor tidak gagal.
+- Tes: `test_translation_guard.py`, `test_manga_pipeline.py`. Pada ZIP nyata 82 halaman: 5 dari 740 kotak ditandai loop (3 di atas 2000 karakter, 2 sekitar 1100), tanpa salah deteksi lain yang terlihat.

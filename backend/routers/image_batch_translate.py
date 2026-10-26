@@ -36,10 +36,13 @@ from services.image_zip import (
     extract_images,
     looks_like_zip,
 )
+from services.image_normalize import normalize_image, normalized_name
 from services.translation_guard import NonTranslationError
 from services.manga_detector import DetectorUnavailableError, detect_text_boxes, load_detector
+from services.lm_slots import detect_parallel
+from services.manga_fallback import translate_crop_fallback
 from services.manga_overlay import Box
-from services.manga_pipeline import translate_page_boxes
+from services.manga_pipeline import MAX_BOX_TEXT_CHARS, translate_page_boxes
 from services.image_batch import (
     ImageRejectedError,
     ImageTooLargeError,
@@ -51,9 +54,24 @@ router = APIRouter(prefix="/api", tags=["Translation"])
 
 MAX_TRANSLATION_CHARS = 50_000
 MAX_BOXES_PER_PAGE = 100
-MAX_BOX_TEXT_CHARS = 2000
 MAX_COORDINATE = 100_000
 _BOX_COORDS = ("x0", "y0", "x1", "y1")
+
+
+def _normalize(image: ExtractedImage) -> ExtractedImage:
+    """WebP pages become PNG/JPEG here so everything downstream only sees those; a bad one stays as is
+    and is reported per page (or rejected on export) by prepare_image_data_url."""
+    try:
+        data = normalize_image(image.data)
+    except ImageRejectedError:
+        return image
+    except ImageTooLargeError:
+        return ExtractedImage(image.name, image.data[: MAX_IMAGE_BYTES + 1])
+    return ExtractedImage(normalized_name(image.name, data), data)
+
+
+async def _normalize_all(images: List[ExtractedImage]) -> List[ExtractedImage]:
+    return [await asyncio.to_thread(_normalize, image) for image in images]
 
 
 async def _read_images(uploads: List[UploadFile]) -> List[ExtractedImage]:
@@ -78,14 +96,16 @@ async def _read_images(uploads: List[UploadFile]) -> List[ExtractedImage]:
         if len(received) != 1:
             raise HTTPException(400, "Upload either one ZIP file or image files, not both")
         try:
-            return extract_images(received[0].data)
+            return await _normalize_all(extract_images(received[0].data))
         except ZipTooLargeError as e:
             raise HTTPException(413, str(e))
         except ZipRejectedError as e:
             raise HTTPException(400, str(e))
 
     # A single image over the cap is reported per page (page_error) instead of failing the whole batch.
-    return [ExtractedImage(item.name, item.data[: MAX_IMAGE_BYTES + 1]) for item in received]
+    return await _normalize_all(
+        [ExtractedImage(item.name, item.data[: MAX_IMAGE_BYTES + 1]) for item in received]
+    )
 
 
 def _parse_translations(raw: str, expected: int) -> List[str]:
@@ -137,6 +157,7 @@ async def translate_images(
     target_lang: str = Form("Indonesian"),
     lm_url: str | None = Form(None),
     overlay: bool = Form(False),
+    fallback_model: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
@@ -160,17 +181,34 @@ async def translate_images(
     async def translate_crop(data_url: str) -> str:
         return await translate_image_data_url(provider, gs, data_url, lang)
 
+    fallback_crop = None
+    if overlay and fallback_model and fallback_model.strip():
+        fallback_provider = AIProviderFactory.get_provider(
+            base_url=resolve_active_base_url(gs, lm_url), model=fallback_model.strip(), db_session=db
+        )
+
+        async def fallback_crop(data_url: str) -> str:
+            return await translate_crop_fallback(fallback_provider, data_url, lang)
+
+    concurrency_probe = None
+    if overlay and getattr(gs, "llm_provider", "lm_studio") == "lm_studio":
+        lm_base_url = resolve_active_base_url(gs, lm_url)
+
+        async def concurrency_probe() -> int:
+            return await detect_parallel(lm_base_url, model_name)
+
     async def translate_page(payload: bytes) -> dict:
         if overlay:
             if len(payload) > MAX_IMAGE_BYTES:
                 raise ImageTooLargeError(f"Image is too large (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)")
-            boxes = [b for b in await translate_page_boxes(payload, translate_crop, detector=detect_text_boxes) if b.text]
-            if boxes:
-                return {
-                    "mode": "overlay",
-                    "translation": "\n\n".join(b.text for b in boxes),
-                    "boxes": [{"x0": b.x0, "y0": b.y0, "x1": b.x1, "y1": b.y1, "text": b.text} for b in boxes],
-                }
+            boxes = [b for b in await translate_page_boxes(payload, translate_crop, detector=detect_text_boxes, fallback_crop=fallback_crop, concurrency_probe=concurrency_probe) if b.text]
+            if not boxes:  # overlay was asked for: never fall back to sending the whole page to the model
+                raise NonTranslationError("no_text")
+            return {
+                "mode": "overlay",
+                "translation": "\n\n".join(b.text for b in boxes),
+                "boxes": [{"x0": b.x0, "y0": b.y0, "x1": b.x1, "y1": b.y1, "text": b.text} for b in boxes],
+            }
         data_url = await asyncio.to_thread(prepare_image_data_url, payload)
         result = await translate_image_checked(provider, gs, data_url, lang)
         return {"mode": "image", "translation": result.text, **({"truncated": True} if result.truncated else {})}

@@ -24,7 +24,7 @@ from services.ai.index_translate import (
 )
 from services.ai.settings import resolve_active_base_url, resolve_active_model
 from services.context_engine import ContextEngine
-from services.translation_guard import NonTranslationError, classify_image_reply
+from services.translation_guard import NonTranslationError, classify_image_reply, unwrap_labeled_quote
 
 router = APIRouter(prefix="/api", tags=["Translation"])
 
@@ -113,7 +113,9 @@ async def translate_image_checked(provider, gs, image_data_url: str, target_lang
     verdict = None
     for penalty in (IMAGE_REPEAT_PENALTY, IMAGE_RETRY_REPEAT_PENALTY):
         completion = await _complete_image(provider, messages, penalty)
-        text = ContextEngine.clean_final_translation(completion.text, always_hide_thoughts=hide_thoughts)
+        text = unwrap_labeled_quote(
+            ContextEngine.clean_final_translation(completion.text, always_hide_thoughts=hide_thoughts).strip()
+        )
         verdict = classify_image_reply(text, completion.finish_reason)
         if verdict.ok:
             return ImageTranslation(text, truncated=verdict.kind == "truncated")

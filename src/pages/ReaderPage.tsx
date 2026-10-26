@@ -60,6 +60,11 @@ interface ReaderPageProps {
 
 const READER_SESSION_MAX_IDLE_MS = 6 * 60 * 60 * 1000;
 
+const READER_FONT_SIZE_KEY = "reader_font_size";
+const DEFAULT_FONT_SIZE = 18;
+const MIN_FONT_SIZE = 12;
+const MAX_FONT_SIZE = 32;
+
 interface ReaderSessionState {
   threadId: number;
   selectedChapterId: number | null;
@@ -135,7 +140,30 @@ export default function ReaderPage({
   const [showChapterList, setShowChapterList] = useState(
     initialReaderSession?.showChapterList ?? true
   );
-  const [fontSize, setFontSize] = useState(18);
+  const [fontSize, setFontSize] = useState<number>(() => {
+    try {
+      const saved = parseInt(
+        localStorage.getItem(getWorkspaceStorageKey(READER_FONT_SIZE_KEY)) ??
+          "",
+        10
+      );
+      return Number.isFinite(saved)
+        ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, saved))
+        : DEFAULT_FONT_SIZE;
+    } catch {
+      return DEFAULT_FONT_SIZE;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        getWorkspaceStorageKey(READER_FONT_SIZE_KEY),
+        String(fontSize)
+      );
+    } catch {
+      /* storage unavailable (private mode / quota) */
+    }
+  }, [fontSize]);
   const [showSettings, setShowSettings] = useState(false);
   const [displayMode, setDisplayMode] = useState(
     localStorage.getItem("display_mode") || "translated"

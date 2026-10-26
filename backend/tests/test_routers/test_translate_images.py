@@ -209,13 +209,26 @@ def test_overlay_translates_each_box_and_returns_boxes(client):
     assert len(provider.calls) == 2
 
 
-def test_overlay_without_detected_boxes_falls_back_to_whole_image(client):
+def test_overlay_without_detected_boxes_is_a_clear_page_error_not_a_silent_whole_image_fallback(client):
     provider = RecordingProvider()
-    resp = _post_overlay(client, provider, [make_image()], _detector())
+    resp = _post_overlay(client, provider, [make_image(), make_image()], _detector())
 
-    page = _events(resp)[1]
-    assert page["mode"] == "image" and "boxes" not in page
-    assert len(provider.calls) == 1
+    events = _events(resp)
+    assert [e["type"] for e in events] == ["start", "page_error", "page_error", "done"]
+    assert events[1]["reason"] == "no_text" and "overlay" in events[1]["error"].lower()
+    assert provider.calls == []  # the model is never asked to describe the whole page
+
+
+def test_overlay_where_every_box_translation_fails_is_the_same_page_error(client):
+    class EmptyProvider(RecordingProvider):
+        async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+            self.calls.append(messages)
+            return ""
+
+    resp = _post_overlay(client, EmptyProvider(), [make_image()], _detector((20, 20, 120, 100)))
+
+    event = _events(resp)[1]
+    assert event["type"] == "page_error" and event["reason"] == "no_text"
 
 
 def test_overlay_with_missing_model_is_rejected_before_streaming(client):
@@ -431,3 +444,153 @@ def test_zip_accepts_a_long_webtoon_chapter(client):
 
 def test_image_limit_is_at_least_200():
     assert MAX_IMAGES >= 200
+
+
+# ---- WebP uploads -----------------------------------------------------------------------------
+
+from PIL import Image  # noqa: E402
+
+
+def make_webp(width=600, height=900, mode="RGB"):
+    buffer = io.BytesIO()
+    Image.new(mode, (width, height), (150, 150, 150) if mode == "RGB" else (150, 150, 150, 120)).save(buffer, "WEBP")
+    return buffer.getvalue()
+
+
+def _webp_files(payloads):
+    return [("files", (f"{i}.webp", data, "image/webp")) for i, data in enumerate(payloads)]
+
+
+def test_direct_webp_upload_is_translated_as_a_jpeg_page(client):
+    provider = RecordingProvider()
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider):
+        resp = client.post(
+            "/api/translate/images",
+            files=_webp_files([make_webp(), make_webp(mode="RGBA")]),
+            data={"model": INDEX_MODEL, "target_lang": "Indonesian"},
+        )
+
+    events = _events(resp)
+    assert [e["type"] for e in events] == ["start", "page", "page", "done"]
+    assert events[0]["names"] == ["0.jpg", "1.png"]
+    assert len(provider.calls) == 2
+
+
+def test_zip_mixing_png_jpg_and_webp_keeps_natural_order(client):
+    provider = RecordingProvider()
+    archive = make_zip(
+        [("p10.webp", make_webp()), ("p2.png", make_image()), ("p1.jpg", make_image(fmt="jpeg")), ("p3.webp", make_webp())]
+    )
+
+    events = _events(_post_zip(client, provider, archive))
+
+    assert events[0]["names"] == ["p1.jpg", "p2.png", "p3.jpg", "p10.jpg"]
+    assert [e["type"] for e in events[1:-1]] == ["page"] * 4
+
+
+def test_corrupt_webp_is_a_page_error_not_a_failed_batch(client):
+    provider = RecordingProvider()
+    bad = b"RIFF\x10\x00\x00\x00WEBPVP8 garbage"
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider):
+        resp = client.post(
+            "/api/translate/images",
+            files=_webp_files([bad, make_webp()]),
+            data={"model": INDEX_MODEL, "target_lang": "Indonesian"},
+        )
+
+    events = _events(resp)
+    assert events[1]["type"] == "page_error" and "WebP" in events[1]["error"]
+    assert events[2]["type"] == "page"
+
+
+def test_export_pdf_accepts_webp_uploads_and_zip(client):
+    direct = client.post(
+        "/api/translate/images/export-pdf",
+        files=_webp_files([make_webp(), make_webp(mode="RGBA")]),
+        data={"translations": json.dumps(["satu", "dua"])},
+    )
+    zipped = client.post(
+        "/api/translate/images/export-pdf",
+        files=_zip_files(make_zip([("b.webp", make_webp()), ("a.png", make_image())])),
+        data={"translations": json.dumps(["satu", "dua"])},
+    )
+
+    for resp in (direct, zipped):
+        assert resp.status_code == 200
+        assert len(pymupdf.open(stream=resp.content, filetype="pdf")) == 4
+
+
+def test_export_pdf_rejects_corrupt_webp(client):
+    resp = client.post(
+        "/api/translate/images/export-pdf",
+        files=_webp_files([b"RIFF\x10\x00\x00\x00WEBPVP8 garbage"]),
+        data={"translations": json.dumps(["satu"])},
+    )
+
+    assert resp.status_code == 400
+    assert "WebP" in resp.json()["detail"]
+
+
+def test_label_wrapped_reply_is_unwrapped_to_the_translation(client):
+    class WrappedProvider(RecordingProvider):
+        async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+            self.calls.append(messages)
+            return 'Teks di gambar ini adalah: "Halo dunia!" Terjemahan langsungnya sama.'
+
+    events = _events(_post(client, WrappedProvider(), [make_image()]))
+
+    assert events[1]["translation"] == "Halo dunia!"
+
+
+# ---- optional second (vision) model for boxes the primary could not translate (ADR-137) -------------------
+
+def _post_overlay_with_fallback(client, primary, fallback, detector, **form):
+    def get_provider(base_url=None, model=None, db_session=None):
+        return fallback if model == "gemma-4-e4b" else primary
+
+    with patch("services.ai.factory.AIProviderFactory.get_provider", side_effect=get_provider), patch(
+        "routers.image_batch_translate.detect_text_boxes", detector
+    ), patch("routers.image_batch_translate.load_detector", lambda: None):
+        return client.post(
+            "/api/translate/images",
+            files=_files([make_image()]),
+            data={"model": INDEX_MODEL, "target_lang": "Indonesian", "overlay": "true", **form},
+        )
+
+
+class _EmptyPrimary(RecordingProvider):
+    async def chat_completion(self, messages, temperature=0.3, max_tokens=None):
+        self.calls.append(messages)
+        return ""
+
+
+def test_overlay_fallback_model_translates_boxes_the_primary_left_empty(client):
+    primary, fallback = _EmptyPrimary(), RecordingProvider()
+    resp = _post_overlay_with_fallback(
+        client, primary, fallback, _detector((20, 20, 120, 100)), fallback_model="gemma-4-e4b"
+    )
+
+    page = _events(resp)[1]
+    assert page["type"] == "page" and page["boxes"][0]["text"] == "terjemahan-1"
+    assert len(fallback.calls) == 1
+
+
+def test_overlay_without_fallback_model_never_uses_a_second_model(client):
+    primary, fallback = _EmptyPrimary(), RecordingProvider()
+    resp = _post_overlay_with_fallback(client, primary, fallback, _detector((20, 20, 120, 100)))
+
+    assert _events(resp)[1]["type"] == "page_error"
+    assert fallback.calls == []
+
+
+def test_overlay_asks_lm_studio_for_parallel_slots_of_the_model_in_use(client):
+    asked = []
+
+    async def fake_detect(base_url, model, **_kw):
+        asked.append(model)
+        return 3
+
+    with patch("routers.image_batch_translate.detect_parallel", fake_detect):
+        resp = _post_overlay(client, RecordingProvider(), [make_image()], _detector((20, 20, 120, 100), (200, 20, 300, 100)))
+
+    assert _events(resp)[1]["type"] == "page" and asked == [INDEX_MODEL]

@@ -56,6 +56,18 @@ const POPULAR_OPENROUTER_MODELS = [
   "google/gemini-2.5-flash",
   "meta-llama/llama-3.3-70b-instruct",
   "qwen/qwen-2.5-72b-instruct",
+  // Free tier (suffix :free), verified against openrouter.ai/api/v1/models on
+  // 2026-10-26. General-purpose text models only (code/safety/music excluded).
+  // Availability changes often; use "Custom" if one is retired.
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "thinkingmachines/inkling:free",
+  "thinkingmachines/inkling-small:free",
+  "xingchen-agi/xing4.0-29b-a4b:free",
+  "nvidia/nemotron-3.5-super-vl:free",
+  "openrouter/free",
 ];
 
 // Text-out models only (filtered for novel translation LLMs)
@@ -1463,9 +1475,10 @@ export default function SettingsPage() {
                     Default Translation Quality
                   </h3>
                   <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-                    Quality mode uses full glossary ({maxContextTerms} terms), style guide
-                    injection, and higher token caps. Fast mode uses minimal
-                    glossary (10 terms) and 10K token cap for local LLMs.
+                    Quality mode uses full glossary ({maxContextTerms} terms),
+                    style guide injection, and higher token caps. Fast mode uses
+                    minimal glossary (10 terms) and 10K token cap for local
+                    LLMs.
                   </p>
                 </div>
 
@@ -1498,7 +1511,8 @@ export default function SettingsPage() {
                       Quality
                     </span>
                     <span className="text-[10px] text-[var(--muted-foreground)] mt-1 text-center">
-                      Full context, style guide, {maxContextTerms} glossary terms
+                      Full context, style guide, {maxContextTerms} glossary
+                      terms
                     </span>
                     {translationMode === "quality" && (
                       <div className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white rounded-full p-0.5 shadow-sm">
@@ -2340,7 +2354,9 @@ export default function SettingsPage() {
                 </div>
                 <Button
                   onClick={handleUpdateGhostPin}
-                  disabled={!newGhostPinInput.trim() || !currentGhostPinInput.trim()}
+                  disabled={
+                    !newGhostPinInput.trim() || !currentGhostPinInput.trim()
+                  }
                   className="rounded-xl font-bold"
                 >
                   Save PIN

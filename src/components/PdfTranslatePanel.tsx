@@ -95,7 +95,7 @@ export function PdfTranslatePanel({
       </h2>
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
         Pilih satu PDF (maks. 20 MB, 50 halaman), satu ZIP berisi gambar, atau
-        banyak gambar PNG/JPG sekaligus. Halaman PDF berteks diterjemahkan
+        banyak gambar PNG/JPG/WebP sekaligus. Halaman PDF berteks diterjemahkan
         langsung, halaman scan/komik dibaca sebagai gambar. Hasil ZIP dan
         gambar tampil di panel di bawah ini. Butuh model Index-Translate.
       </p>

@@ -152,3 +152,10 @@ class TestLimits:
 
         with pytest.raises(ZipTooLargeError):
             extract_images(data)
+
+
+class TestWebpEntries:
+    def test_webp_entries_are_extracted_in_natural_order_with_png_and_jpg(self):
+        data = make_zip([("p10.webp", b"RIFF1234WEBPa"), ("p2.png", PNG), ("p1.JPG", JPG), ("p3.WebP", b"RIFF1234WEBPb")])
+
+        assert names(extract_images(data)) == ["p1.JPG", "p2.png", "p3.WebP", "p10.webp"]

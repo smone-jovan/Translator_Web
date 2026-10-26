@@ -39,6 +39,8 @@ export interface ImagesTranslateOptions extends StreamOptions {
   targetLang?: string;
   /** Detect text boxes and translate each one so the PDF export can draw it over the page. */
   overlay?: boolean;
+  /** Optional second (vision) model, local only, that retries boxes Index-Translate could not translate. */
+  fallbackModel?: string;
 }
 
 export interface ExportImagesPdfOptions {
@@ -117,10 +119,15 @@ export function translateImages({
   model,
   targetLang,
   overlay,
+  fallbackModel,
   ...stream
 }: ImagesTranslateOptions): Promise<void> {
   const form = buildForm(files, "files", model, targetLang);
-  if (overlay) form.append("overlay", "true");
+  if (overlay) {
+    form.append("overlay", "true");
+    if (fallbackModel?.trim())
+      form.append("fallback_model", fallbackModel.trim());
+  }
   return streamNdjson("/api/translate/images", form, stream);
 }
 
@@ -142,7 +149,7 @@ export async function exportImagesPdf(
   return res.blob();
 }
 
-const IMAGE_NAME = /\.(png|jpe?g)$/i;
+const IMAGE_NAME = /\.(png|jpe?g|webp)$/i;
 const ZIP_NAME = /\.zip$/i;
 
 /** The first ZIP among the picked files, if any: a zipped chapter is sent as-is and expanded by the server. */
@@ -152,7 +159,29 @@ export function findZipFile(files: Iterable<File>): File | undefined {
   );
 }
 
-/** Keeps PNG/JPEG files and orders them like a file manager does (page2 before page10). */
+const PDF_NAME_FALLBACK = "translated-images";
+const PDF_NAME_MAX_CHARS = 120;
+// eslint-disable-next-line no-control-regex
+const FILE_NAME_ILLEGAL = /[\\/:*?"<>|\u0000-\u001f]/g;
+
+/** Download name for the exported PDF: the ZIP's title, else the picked folder's name, else a fixed default. */
+export function pdfFileName(files: Iterable<File>): string {
+  const picked = [...files];
+  const zip = findZipFile(picked);
+  const folder = picked
+    .map((file) => file.webkitRelativePath)
+    .find((path) => path.includes("/"))
+    ?.split("/")[0];
+  const title = (zip ? zip.name.replace(ZIP_NAME, "") : (folder ?? ""))
+    .replace(FILE_NAME_ILLEGAL, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^[.\s]+|[.\s]+$/g, "")
+    .slice(0, PDF_NAME_MAX_CHARS)
+    .trim();
+  return `${title || PDF_NAME_FALLBACK}.pdf`;
+}
+
+/** Keeps PNG/JPEG/WebP files and orders them like a file manager does (page2 before page10). */
 export function sortImageFiles(files: Iterable<File>): File[] {
   const key = (file: File) => file.webkitRelativePath || file.name;
   return [...files]

@@ -1,10 +1,12 @@
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { getWorkspaceStorageKey } from "@/lib/api";
 import {
   exportImagesPdf,
   findZipFile,
   joinPageTranslations,
+  pdfFileName,
   sortImageFiles,
   translateImages,
   type OverlayBox,
@@ -16,6 +18,7 @@ interface PageResult {
   text: string;
   failed: boolean;
   boxes?: OverlayBox[];
+  mode?: string;
   reason?: string;
   truncated?: boolean;
 }
@@ -24,8 +27,16 @@ interface PageResult {
 const NON_TRANSLATION_REASONS = ["refusal", "description", "loop", "empty"];
 const SUGGEST_OVERLAY_RATIO = 0.3;
 
+/** Which path a page actually took, so a ticked checkbox never has to be taken on faith. */
+function modeLabel(page: PageResult): string | null {
+  if (page.failed) return null;
+  if (page.mode === "overlay")
+    return `overlay, ${page.boxes?.length ?? 0} kotak`;
+  return page.mode === "image" ? "gambar penuh (bukan overlay)" : null;
+}
+
 export interface ImageFolderPanelHandle {
-  /** Start translating picked files (a ZIP, or PNG/JPG images) as if chosen in this panel. */
+  /** Start translating picked files (a ZIP, or PNG/JPG/WebP images) as if chosen in this panel. */
   start: (files: File[]) => Promise<void>;
 }
 
@@ -65,6 +76,22 @@ export function ImageFolderTranslatePanel({
   const [exporting, setExporting] = useState(false);
   const [overlay, setOverlay] = useState(false);
   const [includeTextPages, setIncludeTextPages] = useState(true);
+  const fallbackKey = getWorkspaceStorageKey("image_overlay_fallback_model");
+  const [fallbackModel, setFallbackModel] = useState(() => {
+    try {
+      return localStorage.getItem(fallbackKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const updateFallbackModel = (value: string) => {
+    setFallbackModel(value);
+    try {
+      localStorage.setItem(fallbackKey, value);
+    } catch {
+      // storage unavailable: the choice just lasts for this session
+    }
+  };
   const abortRef = useRef<AbortController | null>(null);
 
   const handleEvent = (event: PdfTranslateEvent) => {
@@ -80,6 +107,7 @@ export function ImageFolderTranslatePanel({
           text: event.translation,
           failed: false,
           boxes: event.boxes,
+          mode: event.mode,
           truncated: event.truncated,
         },
       ]);
@@ -101,7 +129,9 @@ export function ImageFolderTranslatePanel({
     const zip = fromZipInput ? picked[0] : findZipFile(picked);
     const sorted = zip ? [zip] : sortImageFiles(picked);
     if (sorted.length === 0) {
-      toast.error("Tidak ada gambar PNG/JPG atau file ZIP di pilihan ini.");
+      toast.error(
+        "Tidak ada gambar PNG/JPG/WebP atau file ZIP di pilihan ini."
+      );
       return;
     }
     sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -121,6 +151,7 @@ export function ImageFolderTranslatePanel({
         files: sorted,
         model: model || undefined,
         overlay,
+        fallbackModel: overlay ? fallbackModel : undefined,
         signal: controller.signal,
         onEvent: handleEvent,
       });
@@ -157,7 +188,7 @@ export function ImageFolderTranslatePanel({
           // Without overlaid pages the translation text would be missing from the PDF entirely.
           includeTextPages: hasBoxes ? includeTextPages : true,
         }),
-        "translated-images.pdf"
+        pdfFileName(files)
       );
     } catch (error) {
       toast.error(
@@ -187,10 +218,10 @@ export function ImageFolderTranslatePanel({
         Terjemahkan folder gambar
       </h2>
       <p className="text-sm text-[var(--muted-foreground)] mb-4">
-        Pilih folder (atau banyak gambar) PNG/JPG, maks. 200 gambar, 10 MB per
-        gambar. Urutan mengikuti nama file. Hasilnya bisa diunduh sebagai PDF
-        (gambar lalu terjemahannya). Butuh model Index-Translate. Bahasa target
-        mengikuti Pengaturan.
+        Pilih folder (atau banyak gambar) PNG/JPG/WebP, maks. 200 gambar, 10 MB
+        per gambar. Urutan mengikuti nama file. Hasilnya bisa diunduh sebagai
+        PDF (gambar lalu terjemahannya). Butuh model Index-Translate. Bahasa
+        target mengikuti Pengaturan.
       </p>
       <div className="mb-4 space-y-1 text-sm">
         <label className="flex items-center gap-2">
@@ -212,6 +243,22 @@ export function ImageFolderTranslatePanel({
           />
           Sertakan juga halaman teks terjemahan di PDF
         </label>
+        <label className="flex flex-wrap items-center gap-2">
+          <span>Perbaiki kotak gagal dengan model lain (opsional):</span>
+          <input
+            type="text"
+            className="rounded border border-[var(--border)] bg-transparent px-2 py-1"
+            placeholder="mis. google/gemma-4-e4b (kosong = mati)"
+            value={fallbackModel}
+            disabled={!overlay || running}
+            onChange={(e) => updateFallbackModel(e.target.value)}
+          />
+        </label>
+        <p className="text-xs text-[var(--muted-foreground)]">
+          Model visi lokal di server LM Studio yang sama, hanya dipanggil untuk
+          kotak yang ditolak atau kosong. Memuat model lain butuh ~10-20 dtk
+          per halaman yang punya kotak gagal.
+        </p>
       </div>
       <div className="flex flex-wrap items-center gap-4">
         {canPickFolder && (
@@ -247,7 +294,7 @@ export function ImageFolderTranslatePanel({
               <input
                 type="file"
                 multiple
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/webp"
                 disabled={running}
                 onChange={(e) => {
                   void start(Array.from(e.target.files ?? []));
@@ -320,6 +367,7 @@ export function ImageFolderTranslatePanel({
           <div key={r.index}>
             <div className="text-xs font-medium text-[var(--muted-foreground)]">
               {pageNames[r.index] || `Halaman ${r.index + 1}`}
+              {modeLabel(r) && <span> · {modeLabel(r)}</span>}
             </div>
             <p
               className={`whitespace-pre-wrap text-sm ${r.failed ? "text-red-500" : "text-[var(--foreground)]"}`}

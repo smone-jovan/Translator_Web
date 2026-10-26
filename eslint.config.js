@@ -16,6 +16,7 @@ export default defineConfig([
     '.agents/**',
     '.agent/**',
     '.mimocode/**',
+    '.claude/**',
   ]),
   {
     files: ['**/*.{ts,tsx}'],

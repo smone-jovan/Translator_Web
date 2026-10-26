@@ -6,16 +6,19 @@ Only PNG and JPEG are accepted (what manga scans ship as). Images are decoded by
 downscaled to the official 2048 px longest edge before they are sent to the model.
 """
 import base64
+import io
 from typing import List, Optional, Sequence
 
 import pymupdf
+from PIL import Image
 
 from services.ai.index_translate import MAX_IMAGE_BYTES, ImageTooLargeError, validate_image_data_url
-from services.manga_overlay import Box, render_overlay
+from services.manga_overlay import MAX_PIXELS, Box, render_overlay
 
 __all__ = ["ImageRejectedError", "ImageTooLargeError", "build_translated_pdf", "prepare_image_data_url"]
 
 MAX_EDGE_PX = 2048
+PDF_OVERLAY_JPEG_QUALITY = 85  # overlay pages are re-encoded: lossless PNG of screentone made a 550 MB PDF
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -39,7 +42,26 @@ def _mime_for(data: bytes) -> str:
         return "png"
     if data.startswith(_JPEG_MAGIC):
         return "jpeg"
-    raise ImageRejectedError("Image must be a PNG or JPEG file")
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        raise ImageRejectedError("WebP image could not be converted (corrupt or too many pixels)")
+    raise ImageRejectedError("Image must be a PNG, JPEG or WebP file")
+
+
+def _check_pixel_count(data: bytes) -> None:
+    """Header-only size check, so a tiny file that declares a gigantic canvas is never decoded."""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            pixels = image.width * image.height
+    except Exception:
+        raise ImageRejectedError("Image could not be read") from None
+    if pixels > MAX_PIXELS:
+        raise ImageRejectedError(f"Image has too many pixels (max {MAX_PIXELS // 1_000_000} MP)")
+
+
+def _overlay_to_jpeg(png: bytes) -> bytes:
+    buffer = io.BytesIO()
+    Image.open(io.BytesIO(png)).convert("RGB").save(buffer, "JPEG", quality=PDF_OVERLAY_JPEG_QUALITY)
+    return buffer.getvalue()
 
 
 def prepare_image_data_url(data: bytes) -> str:
@@ -47,6 +69,7 @@ def prepare_image_data_url(data: bytes) -> str:
     if len(data) > MAX_IMAGE_BYTES:
         raise ImageTooLargeError(f"Image is too large (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)")
     mime = _mime_for(data)
+    _check_pixel_count(data)
     try:
         pixmap = pymupdf.Pixmap(data)
     except Exception:
@@ -123,10 +146,10 @@ def build_translated_pdf(
         for number, (image, translation) in enumerate(zip(images, translations), start=1):
             boxes = overlays[number - 1] if overlays is not None else ()
             if any(box.text.strip() for box in boxes):
-                image = render_overlay(image, boxes)
+                image = _overlay_to_jpeg(render_overlay(image, boxes))
             _add_image_page(doc, image)
             if include_text_pages:
                 _add_text_pages(doc, f"Terjemahan halaman {number}", translation)
-        return doc.tobytes()
+        return doc.tobytes(garbage=3, deflate=True)
     finally:
         doc.close()

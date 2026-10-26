@@ -25,3 +25,8 @@ ADR-131 menghasilkan PDF berisi gambar dan teks terjemahan terpisah. Index-Trans
 
 ## Files
 `backend/services/manga_detector.py`, `manga_pipeline.py`, `manga_overlay.py`, `image_batch.py` (PDF dengan overlay), `backend/routers/image_batch_translate.py`, `backend/scripts/fetch_detector_model.py`, `backend/requirements.txt`, `.gitignore`, `src/lib/pdfTranslate.ts`, `src/components/ImageFolderTranslatePanel.tsx`. Tes: `test_manga_detector.py`, `test_manga_pipeline.py`, `test_manga_overlay.py`, `test_image_batch.py`, `test_fetch_detector_model.py`, `test_routers/test_translate_images.py`.
+
+## Addendum (2026-10-24): overlay aktif tidak lagi jatuh diam-diam ke gambar penuh
+- Sebelumnya halaman tanpa kotak terdeteksi (atau semua terjemahan kotaknya kosong) dikirim utuh ke model, yang sering menjelaskan gambar. Kini halaman itu menjadi `page_error` dengan `reason: "no_text"` ("Tidak ada teks yang terbaca ... overlay aktif") dan model tidak dipanggil untuk halaman utuh.
+- UI menampilkan jalur tiap halaman: "overlay, N kotak" atau "gambar penuh (bukan overlay)".
+- Tes: `tests/test_routers/test_translate_images.py` (dua tes overlay tanpa teks).

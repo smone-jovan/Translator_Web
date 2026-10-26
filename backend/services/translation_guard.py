@@ -22,6 +22,9 @@ LOOP_CHUNK_STEP = 20
 LOOP_CHUNK_REPEATS = 4
 LOOP_CHUNK_MIN_DISTINCT_CHARS = 8
 LOOP_SCAN_CHARS = 6000
+LOOP_RUN_MAX_UNIT_CHARS = 40
+LOOP_RUN_MIN_REPEATS = 5
+LOOP_RUN_MIN_CHARS = 150  # short laughter / panting ("Ha ha ha ha") stays far below this
 
 _FLAGS = re.IGNORECASE
 
@@ -41,6 +44,8 @@ REFUSAL_PATTERNS = _compile(
         r"please provide the specific text",
         r"tidak (dapat|bisa) (membantu|menerjemahkan|memberikan|menghasilkan)",
         r"maaf,? (saya )?tidak (dapat|bisa)",
+        r"saya akan menerjemahkan teks dari gambar",
+        r"karena tidak ada gambar",
         r"无法(翻译|提供|协助|处理|帮助)",
         r"抱歉",
         r"申し訳",
@@ -52,8 +57,16 @@ DESCRIPTION_OPENERS = _compile(
     [
         r"^\s*this (image|is an?|scene|illustration|picture|appears|depicts)\b",
         r"^\s*in this (scene|image|illustration)\b",
-        r"^\s*the (image|scene|illustration) (shows|depicts|features)\b",
+        r"^\s*the (image|scene|illustration) (shows|depicts|features|contains)\b",
+        r"^\s*the (text|character|characters|word|symbol|writing) (in|on) the (image|picture|illustration)\b",
         r"^\s*gambar ini\b",
+        r"^\s*gambar(nya)? (ini )?(adalah|menampilkan|berisi|menunjukkan)\b",
+        r"^\s*(karakter|teks|tulisan|simbol) (di|pada|dalam) (gambar|ilustrasi)\b",
+        r"^\s*karakter \S+ dengan gaya\b",
+        r"^\s*karakter (jepang|kanji|hiragana|katakana|cina|tiongkok)\b",
+        r"^\s*teks (di|dari|pada) (dalam )?gambar( ini)?\b",
+        r"^\s*(manga|komik) ini (menampilkan|berisi|menunjukkan)\b",
+        r"^\s*(di dalam|di|pada|dalam) (gambar|panel|kotak dialog)( komik)?( ini)?,? (terdapat|tertulis|ada|teksnya)\b",
         r"^\s*ini adalah (sebuah )?(gambar|ilustrasi|adegan)\b",
     ]
 )
@@ -70,6 +83,28 @@ DESCRIPTION_VOCABULARY = _compile(
         r"\bscene\b",
         r"\bbackground\b",
         r"\bvisual novel\b",
+        r"\bkaligrafi\b",
+        r"\bgambar ini\b",
+        r"\bdalam bentuk\b",
+        r"\bberbunyi\b",
+        r"\bkomik\b",
+        r"\bsimbol\b",
+        r"\bpanel komik\b",
+        r"\bkotak dialog\b",
+        r"\bteks jepang\b",
+        r"\bbahasa jepang\b",
+        r"\bhitam putih\b",
+        r"\bgaya (hitam|kaligrafi|komik|manga)\b",
+        r"\bditulis dengan\b",
+        r"\bditerjemahkan\b",
+        r"\bcalligraphy\b",
+        r"\bonomatopoe",
+        r"\bstylized\b",
+        r"\b(kanji|kana)\b",
+        r"\bsymbol\b",
+        r"\bsound effect\b",
+        r"\bin the image\b",
+        r"\baccurate (translation|interpretation)\b",
         r"\bdoujinshi\b",
         r"\bilustrasi\b",
         r"\bkarakter\b",
@@ -85,6 +120,7 @@ REASON_MESSAGES = {
     "description": "Model menjelaskan gambar, bukan menerjemahkan (mungkin tidak ada teks yang terbaca). Coba mode overlay.",
     "loop": "Model terjebak mengulang kalimat yang sama.",
     "empty": "Model tidak menghasilkan teks.",
+    "no_text": "Tidak ada teks yang terbaca di halaman ini (overlay aktif, jadi halaman tidak dikirim utuh ke model).",
 }
 
 
@@ -105,6 +141,38 @@ class Verdict:
 
 _OK = Verdict("ok", True)
 _TRUNCATED = Verdict("truncated", True)
+
+
+_LABELED_QUOTE = re.compile(
+    r"^\s*(?:teks|tulisan|terjemahan|manga|komik)(?:\s+(?:di|dari|pada|dalam))*(?:\s+gambar(?:\s+ini)?)?"
+    r"(?:\s+(?:adalah|berbunyi))?\s*:\s*[\"“「](.+?)[\"”」]",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+_PREAMBLE_KEYWORDS = (
+    r"(?:translation|terjemah\w*|berikut|text in the image|teks (?:di|dari|dalam) gambar|teks di dalam|tertulis di gambar"
+    r"|manga|here'?s|here is|ini adalah teks)"
+)
+# A short lead-in that talks about the text/translation, then ':' and the quoted translation.
+_PREAMBLE_QUOTE = re.compile(
+    rf"^\s*(?P<lead>[^\"“「]{{0,250}}?{_PREAMBLE_KEYWORDS}[^\"“「]{{0,250}}?):\s*[\"“「](?P<quote>.+?)[\"”」]",
+    re.IGNORECASE | re.DOTALL,
+)
+# The same lead-in on its own line(s), followed by the translation without quotes.
+_PREAMBLE_COLON = re.compile(
+    rf"^\s*(?P<lead>[^\n\"“「:]{{0,160}}{_PREAMBLE_KEYWORDS}[^\n\"“「:]{{0,100}}):\s*\n+\s*(?P<rest>\S.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def unwrap_labeled_quote(text: str) -> str:
+    """"Teks di gambar ini adalah: "..." (+ explanation)" -> the quoted translation. Anything else is unchanged."""
+    for pattern, group in ((_LABELED_QUOTE, 1), (_PREAMBLE_QUOTE, "quote"), (_PREAMBLE_COLON, "rest")):
+        match = pattern.match(text)
+        if match:
+            return match.group(group).strip()
+    return text
 
 
 def _normalised_lines(text: str) -> List[str]:
@@ -133,16 +201,46 @@ def _has_repeated_chunk(text: str) -> bool:
     return False
 
 
+_REPEATED_RUN = re.compile(rf"(.{{2,{LOOP_RUN_MAX_UNIT_CHARS}}}?)\1{{{LOOP_RUN_MIN_REPEATS - 1},}}", re.DOTALL)
+
+
+def _has_long_repeated_run(text: str) -> bool:
+    """One short unit repeated back to back for a long stretch ("...Okay? ...Okay? ..."): too few distinct
+    characters for the chunk check, yet unmistakably a runaway reply."""
+    flat = " ".join(text[:LOOP_SCAN_CHARS].split())
+    return any(len(match.group(0)) >= LOOP_RUN_MIN_CHARS for match in _REPEATED_RUN.finditer(flat))
+
+
 def is_loop(text: str) -> bool:
     lines = _normalised_lines(text)
-    return _has_repeated_line(lines) or _has_low_variety(lines) or _has_repeated_chunk(text)
+    return _has_repeated_line(lines) or _has_low_variety(lines) or _has_repeated_chunk(text) or _has_long_repeated_run(text)
 
 
 def _is_refusal(text: str) -> bool:
     return len(text) < MAX_REFUSAL_CHARS and any(p.search(text) for p in REFUSAL_PATTERNS)
 
 
+# Openers that only ever introduce commentary about the picture; no vocabulary count needed.
+DESCRIPTION_STRONG_OPENERS = _compile(
+    [
+        r"^\s*the (text|character|characters|word|symbol|writing) (in|on) the (image|picture|illustration)\b",
+        r"^\s*the image (shows|contains|depicts|features)\b",
+        r"^\s*this is an? (manga|comic)\b",
+        r"^\s*(teks|tulisan|karakter|simbol) (di|dari|pada|dalam) (dalam )?(gambar|ilustrasi)\b",
+        r"^\s*gambar ini (adalah|menunjukkan|menampilkan|berisi)\b",
+        r"^\s*gambar (itu |ini |tersebut )?(menunjukkan|menampilkan|menggambarkan|memperlihatkan)\b",
+        r"^\s*karakter \(?\S{1,3}\)? (ditulis|tertulis|terlihat|digambar)\b",
+        r"^\s*berikut (ini )?(adalah )?(deskripsi|terjemahan|penjelasan)\b",
+        r"^\s*gambarnya adalah (gambar|bagian)\b",
+        r"^\s*karakter (komik|manga|anime) (dengan|yang)\b",
+        r"^\s*\*\*judul asli",
+    ]
+)
+
+
 def _is_description(text: str) -> bool:
+    if any(p.search(text) for p in DESCRIPTION_STRONG_OPENERS):
+        return True
     if not any(p.search(text) for p in DESCRIPTION_OPENERS):
         return False
     return sum(1 for p in DESCRIPTION_VOCABULARY if p.search(text)) >= MIN_DESCRIPTION_VOCABULARY

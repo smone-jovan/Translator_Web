@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from services.manga_overlay import Box, erase_boxes, fit_text, render_overlay
+from services.manga_overlay import ERASE_OPACITY, Box, erase_boxes, fit_text, render_overlay
 
 
 def _png(image: Image.Image) -> bytes:
@@ -26,6 +26,24 @@ class TestEraseBoxes:
 
         area = np.asarray(erased.crop((50, 50, 200, 120)))
         assert (area == (250, 240, 230)).all()
+
+    def test_partial_opacity_lets_the_original_show_through(self):
+        image = _page(color=(200, 200, 200))
+        image.putpixel((60, 60), (0, 0, 0))  # one ink pixel
+
+        erased = erase_boxes(image, [Box(50, 50, 200, 120, "")], opacity=0.8)
+
+        assert erased.getpixel((100, 100)) == (200, 200, 200)  # paper stays paper
+        ink = erased.getpixel((60, 60))
+        assert ink == (160, 160, 160)  # 0.8 * 200 + 0.2 * 0
+
+    def test_default_opacity_is_fully_opaque(self):
+        image = _page(color=(250, 240, 230))
+        image.putpixel((60, 60), (0, 0, 0))
+
+        erased = erase_boxes(image, [Box(50, 50, 200, 120, "")])
+
+        assert erased.getpixel((60, 60)) == (250, 240, 230)
 
     def test_pixels_outside_boxes_are_untouched(self):
         image = _page()
@@ -106,6 +124,16 @@ class TestRenderOverlay:
         before = np.asarray(original.crop((40, 40, 240, 160)))
         assert not np.array_equal(after, before)
         assert (after < 128).any()  # dark text pixels were drawn
+
+    def test_overlay_uses_the_configured_eraser_opacity(self):
+        assert ERASE_OPACITY == 1.0
+        original = _page(color=(200, 200, 200))
+        original.putpixel((45, 45), (0, 0, 0))  # ink pixel inside the box but far from the drawn text
+        box = Box(40, 40, 400, 300, "x")
+
+        result = Image.open(io.BytesIO(render_overlay(_png(original), [box]))).convert("RGB")
+
+        assert result.getpixel((45, 45)) == (200, 200, 200)
 
     def test_no_boxes_returns_equivalent_image(self):
         original = _page()

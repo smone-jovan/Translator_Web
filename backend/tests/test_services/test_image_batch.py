@@ -2,6 +2,7 @@ import base64
 import io
 
 import pymupdf
+from PIL import Image
 import pytest
 
 from services.ai.index_translate import MAX_IMAGE_BYTES, validate_image_data_url
@@ -44,6 +45,12 @@ class TestPrepareImage:
     def test_rejects_non_png_jpeg(self, payload):
         with pytest.raises(ImageRejectedError):
             prepare_image_data_url(payload)
+
+    def test_rejects_images_with_too_many_pixels_before_decoding(self, monkeypatch):
+        monkeypatch.setattr("services.image_batch.MAX_PIXELS", 1000)
+
+        with pytest.raises(ImageRejectedError, match="pixels"):
+            prepare_image_data_url(make_image(100, 100))
 
     def test_rejects_corrupt_image(self):
         with pytest.raises(ImageRejectedError):
@@ -115,6 +122,21 @@ class TestBuildTranslatedPdfWithOverlays:
         doc = pymupdf.open(stream=pdf, filetype="pdf")
         assert len(doc) == 2
         assert self._darkness_in_box(doc, 0, (100, 100, 400, 300)) > 50
+
+    def test_overlay_pages_are_embedded_as_jpeg_so_the_pdf_stays_small(self):
+        from services.manga_overlay import Box
+
+        noisy = Image.effect_noise((1280, 1790), 60).convert("RGB")
+        buffer = io.BytesIO()
+        noisy.save(buffer, "PNG")
+        box = Box(100, 100, 400, 300, "Halo dunia")
+
+        pdf = build_translated_pdf([buffer.getvalue()], ["Halo"], overlays=[[box]], include_text_pages=False)
+
+        doc = pymupdf.open(stream=pdf, filetype="pdf")
+        (image_info,) = doc[0].get_images(full=True)
+        assert doc.extract_image(image_info[0])["ext"] == "jpeg"
+        assert len(pdf) < len(buffer.getvalue()) / 3
 
     def test_without_overlays_image_page_stays_blank(self):
         pdf = build_translated_pdf([make_image(600, 900)], ["Halo dunia"])

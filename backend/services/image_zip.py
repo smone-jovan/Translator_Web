@@ -18,7 +18,7 @@ MAX_ENTRIES = 1000
 MAX_COMPRESSION_RATIO = 200
 MAX_NAME_CHARS = 120
 ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06")
-_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 _ENCRYPTED_FLAG = 0x1
 _READ_CHUNK = 64 * 1024
 
@@ -104,7 +104,7 @@ def _read_bounded(archive: zipfile.ZipFile, info: zipfile.ZipInfo, remaining_tot
 
 
 def extract_images(data: bytes) -> List[ExtractedImage]:
-    """PNG/JPEG entries of a ZIP in natural path order. Raises ZipRejectedError / ZipTooLargeError."""
+    """PNG/JPEG/WebP entries of a ZIP in natural path order. Raises ZipRejectedError / ZipTooLargeError."""
     if not looks_like_zip(data):
         raise ZipRejectedError("File is not a ZIP archive")
     try:
@@ -118,7 +118,7 @@ def extract_images(data: bytes) -> List[ExtractedImage]:
             raise ZipTooLargeError(f"ZIP has too many entries (max {MAX_ENTRIES})")
         wanted = sorted((info for info in infos if _is_wanted(info)), key=lambda i: _natural_key(i.filename))
         if not wanted:
-            raise ZipRejectedError("ZIP contains no PNG or JPEG images")
+            raise ZipRejectedError("ZIP contains no PNG, JPEG or WebP images")
         if len(wanted) > MAX_IMAGES:
             raise ZipTooLargeError(f"ZIP has too many images (max {MAX_IMAGES})")
 
