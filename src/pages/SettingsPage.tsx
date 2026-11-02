@@ -91,11 +91,12 @@ const GEMINI_MODELS = [
 const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map((m) => m.id);
 
 const POPULAR_GROQ_MODELS = [
+  "qwen/qwen3.8-27b",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
   "llama-3.3-70b-versatile",
   "llama-3.1-8b-instant",
-  "mixtral-8x7b-32768",
-  "gemma2-9b-it",
-  "deepseek-r1-distill-llama-70b",
+  "allam-2-7b",
 ];
 
 const CHAPTER_TOKEN_CAP_OPTIONS = [7000, 15000, 22000, 30000] as const;
@@ -428,7 +429,7 @@ export default function SettingsPage() {
     () => localStorage.getItem("openrouter_api_key") || ""
   );
   const [groqModel, setGroqModel] = useState(
-    () => localStorage.getItem("groq_model") || "llama-3.3-70b-versatile"
+    () => localStorage.getItem("groq_model") || "qwen/qwen3.8-27b"
   );
   const [groqApiKey, setGroqApiKey] = useState(
     () => localStorage.getItem("groq_api_key") || ""

@@ -170,7 +170,7 @@ class GlobalSetting(Base):
     openai_model: Mapped[str] = mapped_column(String(200), default="gpt-4o")
     gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
     openrouter_model: Mapped[str] = mapped_column(String(200), default="deepseek/deepseek-chat")
-    groq_model: Mapped[str] = mapped_column(String(200), default="llama-3.3-70b-versatile")
+    groq_model: Mapped[str] = mapped_column(String(200), default="qwen/qwen3.8-27b")
     openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     openrouter_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
@@ -638,6 +638,27 @@ def _migrate_engine(engine, db_label: str = "database"):
         if 'display_mode' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'display_mode' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN display_mode VARCHAR(20) DEFAULT 'translated'"))
+            conn.commit()
+        cursor = conn.execute(text("PRAGMA table_info(global_settings);"))
+        columns_gs = [row[1] for row in cursor.fetchall()]
+        if 'groq_model' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_model' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_model VARCHAR(200) DEFAULT 'llama-3.3-70b-versatile'"))
+            conn.commit()
+
+        if 'groq_api_key' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_api_key' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+
+        if 'groq_api_keys' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_api_keys' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_api_keys TEXT DEFAULT '[]'"))
+            conn.commit()
+
+        if 'groq_active_key_index' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_active_key_index' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_active_key_index INTEGER DEFAULT 0"))
             conn.commit()
 
         # Deduplicate user_bookmarks (ensure 1 active bookmark per thread)

@@ -118,8 +118,8 @@ class AIProviderFactory:
             # 4. Groq Cloud Provider
             elif provider == "groq":
                 from services.ai.groq import GroqAdapter
-                is_groq_model = model and any(x in model.lower() for x in ["llama", "groq", "mixtral", "gemma", "deepseek", "qwen"])
-                resolved_model = model if is_groq_model else (getattr(gs, "groq_model", None) if gs else "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile"
+                is_groq_model = model and any(x in model.lower() for x in ["llama", "groq", "mixtral", "gemma", "deepseek", "qwen", "gpt-oss", "allam", "orpheus"])
+                resolved_model = model if is_groq_model else (getattr(gs, "groq_model", None) if gs else "qwen/qwen3.8-27b") or "qwen/qwen3.8-27b"
                 resolved_key = api_key or get_active_api_key("groq", gs) or "gsk-dummy"
                 resolved_url = OFFICIAL_PROVIDER_URLS["groq"]
                 if is_trusted_provider_url("groq", base_url):
