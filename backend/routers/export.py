@@ -8,6 +8,7 @@ from pathlib import Path
 import io
 import base64
 import re
+import html
 import hashlib
 import asyncio
 import urllib.parse
@@ -116,6 +117,7 @@ async def export_thread(
         raise HTTPException(400, "No valid chapters selected for export")
 
     export_title = request.title or thread.title or "Exported Novel"
+    glossary_rules = ContextEngine.get_glossary_lock_rules(db, thread_id)
     
     if request.format == "epub":
         if not HAS_EBOOKLIB:
@@ -200,9 +202,9 @@ async def export_thread(
             ch_title = ch.title_translated or ch.title_original or f"Chapter {i+1}"
             ch_content = ch.content_translated or ch.content_original or "Translation not available for this chapter."
 
-            # Jaminan Kunci Glosarium 100%: Terapkan aturan glosarium terbaru ke judul dan teks
-            ch_title = ContextEngine.enforce_glossary_locking(db, thread_id, ch_title)
-            ch_content = ContextEngine.enforce_glossary_locking(db, thread_id, ch_content)
+            # Jaminan Kunci Glosarium 100%: Terapkan aturan glosarium terbaru ke judul dan teks (cached once outside loop)
+            ch_title = ContextEngine.enforce_glossary_locking(db, thread_id, ch_title, rules=glossary_rules)
+            ch_content = ContextEngine.enforce_glossary_locking(db, thread_id, ch_content, rules=glossary_rules)
 
             if request.hide_thoughts:
                 ch_content = remove_thoughts(ch_content)
@@ -218,7 +220,7 @@ async def export_thread(
             img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
             """
 
-            html_body = f"<h1>{ch_title}</h1>\n" + clean_html_content(ch_content)
+            html_body = f"<h1>{html.escape(ch_title)}</h1>\n" + clean_html_content(ch_content)
             
             # Extract and bundle local & remote images
             def process_image(match):
@@ -344,8 +346,8 @@ async def export_thread(
         """
 
         toc_items_html = "\n".join(
-            f'<li><a href="{ch.file_name}"><span class="ch-num">{str(i+1).zfill(2)}.</span> {(ch_obj.title_translated or ch_obj.title_original or f"Chapter {i+1}")}</a></li>'
-            for i, (ch, ch_obj) in enumerate(zip(epub_chapters, chapters))
+            f'<li><a href="{ch.file_name}"><span class="ch-num">{str(i+1).zfill(2)}.</span> {html.escape(ch.title)}</a></li>'
+            for i, ch in enumerate(epub_chapters)
         )
 
         toc_page = epub.EpubHtml(title="Table of Contents", file_name="toc_page.xhtml", lang="id")
@@ -353,8 +355,8 @@ async def export_thread(
 <head><style>{toc_style}</style></head>
 <body>
   <div class="toc-header">
-    <h1>{export_title}</h1>
-    <p>{request.author}</p>
+    <h1>{html.escape(export_title)}</h1>
+    <p>{html.escape(request.author or "")}</p>
   </div>
   <p class="toc-title">Table of Contents</p>
   <ol>{toc_items_html}</ol>
@@ -405,9 +407,9 @@ async def export_thread(
             ch_title = ch.title_translated or ch.title_original or f"Chapter {i+1}"
             ch_content = ch.content_translated or "Translation not available."
             
-            # Jaminan Kunci Glosarium 100%: Terapkan aturan glosarium terbaru ke judul dan teks
-            ch_title = ContextEngine.enforce_glossary_locking(db, thread_id, ch_title)
-            ch_content = ContextEngine.enforce_glossary_locking(db, thread_id, ch_content)
+            # Jaminan Kunci Glosarium 100%: Terapkan aturan glosarium terbaru ke judul dan teks (cached once outside loop)
+            ch_title = ContextEngine.enforce_glossary_locking(db, thread_id, ch_title, rules=glossary_rules)
+            ch_content = ContextEngine.enforce_glossary_locking(db, thread_id, ch_content, rules=glossary_rules)
 
             if request.hide_thoughts:
                 ch_content = remove_thoughts(ch_content)

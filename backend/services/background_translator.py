@@ -14,7 +14,9 @@ from services.ai.chunking import maybe_chunk
 from services.ai.request_trace import TracedProvider
 from services.ai.index_translate import (
     build_index_translate_messages,
+    collect_context_notes,
     collect_glossary_pairs,
+    get_index_genre,
     is_index_translate_model,
 )
 from services.fidelity_checker import verify_translation_fidelity
@@ -415,7 +417,14 @@ class BackgroundTranslator:
                 )
                 print(f"[DEBUG] Chapter {chapter_id} - System Prompt Length: {len(system_prompt)} chars, Original Content Length: {len(content_original)} chars")
                 use_index_prompt = is_index_translate_model(model)
-                index_glossary = collect_glossary_pairs(db, thread_id, content_original) if use_index_prompt else []
+                if use_index_prompt:
+                    index_glossary = collect_glossary_pairs(db, thread_id, content_original)
+                    index_notes = collect_context_notes(db, thread_id, custom_instructions=custom_instructions)
+                    index_genre = get_index_genre(db, thread_id)
+                else:
+                    index_glossary = []
+                    index_notes = []
+                    index_genre = "小说" 
 
             # Pace the API requests based on selected model's strict RPM limits (ADR-029)
             await BackgroundTranslator._enforce_pacing(model, gs, workspace=workspace)
@@ -432,7 +441,9 @@ class BackgroundTranslator:
                 if use_index_prompt:
                     # Index-Translate expects its own single-message template, not the long system prompt.
                     def build_request(text: str) -> list:
-                        return build_index_translate_messages(text, target_lang, index_glossary)
+                        return build_index_translate_messages(
+                            text, target_lang, index_glossary, genre=index_genre, notes=index_notes
+                        )
 
                     base_messages = build_request(protected_content)
                     provider = maybe_chunk(raw_provider, source_text=protected_content, message_builder=build_request)
@@ -533,6 +544,8 @@ class BackgroundTranslator:
                                     )
                                     for i, img_md in enumerate(protected_images):
                                         clean_partial = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_partial, flags=re.IGNORECASE)
+                                        hallucinated_pattern = rf'(?:<img\s+[^>]*?src=["\'](?:image|IMAGE)_{i}(?:\.[a-zA-Z]+)?["\'][^>]*>|!\s*\[[^\]]*\]\s*\((?:image|IMAGE)_{i}(?:\.[a-zA-Z]+)?\)|\b(?:IMAGE|GAMBAR)_{i}\b)'
+                                        clean_partial = re.sub(hallucinated_pattern, img_md, clean_partial, flags=re.IGNORECASE)
                                     ch.content_translated = clean_partial
                                     db.commit()
 
@@ -640,8 +653,11 @@ class BackgroundTranslator:
 
                         for i, img_md in enumerate(protected_images):
                             clean_to_save = re.sub(rf"❖(?:IMAGE|GAMBAR|Image|gambar)_{i}❖", img_md, clean_to_save, flags=re.IGNORECASE)
+                            hallucinated_pattern = rf'(?:<img\s+[^>]*?src=["\'](?:image|IMAGE)_{i}(?:\.[a-zA-Z]+)?["\'][^>]*>|!\s*\[[^\]]*\]\s*\((?:image|IMAGE)_{i}(?:\.[a-zA-Z]+)?\)|\b(?:IMAGE|GAMBAR)_{i}\b)'
+                            clean_to_save = re.sub(hallucinated_pattern, img_md, clean_to_save, flags=re.IGNORECASE)
                             if img_md not in clean_to_save:
                                 clean_to_save += f"\n\n{img_md}\n\n"
+                        clean_to_save = re.sub(r'<img\s+[^>]*?src=["\'](?:\.\.\.|placeholder(?:\.[a-zA-Z]+)?|image_[0-9]+(?:\.[a-zA-Z]+)?)["\'][^>]*>', '', clean_to_save, flags=re.IGNORECASE)
 
                         try:
                             ContextEngine.auto_save_glossary(db, thread_id, full_content)
@@ -941,6 +957,14 @@ class BackgroundTranslator:
                         num_keys = len(keys)
                 except Exception:
                     pass
+            elif llm_provider == "groq" and getattr(gs, "groq_api_keys", None):
+                try:
+                    import json
+                    keys = json.loads(gs.groq_api_keys)
+                    if isinstance(keys, list) and len(keys) > 0:
+                        num_keys = len(keys)
+                except Exception:
+                    pass
 
         required_delay = 1.0
         if llm_provider == "gemini":
@@ -1020,7 +1044,7 @@ class BackgroundTranslator:
                     num_keys = len(keys)
             except Exception:
                 pass
-        elif provider in ("openai", "openrouter") and api_keys_json:
+        elif provider in ("openai", "openrouter", "groq") and api_keys_json:
             try:
                 import json
                 keys = json.loads(api_keys_json)
@@ -1064,6 +1088,8 @@ class BackgroundTranslator:
                         api_keys_json = getattr(gs, "openai_api_keys", None)
                     elif provider == "openrouter":
                         api_keys_json = getattr(gs, "openrouter_api_keys", None)
+                    elif provider == "groq":
+                        api_keys_json = getattr(gs, "groq_api_keys", None)
 
             if getattr(batch, "fetch_only", False):
                 with get_session(ws) as db:

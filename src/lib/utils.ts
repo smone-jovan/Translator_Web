@@ -15,12 +15,23 @@ export function cn(...inputs: ClassValue[]) {
  * Remote http(s) covers go through the backend proxy (handles hotlink protection and
  * Cloudflare-protected hosts, and caches on disk); data:/blob:/local paths pass through.
  */
+export function normalizeImageUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  let clean = url.trim();
+  clean = clean.replace(/^(?:https?:)+(\/\/)/i, "https:$1");
+  if (clean.startsWith("//")) {
+    clean = `https:${clean}`;
+  }
+  return clean;
+}
+
 export function coverImageSrc(
   url: string | null | undefined
 ): string | undefined {
   if (!url) return undefined;
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
+  const normalized = normalizeImageUrl(url);
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return `${API_BASE}/api/images/proxy?url=${encodeURIComponent(normalized)}`;
   }
   return url;
 }
@@ -56,7 +67,7 @@ export function renderMarkdown(
       const srcMatch = part.match(/src\s*=\s*['"]([^'"]+)['"]/i);
       const altMatch = part.match(/alt\s*=\s*['"]([^'"]*)['"]/i);
       if (srcMatch) {
-        let imgSrc = srcMatch[1];
+        let imgSrc = normalizeImageUrl(srcMatch[1]);
         if (imgSrc.startsWith("/images/")) {
           imgSrc = `${API_BASE}${imgSrc}`;
         } else if (
@@ -78,7 +89,7 @@ export function renderMarkdown(
       const altMatch = part.match(/!\[(.*?)\]/);
       const urlMatch = part.match(/\((.*?)\)/);
       if (altMatch && urlMatch) {
-        let imgSrc = urlMatch[1];
+        let imgSrc = normalizeImageUrl(urlMatch[1]);
         // Fix for local images extracted from EPUB
         if (imgSrc.startsWith("/images/")) {
           imgSrc = `${API_BASE}${imgSrc}`;

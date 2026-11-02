@@ -170,6 +170,7 @@ class ThreadUpdatePayload(BaseModel):
     tags: str | None = None
     author: str | None = None
     synopsis: str | None = None
+    cover_image: str | None = None
 
 @router.get("/threads", response_model=List[ThreadItemOut])
 def list_threads(db: Session = Depends(get_db)):
@@ -279,8 +280,122 @@ def update_thread(thread_id: int, payload: ThreadUpdatePayload, db: Session = De
         thread.author = payload.author
     if payload.synopsis is not None:
         thread.synopsis = payload.synopsis
+    if payload.cover_image is not None:
+        thread.cover_image = payload.cover_image
     db.commit()
     return {"status": "updated", "thread_id": thread_id}
+
+
+class BookMetadataResult(BaseModel):
+    title: str
+    author: Optional[str] = None
+    cover_url: Optional[str] = None
+    genres: Optional[str] = None
+    synopsis: Optional[str] = None
+    year: Optional[str] = None
+    source: str = "openlibrary"
+
+
+@router.get("/books/search", response_model=List[BookMetadataResult])
+async def search_book_metadata(q: str, limit: int = 6):
+    """
+    Search book metadata and cover images via Open Library API and Google Books API concurrently.
+    """
+    clean_query = q.strip()[:200]
+    if not clean_query:
+        return []
+
+    clamped_limit = max(1, min(limit, 20))
+    import httpx
+    from urllib.parse import quote_plus
+
+    async def fetch_open_library(client: httpx.AsyncClient) -> List[BookMetadataResult]:
+        ol_results: List[BookMetadataResult] = []
+        try:
+            ol_url = f"https://openlibrary.org/search.json?q={quote_plus(clean_query)}&limit={clamped_limit}"
+            resp = await client.get(ol_url, headers={"User-Agent": "ReadOmniAI/1.0 (translator-web)"})
+            if resp.status_code == 200:
+                data = resp.json()
+                docs = data.get("docs", [])
+                for doc in docs:
+                    title = doc.get("title")
+                    if not title:
+                        continue
+                    authors = doc.get("author_name", [])
+                    author_str = ", ".join(authors[:3]) if isinstance(authors, list) and authors else None
+                    cover_i = doc.get("cover_i")
+                    cover_url = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg" if cover_i else None
+                    year = str(doc.get("first_publish_year")) if doc.get("first_publish_year") else None
+                    subjects = doc.get("subject", [])
+                    genres_str = ", ".join(subjects[:4]) if isinstance(subjects, list) and subjects else None
+
+                    ol_results.append(BookMetadataResult(
+                        title=title,
+                        author=author_str,
+                        cover_url=cover_url,
+                        genres=genres_str,
+                        synopsis=None,
+                        year=year,
+                        source="openlibrary"
+                    ))
+        except Exception as e:
+            print(f"[METADATA] Open Library query failed: {e}")
+        return ol_results
+
+    async def fetch_google_books(client: httpx.AsyncClient) -> List[BookMetadataResult]:
+        gb_results: List[BookMetadataResult] = []
+        try:
+            gb_url = f"https://www.googleapis.com/books/v1/volumes?q={quote_plus(clean_query)}&maxResults={clamped_limit}"
+            resp = await client.get(gb_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+                for it in items:
+                    v_info = it.get("volumeInfo", {})
+                    title = v_info.get("title")
+                    if not title:
+                        continue
+                    authors = v_info.get("authors", [])
+                    author_str = ", ".join(authors[:3]) if isinstance(authors, list) and authors else None
+                    img_links = v_info.get("imageLinks", {})
+                    cover_url = (img_links.get("thumbnail") or img_links.get("smallThumbnail") or "")
+                    if cover_url:
+                        cover_url = cover_url.replace("http://", "https://").replace("&edge=curl", "")
+                    else:
+                        cover_url = None
+                    published_date = v_info.get("publishedDate")
+                    year = published_date[:4] if published_date else None
+                    categories = v_info.get("categories", [])
+                    genres_str = ", ".join(categories[:4]) if isinstance(categories, list) and categories else None
+                    synopsis = v_info.get("description")
+
+                    gb_results.append(BookMetadataResult(
+                        title=title,
+                        author=author_str,
+                        cover_url=cover_url,
+                        genres=genres_str,
+                        synopsis=synopsis,
+                        year=year,
+                        source="googlebooks"
+                    ))
+        except Exception as e:
+            print(f"[METADATA] Google Books query failed: {e}")
+        return gb_results
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        ol_res, gb_res = await asyncio.gather(
+            fetch_open_library(client),
+            fetch_google_books(client),
+            return_exceptions=True
+        )
+
+    results: List[BookMetadataResult] = []
+    if isinstance(ol_res, list):
+        results.extend(ol_res)
+    if isinstance(gb_res, list):
+        results.extend(gb_res)
+
+    return results
 
 
 @router.get("/threads/{thread_id}/context")

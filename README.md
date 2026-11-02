@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-2.0.0-2DD4BF?style=flat-square)](#)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](#)
-[![Tests](https://img.shields.io/badge/tests-471%20passed-brightgreen?style=flat-square)](#contributing)
+[![Tests](https://img.shields.io/badge/tests-1272%20passed-brightgreen?style=flat-square)](#contributing)
 [![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python)](#)
 [![React](https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](#license--attribution)
@@ -51,7 +51,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese, Japanese, and Korean we
 - **Chained bulk web crawler** — Real-time SSE progress streaming for bulk chapter fetching and full TOC imports
 - **Status filter tabs & smart sorting** — Segment library into All, Currently Reading, Unread, and Completed; sort by Recently Read, Recently Added, Reading Progress %, or Title A-Z
 - **Fidelity management hub** — Audit chapter-level fidelity warnings, run selective repair, and reset truncated chapters
-- **EPUB import/export & cover studio** — Extracts synopsis, cover, and illustrations on import; compresses custom covers (<100KB canvas engine); compiles clean EPUB/TXT books
+- **EPUB & TXT import/export studio** — Extracts synopsis, cover, and illustrations on EPUB import; deterministic reviewable TXT-to-EPUB import pipeline with multi-language chapter detection; compresses custom covers (<100KB canvas engine); compiles clean EPUB/TXT books
 
 ### Context Studio & Workspace Security
 - **3-Layer Context & Glossary Studio** — Full studio redesign managing Global Context, Thread Synopsis & Style Guide, and Lorebook entries (up to 1000 terms with bidirectional capacity enforcement and self-eviction protection)
@@ -73,7 +73,7 @@ ReadOmni AI lets you read, crawl, and translate Chinese, Japanese, and Korean we
 | **Scraping** | AdaptiveDOM, Playwright/Patchright Stealth, httpx, curl-cffi, BeautifulSoup4 |
 | **EPUB & NLP** | EbookLib, pypinyin |
 | **Launcher** | Python Tkinter Desktop Control Hub (Windows DWM Dark Mode) & CLI |
-| **Testing** | pytest (471 backend tests, hermetic: no network needed), TypeScript strict typecheck & ESLint |
+| **Testing** | pytest (1,272 backend tests, hermetic: no network needed), TypeScript strict typecheck & ESLint |
 
 ---
 
@@ -196,7 +196,7 @@ Translator_Web/
 │   │   ├── hallucination_detector.py # N-gram phrase loop & word-soup detector
 │   │   ├── image_cacher.py     # Asynchronous chapter illustration caching
 │   │   └── cleaner_tools.py    # TXT/EPUB cleanup pipelines
-│   └── tests/                  # 471 pytest unit & integration tests
+│   └── tests/                  # 1,272 pytest unit & integration tests
 ├── src/
 │   ├── pages/                  # 6 pages (Library, Reader, Translate, ContextLibrary, Bookmarks, Settings)
 │   ├── components/             # Modals, 2D RelationshipGraph, FidelityHub, reader controls & shadcn UI
@@ -206,7 +206,7 @@ Translator_Web/
     ├── overview.md             # High-level system architecture & data flows
     ├── Handoff.md              # Developer onboarding guide & Agent Playbook
     ├── SDLC.md                 # 31-phase development lifecycle & Categorized ADR Index
-    └── decisions/              # 131 Architectural Decision Records (ADR-004 to ADR-134)
+    └── decisions/              # 137 Architectural Decision Records (ADR-004 to ADR-139)
 ```
 
 ---
@@ -218,7 +218,7 @@ Translator_Web/
 | [Architecture Overview](docs/overview.md) | High-level system architecture, data flows, and key entry points |
 | [Handoff Guide](docs/Handoff.md) | Developer onboarding, architecture overview, and Agent Playbook |
 | [SDLC](docs/SDLC.md) | Software development lifecycle (Phases 1–31) & Categorized ADR Index |
-| [ADRs](docs/decisions/) | 131 architectural decision records (ADR-004 to ADR-134) |
+| [ADRs](docs/decisions/) | 137 architectural decision records (ADR-004 to ADR-139) |
 | [Configuration Guide](docs/Configuration_setting.md) | Detailed setup and multi-device sync instructions |
 | [Implementation Plan](docs/implementation_plan.md) | Historical task definitions & acceptance criteria |
 | [Ghost Mode Security Notes](docs/ghost-mode-security.md) | Known limitation: the Ghost PIN hides the UI but does not protect `ghost.db` from other devices on the LAN |

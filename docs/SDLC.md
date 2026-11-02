@@ -341,6 +341,15 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-132**: Terjemahan overlay manga dengan detektor teks ONNX lokal (opt-in `overlay=true`; model diunduh manual lewat `scripts.fetch_detector_model`).
 - **ADR-133**: Unggah ZIP berisi gambar, dibuka di memori dengan pengaman zip bomb dan path traversal.
 - **ADR-134**: Pengaman balasan bukan-terjemahan (penolakan, deskripsi, loop) dan penalti pengulangan untuk balasan gambar.
+- **ADR-135**: Konversi otomatis format WebP ke PNG/JPEG untuk upload folder gambar.
+- **ADR-136**: Penyetelan kualitas overlay teks, kompresi ukuran output PDF, dan Unified File Picker untuk perangkat sentuh.
+- **ADR-137**: Pemanfaatan model lokal kedua untuk riset konteks halaman (Page Context Research).
+
+### 8. Import, Book Builder & Media Pipelines
+- **ADR-014**: Premium Book Export System (kompilasi EPUB/TXT).
+- **ADR-037**: TXT Cleaner & Book Builder Cleanup Preview.
+- **ADR-138**: Pipeline ilustrasi resolusi tinggi (plafon 25MB), normalisasi URL defensif bertingkat, dan pemulihan sintaks markdown gambar terbalik.
+- **ADR-139**: Reviewable TXT-to-EPUB Import Pipeline (two-phase preview/confirm, strict CJK/UTF decoding, paragraph-safe splitting, atomic commit & Book Builder EPUB export).
 
 ---
 

@@ -64,6 +64,24 @@ def test_index_translate_model_receives_matching_glossary_terms(client, db_sessi
     assert "【硬性要求】专名/术语对照: 林动→Lin Dong" in messages[0]["content"]
 
 
+def test_index_translate_model_receives_notes_and_genre_from_thread(client, db_session):
+    thread = Thread(title="novel", genres="xianxia, cultivation", style_guide="Penerjemahan santai tapi lugas.")
+    db_session.add(thread)
+    db_session.commit()
+    db_session.add(LorebookEntry(thread_id=thread.id, original_term="林动", translated_term="Lin Dong"))
+    db_session.commit()
+
+    provider = RecordingProvider()
+    resp = _post(client, provider, "IndexTeam/Index-Translate-2B-GGUF", thread_id=thread.id)
+
+    assert resp.status_code == 200
+    (messages,) = provider.calls
+    content = messages[0]["content"]
+    assert "请将以下修仙小说翻译成印尼语" in content
+    assert "【硬性要求】专名/术语对照: 林动→Lin Dong" in content
+    assert "【注意】Penerjemahan santai tapi lugas." in content
+
+
 def test_other_models_keep_system_plus_user_prompt(client, db_session):
     provider = RecordingProvider()
     resp = _post(client, provider, "gemma-3-4b")

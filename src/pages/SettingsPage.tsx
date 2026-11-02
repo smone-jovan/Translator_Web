@@ -89,6 +89,15 @@ const GEMINI_MODELS = [
 ];
 
 const POPULAR_GEMINI_MODELS = GEMINI_MODELS.map((m) => m.id);
+
+const POPULAR_GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+  "gemma2-9b-it",
+  "deepseek-r1-distill-llama-70b",
+];
+
 const CHAPTER_TOKEN_CAP_OPTIONS = [7000, 15000, 22000, 30000] as const;
 
 interface ModelInfo {
@@ -96,14 +105,15 @@ interface ModelInfo {
   object: string;
 }
 
-type LlmProvider = "lm_studio" | "openai" | "gemini" | "openrouter";
+type LlmProvider = "lm_studio" | "openai" | "gemini" | "openrouter" | "groq";
 
 function isLlmProvider(value: string | null): value is LlmProvider {
   return (
     value === "lm_studio" ||
     value === "openai" ||
     value === "gemini" ||
-    value === "openrouter"
+    value === "openrouter" ||
+    value === "groq"
   );
 }
 
@@ -417,6 +427,12 @@ export default function SettingsPage() {
   const [openrouterApiKey, setOpenrouterApiKey] = useState(
     () => localStorage.getItem("openrouter_api_key") || ""
   );
+  const [groqModel, setGroqModel] = useState(
+    () => localStorage.getItem("groq_model") || "llama-3.3-70b-versatile"
+  );
+  const [groqApiKey, setGroqApiKey] = useState(
+    () => localStorage.getItem("groq_api_key") || ""
+  );
 
   // Multiple API keys
   const [geminiApiKeys, setGeminiApiKeys] = useState<string[]>([]);
@@ -425,10 +441,13 @@ export default function SettingsPage() {
   const [openaiActiveKeyIndex, setOpenaiActiveKeyIndex] = useState(0);
   const [openrouterApiKeys, setOpenrouterApiKeys] = useState<string[]>([]);
   const [openrouterActiveKeyIndex, setOpenrouterActiveKeyIndex] = useState(0);
+  const [groqApiKeys, setGroqApiKeys] = useState<string[]>([]);
+  const [groqActiveKeyIndex, setGroqActiveKeyIndex] = useState(0);
   // UI password toggles
   const [showOpenaiKey, setShowOpenaiKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenrouterKey, setShowOpenrouterKey] = useState(false);
+  const [showGroqKey, setShowGroqKey] = useState(false);
 
   // Ghost Mode PIN State
   const [currentGhostPinInput, setCurrentGhostPinInput] = useState("");
@@ -469,6 +488,10 @@ export default function SettingsPage() {
         setOpenrouterModel(data.openrouter_model);
         localStorage.setItem("openrouter_model", data.openrouter_model);
       }
+      if (data.groq_model) {
+        setGroqModel(data.groq_model);
+        localStorage.setItem("groq_model", data.groq_model);
+      }
       if (data.openai_api_key !== undefined) {
         setOpenaiApiKey(data.openai_api_key);
         localStorage.setItem("openai_api_key", data.openai_api_key);
@@ -480,6 +503,10 @@ export default function SettingsPage() {
       if (data.openrouter_api_key !== undefined) {
         setOpenrouterApiKey(data.openrouter_api_key);
         localStorage.setItem("openrouter_api_key", data.openrouter_api_key);
+      }
+      if (data.groq_api_key !== undefined) {
+        setGroqApiKey(data.groq_api_key);
+        localStorage.setItem("groq_api_key", data.groq_api_key);
       }
       // Multiple API keys
       if (data.gemini_api_keys) {
@@ -500,8 +527,11 @@ export default function SettingsPage() {
       if (data.openrouter_active_key_index !== undefined) {
         setOpenrouterActiveKeyIndex(data.openrouter_active_key_index);
       }
-      if (data.openai_active_key_index !== undefined) {
-        setOpenaiActiveKeyIndex(data.openai_active_key_index);
+      if (data.groq_api_keys) {
+        setGroqApiKeys(data.groq_api_keys);
+      }
+      if (data.groq_active_key_index !== undefined) {
+        setGroqActiveKeyIndex(data.groq_active_key_index);
       }
       if (data.target_language) {
         setTargetLang(data.target_language);
@@ -624,7 +654,7 @@ export default function SettingsPage() {
 
   // Generic key management helpers
   const addKey = (
-    provider: "gemini" | "openai" | "openrouter",
+    provider: "gemini" | "openai" | "openrouter" | "groq",
     key: string
   ) => {
     const [keys, setKeys] =
@@ -632,14 +662,16 @@ export default function SettingsPage() {
         ? [geminiApiKeys, setGeminiApiKeys]
         : provider === "openai"
           ? [openaiApiKeys, setOpenaiApiKeys]
-          : [openrouterApiKeys, setOpenrouterApiKeys];
+          : provider === "openrouter"
+            ? [openrouterApiKeys, setOpenrouterApiKeys]
+            : [groqApiKeys, setGroqApiKeys];
     const updated = [...keys, key];
     setKeys(updated);
     saveSettingsToServer({ [`${provider}_api_keys`]: updated });
   };
 
   const removeKey = (
-    provider: "gemini" | "openai" | "openrouter",
+    provider: "gemini" | "openai" | "openrouter" | "groq",
     index: number
   ) => {
     const [keys, setKeys, activeIndex, setActiveIndex] =
@@ -652,17 +684,24 @@ export default function SettingsPage() {
           ]
         : provider === "openai"
           ? [
-              openaiApiKeys,
-              setOpenaiApiKeys,
-              openaiActiveKeyIndex,
-              setOpenaiActiveKeyIndex,
-            ]
-          : [
-              openrouterApiKeys,
-              setOpenrouterApiKeys,
-              openrouterActiveKeyIndex,
-              setOpenrouterActiveKeyIndex,
-            ];
+               openaiApiKeys,
+               setOpenaiApiKeys,
+               openaiActiveKeyIndex,
+               setOpenaiActiveKeyIndex,
+             ]
+          : provider === "openrouter"
+            ? [
+                openrouterApiKeys,
+                setOpenrouterApiKeys,
+                openrouterActiveKeyIndex,
+                setOpenrouterActiveKeyIndex,
+              ]
+            : [
+                groqApiKeys,
+                setGroqApiKeys,
+                groqActiveKeyIndex,
+                setGroqActiveKeyIndex,
+              ];
     const updated = keys.filter((_, i) => i !== index);
     setKeys(updated);
     const newIndex =
@@ -677,7 +716,7 @@ export default function SettingsPage() {
   };
 
   const setActiveKey = (
-    provider: "gemini" | "openai" | "openrouter",
+    provider: "gemini" | "openai" | "openrouter" | "groq",
     index: number
   ) => {
     const setActiveIndex =
@@ -685,7 +724,9 @@ export default function SettingsPage() {
         ? setGeminiActiveKeyIndex
         : provider === "openai"
           ? setOpenaiActiveKeyIndex
-          : setOpenrouterActiveKeyIndex;
+          : provider === "openrouter"
+            ? setOpenrouterActiveKeyIndex
+            : setGroqActiveKeyIndex;
     setActiveIndex(index);
     saveSettingsToServer({ [`${provider}_active_key_index`]: index });
   };
@@ -739,6 +780,9 @@ export default function SettingsPage() {
     localStorage.setItem("openrouter_model", openrouterModel);
   }, [openrouterModel]);
   useEffect(() => {
+    localStorage.setItem("groq_model", groqModel);
+  }, [groqModel]);
+  useEffect(() => {
     localStorage.setItem("openai_api_key", openaiApiKey);
   }, [openaiApiKey]);
   useEffect(() => {
@@ -747,6 +791,9 @@ export default function SettingsPage() {
   useEffect(() => {
     localStorage.setItem("openrouter_api_key", openrouterApiKey);
   }, [openrouterApiKey]);
+  useEffect(() => {
+    localStorage.setItem("groq_api_key", groqApiKey);
+  }, [groqApiKey]);
 
   useEffect(() => {
     if (!isSettingsLoadedRef.current) return;
@@ -912,7 +959,7 @@ export default function SettingsPage() {
           <h2 className="text-xl font-bold">AI Translation Model</h2>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <ProviderCard
             id="lm_studio"
             label="LM Studio (Local)"
@@ -944,6 +991,14 @@ export default function SettingsPage() {
             active={llmProvider === "openrouter"}
             onClick={() => handleLlmProviderChange("openrouter")}
             icon={Globe}
+          />
+          <ProviderCard
+            id="groq"
+            label="Groq Cloud"
+            description="Akselerasi LPU ultra-cepat dengan Llama 3, Mixtral, Gemma 2, dan DeepSeek R1."
+            active={llmProvider === "groq"}
+            onClick={() => handleLlmProviderChange("groq")}
+            icon={Zap}
           />
         </div>
 
@@ -1390,6 +1445,125 @@ export default function SettingsPage() {
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
                     OpenRouter memberikan akses universal ke DeepSeek-V3, Claude
                     3.5 Sonnet, Llama 3.3, Qwen, dll.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {llmProvider === "groq" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      Groq API Key
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showGroqKey ? "text" : "password"}
+                        value={groqApiKey}
+                        onChange={(e) => {
+                          setGroqApiKey(e.target.value);
+                          saveSettingsToServer({
+                            groq_api_key: e.target.value,
+                          });
+                        }}
+                        placeholder="gsk_..."
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowGroqKey(!showGroqKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                      >
+                        {showGroqKey ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-[var(--secondary)] border border-[var(--border)] rounded-xl p-4 text-xs space-y-1.5 text-[var(--muted-foreground)] leading-relaxed">
+                    <p className="font-semibold text-[var(--foreground)]">
+                      ⚡ Kecepatan LPU Ekstrem (Gratis)
+                    </p>
+                    <p>
+                      Groq Cloud menyediakan tier gratis dengan latensi ultra rendah
+                      untuk inferensi model open-source seperti Llama-3.3 70B!
+                    </p>
+                    <a
+                      href="https://console.groq.com/keys"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block text-[var(--primary)] hover:underline font-bold mt-1"
+                    >
+                      Dapatkan Groq API Key di Groq Console &rarr;
+                    </a>
+                  </div>
+
+                  <ApiKeyManager
+                    label="Multiple Keys"
+                    keys={groqApiKeys}
+                    activeIndex={groqActiveKeyIndex}
+                    onAdd={(key) => addKey("groq", key)}
+                    onRemove={(i) => removeKey("groq", i)}
+                    onSetActive={(i) => setActiveKey("groq", i)}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      Groq Model
+                    </label>
+                    <select
+                      value={
+                        POPULAR_GROQ_MODELS.includes(groqModel)
+                          ? groqModel
+                          : "custom"
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val !== "custom") {
+                          setGroqModel(val);
+                          saveSettingsToServer({ groq_model: val });
+                        }
+                      }}
+                      className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                    >
+                      {POPULAR_GROQ_MODELS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value="custom">Custom (Type below)...</option>
+                    </select>
+                  </div>
+
+                  {(!POPULAR_GROQ_MODELS.includes(groqModel) ||
+                    !groqModel) && (
+                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                        Custom Model Name
+                      </label>
+                      <input
+                        value={groqModel}
+                        onChange={(e) => {
+                          setGroqModel(e.target.value);
+                          saveSettingsToServer({
+                            groq_model: e.target.value,
+                          });
+                        }}
+                        placeholder="llama-3.3-70b-versatile"
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
+                    Model LPU Groq menghasilkan terjemahan dalam hitungan detik
+                    dengan performa tinggi menggunakan arsitektur LPU terspesialisasi.
                   </p>
                 </div>
               </div>

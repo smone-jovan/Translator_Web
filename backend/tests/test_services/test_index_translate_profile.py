@@ -52,6 +52,37 @@ class TestPrompt:
             "只输出译文，不要有任何额外说明。"
         )
 
+    def test_glossary_with_custom_notes_and_genre(self):
+        prompt = build_index_translate_prompt(
+            "林动突破了",
+            "Indonesian",
+            glossary=[("林动", "Lin Dong")],
+            genre="修仙小说",
+            notes=["保持仙侠修真意境，称谓规范"],
+        )
+        assert prompt == (
+            "请将以下修仙小说翻译成印尼语，并且严格遵循所有约束要求。\n\n"
+            "【源文】\n林动突破了\n\n"
+            "【约束要求】\n"
+            "1. 【硬性要求】专名/术语对照: 林动→Lin Dong\n"
+            "2. 【注意】保持仙侠修真意境，称谓规范\n\n"
+            "只输出译文，不要有任何额外说明。"
+        )
+
+    def test_plain_prompt_with_notes_only(self):
+        prompt = build_index_translate_prompt(
+            "林动突破了",
+            "Indonesian",
+            notes=["保持仙侠风格"],
+        )
+        assert prompt == (
+            "请将以下小说翻译成印尼语，并且严格遵循所有约束要求。\n\n"
+            "【源文】\n林动突破了\n\n"
+            "【约束要求】\n"
+            "1. 【注意】保持仙侠风格\n\n"
+            "只输出译文，不要有任何额外说明。"
+        )
+
     def test_messages_are_a_single_user_message_without_system_prompt(self):
         messages = build_index_translate_messages("你好", "Indonesian")
         assert messages == [{"role": "user", "content": build_index_translate_prompt("你好", "Indonesian")}]
@@ -149,6 +180,43 @@ class TestGlossaryCollection:
         assert collect_glossary_pairs(db_session, thread.id, "林动之父说林", limit=1) == [
             ("林动之父", "Ayah Lin Dong")
         ]
+
+    def test_limit_defaults_to_global_setting_max_context_terms(self, db_session):
+        from database import GlobalSetting
+        db_session.add(GlobalSetting(max_context_terms=2))
+        thread = self._thread(db_session)
+        db_session.add_all([
+            LorebookEntry(thread_id=thread.id, original_term="林", translated_term="Lin"),
+            LorebookEntry(thread_id=thread.id, original_term="林动", translated_term="Lin Dong"),
+            LorebookEntry(thread_id=thread.id, original_term="林动之父", translated_term="Ayah Lin Dong"),
+        ])
+        db_session.commit()
+        result = collect_glossary_pairs(db_session, thread.id, "林动之父和林动说林")
+        assert len(result) == 2
+
+
+class TestContextNotesAndGenre:
+    def test_genre_detection_mapping(self, db_session):
+        from services.ai.index_translate import get_index_genre
+        thread_cult = Thread(title="Cult", genres="xianxia, cultivation")
+        thread_scifi = Thread(title="SciFi", genres="sci-fi, mecha")
+        thread_none = Thread(title="None")
+        db_session.add_all([thread_cult, thread_scifi, thread_none])
+        db_session.commit()
+        assert get_index_genre(db_session, thread_cult.id) == "修仙小说"
+        assert get_index_genre(db_session, thread_scifi.id) == "科幻小说"
+        assert get_index_genre(db_session, thread_none.id) == "小说"
+        assert get_index_genre(db_session, None) == "小说"
+
+    def test_collect_context_notes_from_thread(self, db_session):
+        from services.ai.index_translate import collect_context_notes
+        thread = Thread(title="t", style_guide="Gunakan istilah baku untuk nama sekte.")
+        db_session.add(thread)
+        db_session.commit()
+        notes = collect_context_notes(db_session, thread.id, custom_instructions="Jangan singkat nama.")
+        assert len(notes) == 2
+        assert notes[0] == "Jangan singkat nama."
+        assert notes[1] == "Gunakan istilah baku untuk nama sekte."
 
 
 class FakeProvider:

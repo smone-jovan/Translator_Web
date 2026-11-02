@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getApiUrl, API_BASE } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, normalizeImageUrl } from "@/lib/utils";
 
 export interface ThreadImageItem {
   url: string;
@@ -69,11 +69,11 @@ export default function ThreadImageGallery({
   }, [fetchImages]);
 
   const getProxiedUrl = (url: string) => {
-    let base = url;
+    let base = normalizeImageUrl(url);
     if (url.startsWith("/images/")) {
       base = `${API_BASE}${url}`;
-    } else if (url.startsWith("http://") || url.startsWith("https://")) {
-      base = `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
+    } else if (base.startsWith("http://") || base.startsWith("https://")) {
+      base = `${API_BASE}/api/images/proxy?url=${encodeURIComponent(base)}`;
     }
     const key = retryKeys[url];
     if (key) {

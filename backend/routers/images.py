@@ -38,6 +38,8 @@ async def proxy_image(
     Bypasses CORS/hotlink protection and delivers cached images in <5ms.
     Supports force=True to invalidate cache and re-download broken/stuck images.
     """
+    from services.image_cacher import normalize_image_url
+    url = normalize_image_url(url)
     if not url or not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid image URL protocol")
 

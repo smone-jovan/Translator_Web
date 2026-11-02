@@ -18,7 +18,9 @@ from services.ai.factory import AIProviderFactory
 from services.ai.chunking import maybe_chunk
 from services.ai.index_translate import (
     build_index_translate_messages,
+    collect_context_notes,
     collect_glossary_pairs,
+    get_index_genre,
     is_index_translate_model,
 )
 from services.ai.settings import resolve_active_base_url, resolve_active_model, get_chapter_translation_max_tokens
@@ -147,9 +149,11 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     if is_index_translate_model(selected_model):
         # Index-Translate expects its own single-message template, not the long system prompt.
         glossary = collect_glossary_pairs(db, req.thread_id, req.text)
+        notes = collect_context_notes(db, req.thread_id)
+        genre = get_index_genre(db, req.thread_id)
 
         def build_request(text: str) -> list:
-            return build_index_translate_messages(text, target_lang, glossary)
+            return build_index_translate_messages(text, target_lang, glossary, genre=genre, notes=notes)
 
         messages = build_request(protected_text)
         provider = maybe_chunk(provider, source_text=protected_text, message_builder=build_request)

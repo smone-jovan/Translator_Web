@@ -309,3 +309,42 @@ def test_proxy_image_force_refresh(client):
     finally:
         if cache_file.exists():
             cache_file.unlink()
+
+
+def test_normalize_image_url_defensive():
+    from services.image_cacher import normalize_image_url
+    assert normalize_image_url("https:https://novel.org/img.png") == "https://novel.org/img.png"
+    assert normalize_image_url("http:https://novel.org/img.png") == "https://novel.org/img.png"
+    assert normalize_image_url("https:http://novel.org/img.png") == "https://novel.org/img.png"
+    assert normalize_image_url("//novel.org/img.png") == "https://novel.org/img.png"
+    assert normalize_image_url("https://novel.org/img.png") == "https://novel.org/img.png"
+    assert normalize_image_url("") == ""
+    assert normalize_image_url(None) == ""
+
+
+def test_list_thread_images_with_malformed_and_inverted_urls(client, db_session):
+    thread = Thread(title="Novel With Diverse Formats")
+    db_session.add(thread)
+    db_session.commit()
+
+    ch = Chapter(
+        thread_id=thread.id,
+        title_original="Ch 1",
+        content_original=(
+            "Pic 1: ![Alt1](https:https://novel.org/art1.jpg)\n"
+            "Pic 2: ![https://pximg.net/art2.jpg](chapter-d35d87.jpeg)\n"
+            "Pic 3: <img src=\"//novel.org/art3.png\" alt=\"Alt3\" />"
+        ),
+        order=1
+    )
+    db_session.add(ch)
+    db_session.commit()
+
+    res = client.get(f"/api/threads/{thread.id}/images")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_images"] == 3
+    urls = [img["url"] for img in data["images"]]
+    assert "https://novel.org/art1.jpg" in urls
+    assert "https://pximg.net/art2.jpg" in urls
+    assert "https://novel.org/art3.png" in urls

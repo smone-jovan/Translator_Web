@@ -109,6 +109,7 @@ interface LibraryBookCardProps {
     onDeleteTranslations: () => void;
     onFixTruncated: () => void;
     onEditInfo: () => void;
+    onAutoFillMetadata?: () => void;
   };
 }
 
@@ -271,6 +272,19 @@ const LibraryBookCard = ({ thread, actions }: LibraryBookCardProps) => {
               >
                 <Pencil size={16} className="text-[var(--primary)]" />
                 Edit Info
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  if (actions.onAutoFillMetadata) {
+                    actions.onAutoFillMetadata();
+                  } else {
+                    actions.onEditInfo();
+                  }
+                  handleClose();
+                }}
+              >
+                <BookOpen size={16} className="text-[var(--primary)]" />
+                Auto-Fill Metadata (Open Library)
               </MenuItem>
               <MenuItem
                 onClick={() => {
@@ -579,9 +593,69 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
     title: "",
     genres: "",
     author: "",
+    synopsis: "",
+    cover_image: "",
   });
+  const [metaSearchQuery, setMetaSearchQuery] = useState("");
+  const [metaSearching, setMetaSearching] = useState(false);
+  const [metaResults, setMetaResults] = useState<
+    Array<{
+      title: string;
+      author?: string;
+      cover_url?: string;
+      genres?: string;
+      synopsis?: string;
+      year?: string;
+      source: string;
+    }>
+  >([]);
+  const [showMetaSearch, setShowMetaSearch] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const { confirm } = useConfirm();
+
+  const handleSearchMetadata = async (queryToSearch?: string) => {
+    const q = (queryToSearch ?? metaSearchQuery).trim();
+    if (!q) return;
+    setMetaSearching(true);
+    try {
+      const res = await fetch(
+        getApiUrl(`/api/books/search?q=${encodeURIComponent(q)}&limit=6`)
+      );
+      if (!res.ok) throw new Error("Search failed");
+      const data = await res.json();
+      setMetaResults(data);
+      if (data.length === 0) {
+        toast.info(
+          "Tidak ada buku yang ditemukan di Open Library / Google Books."
+        );
+      }
+    } catch (err) {
+      console.error("Book search failed:", err);
+      toast.error("Gagal mencari metadata buku");
+    } finally {
+      setMetaSearching(false);
+    }
+  };
+
+  const handleOpenEditInfo = (
+    thread: ThreadItem,
+    autoOpenSearch: boolean = false
+  ) => {
+    setEditThread(thread);
+    setEditForm({
+      title: thread.title,
+      genres: thread.genres || "",
+      author: thread.author || "",
+      synopsis: thread.synopsis || "",
+      cover_image: thread.cover_image || "",
+    });
+    setMetaSearchQuery(thread.title);
+    setMetaResults([]);
+    setShowMetaSearch(autoOpenSearch);
+    if (autoOpenSearch) {
+      handleSearchMetadata(thread.title);
+    }
+  };
 
   const handleOpenThread = useCallback(
     (threadId: number, chapterId?: number) => {
@@ -1283,14 +1357,8 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                     runCleanerTool(thread, "epub-cleaner"),
                   onDeleteTranslations: () => handleDeleteTranslations(thread),
                   onFixTruncated: () => handleFixTruncated(thread),
-                  onEditInfo: () => {
-                    setEditThread(thread);
-                    setEditForm({
-                      title: thread.title,
-                      genres: thread.genres || "",
-                      author: thread.author || "",
-                    });
-                  },
+                  onEditInfo: () => handleOpenEditInfo(thread, false),
+                  onAutoFillMetadata: () => handleOpenEditInfo(thread, true),
                 }}
               />
             ))}
@@ -1532,30 +1600,160 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
         </div>
       )}
 
-      {/* Edit Info Modal */}
+      {/* Edit Info Modal with Online Metadata Auto-Fill */}
       {editThread && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto"
           onClick={() => setEditThread(null)}
         >
           <div
-            className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 w-full max-w-md shadow-2xl"
+            className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-black text-[var(--foreground)]">
-                Edit Book Info
-              </h2>
+            <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
+              <div>
+                <h2 className="text-lg font-black text-[var(--foreground)]">
+                  Edit Book Info & Metadata
+                </h2>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Edit informasi buku atau gunakan auto-fill online.
+                </p>
+              </div>
               <button
                 onClick={() => setEditThread(null)}
-                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1 rounded-lg"
               >
                 <X size={20} />
               </button>
             </div>
-            <div className="space-y-4">
+
+            {/* Online Metadata Auto-Fill Section */}
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--secondary)]/30 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-amber-400" />
+                  Auto-Fill Metadata (Open Library & Google Books)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowMetaSearch((prev) => !prev)}
+                  className="text-[11px] font-semibold text-[var(--primary)] hover:underline cursor-pointer"
+                >
+                  {showMetaSearch ? "Sembunyikan" : "Buka Pencarian"}
+                </button>
+              </div>
+
+              {showMetaSearch && (
+                <div className="space-y-3 pt-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={metaSearchQuery}
+                      onChange={(e) => setMetaSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleSearchMetadata();
+                        }
+                      }}
+                      placeholder="Ketik judul buku atau kata kunci..."
+                      className="flex-1 px-3 py-1.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => handleSearchMetadata()}
+                      disabled={metaSearching || !metaSearchQuery.trim()}
+                      className="rounded-xl text-xs h-8 px-3 gap-1.5 shrink-0"
+                    >
+                      {metaSearching ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Search size={13} />
+                      )}
+                      Cari
+                    </Button>
+                  </div>
+
+                  {/* Search Results */}
+                  {metaResults.length > 0 && (
+                    <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                      {metaResults.map((cand, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-start gap-3 p-2.5 rounded-xl bg-[var(--card)] border border-[var(--border)] hover:border-[var(--primary)]/40 transition-colors"
+                        >
+                          {cand.cover_url ? (
+                            <img
+                              src={cand.cover_url}
+                              alt={cand.title}
+                              className="w-10 h-14 object-cover rounded-md bg-[var(--secondary)] shrink-0 border border-[var(--border)]"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-10 h-14 rounded-md bg-[var(--secondary)] flex items-center justify-center shrink-0 border border-[var(--border)] text-[var(--muted-foreground)]">
+                              <BookOpen size={16} />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-[var(--foreground)] truncate">
+                                {cand.title}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-[var(--secondary)] text-[var(--muted-foreground)] shrink-0">
+                                {cand.source === "openlibrary"
+                                  ? "Open Library"
+                                  : "Google Books"}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-[var(--muted-foreground)] truncate mt-0.5">
+                              {cand.author || "Penulis tidak diketahui"}{" "}
+                              {cand.year ? `(${cand.year})` : ""}
+                            </p>
+                            {cand.genres && (
+                              <p className="text-[9px] text-[var(--primary)] truncate mt-0.5">
+                                {cand.genres}
+                              </p>
+                            )}
+                            {cand.synopsis && (
+                              <p className="text-[10px] text-[var(--muted-foreground)] line-clamp-1 italic mt-0.5">
+                                {cand.synopsis}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="rounded-lg text-[10px] h-7 px-2 shrink-0 border-[var(--primary)]/30 text-[var(--primary)] hover:bg-[var(--primary)]/10"
+                            onClick={() => {
+                              setEditForm((prev) => ({
+                                ...prev,
+                                title: cand.title || prev.title,
+                                author: cand.author || prev.author,
+                                genres: cand.genres || prev.genres,
+                                synopsis: cand.synopsis || prev.synopsis,
+                                cover_image: cand.cover_url || prev.cover_image,
+                              }));
+                              toast.success(
+                                `Metadata "${cand.title}" diterapkan!`
+                              );
+                            }}
+                          >
+                            Terapkan
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Manual Form Fields */}
+            <div className="space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1">
                   Title
                 </label>
                 <input
@@ -1567,35 +1765,83 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                   className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
                 />
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1">
+                    Author
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.author}
+                    onChange={(e) =>
+                      setEditForm((f) => ({ ...f, author: e.target.value }))
+                    }
+                    placeholder="e.g. Author Name"
+                    className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1">
+                    Genres
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.genres}
+                    onChange={(e) =>
+                      setEditForm((f) => ({ ...f, genres: e.target.value }))
+                    }
+                    placeholder="e.g. fantasy, romance, urban"
+                    className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">
-                  Genres (comma separated)
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1">
+                  Synopsis
                 </label>
-                <input
-                  type="text"
-                  value={editForm.genres}
+                <textarea
+                  rows={3}
+                  value={editForm.synopsis}
                   onChange={(e) =>
-                    setEditForm((f) => ({ ...f, genres: e.target.value }))
+                    setEditForm((f) => ({ ...f, synopsis: e.target.value }))
                   }
-                  placeholder="e.g. romance, cultivation, urban"
-                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                  placeholder="Ringkasan atau sinopsis buku..."
+                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50 resize-y"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1.5">
-                  Author
+                <label className="block text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider mb-1">
+                  Cover Image URL
                 </label>
-                <input
-                  type="text"
-                  value={editForm.author}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, author: e.target.value }))
-                  }
-                  className="w-full px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
-                />
+                <div className="flex items-center gap-3">
+                  {editForm.cover_image && (
+                    <img
+                      src={coverImageSrc(editForm.cover_image)}
+                      alt="Cover Preview"
+                      className="w-10 h-14 object-cover rounded-md bg-[var(--secondary)] border border-[var(--border)] shrink-0"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = "none";
+                      }}
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={editForm.cover_image}
+                    onChange={(e) =>
+                      setEditForm((f) => ({ ...f, cover_image: e.target.value }))
+                    }
+                    placeholder="https://... atau biarkan kosong"
+                    className="flex-1 px-3 py-2 rounded-xl bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/50"
+                  />
+                </div>
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)]">
               <Button
                 variant="outline"
                 className="rounded-xl"
@@ -1618,11 +1864,13 @@ export default function LibraryPage({ onOpenThread }: LibraryPageProps) {
                           title: editForm.title.trim(),
                           genres: editForm.genres.trim() || null,
                           author: editForm.author.trim() || null,
+                          synopsis: editForm.synopsis.trim() || null,
+                          cover_image: editForm.cover_image.trim() || null,
                         }),
                       }
                     );
                     if (!res.ok) throw new Error("Failed");
-                    toast.success("Book info updated!");
+                    toast.success("Book info & metadata updated!");
                     setEditThread(null);
                     fetchThreads();
                   } catch {

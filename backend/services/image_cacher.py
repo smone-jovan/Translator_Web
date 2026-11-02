@@ -32,6 +32,17 @@ def is_safe_cache_path(candidate: Path) -> bool:
         return False
 
 
+def normalize_image_url(url: Optional[str]) -> str:
+    """Normalize image URLs: handle duplicate schemes, protocol-relative //, and strip whitespace."""
+    if not url:
+        return ""
+    u = url.strip()
+    u = re.sub(r'^(?:https?:)+(//)', r'https:\1', u, flags=re.IGNORECASE)
+    if u.startswith("//"):
+        u = f"https:{u}"
+    return u
+
+
 def get_cached_image(url: str) -> Optional[tuple[bytes, str, Path]]:
     """Check if an image URL is already cached on disk safely."""
     if "\x00" in url:
@@ -56,6 +67,7 @@ async def warm_cover_cache(url: Optional[str], workspace: Optional[str] = None) 
     disk cache, sehingga /api/images/proxy langsung HIT. Tidak pernah melempar; return True bila
     cover sudah/berhasil ter-cache.
     """
+    url = normalize_image_url(url)
     if not url or not url.startswith(("http://", "https://")) or "\x00" in url:
         return False
     if get_cached_image(url):
@@ -153,15 +165,15 @@ def extract_remote_image_urls_from_text(text: str | None) -> set[str]:
         return set()
     found = set()
     # 1. Markdown syntax: ![alt](https://...)
-    for m in re.finditer(r'!\[.*?\]\((https?://[^\s\)]+)\)', text):
+    for m in re.finditer(r'!\[.*?\]\(((?:(?:\w+:)+//|//)[^\s\)]+)\)', text):
         found.add(m.group(1))
     # 2. HTML syntax: <img ... src="https://..." ...>
-    for m in re.finditer(r'<img\s+[^>]*?src=["\'](https?://[^"\']+)["\']', text, flags=re.IGNORECASE):
+    for m in re.finditer(r'<img\s+[^>]*?src=["\']((?:(?:\w+:)+//|//)[^"\']+)["\']', text, flags=re.IGNORECASE):
         found.add(m.group(1))
     # 3. Escaped HTML: &lt;img ... src="https://..." ...&gt;
-    for m in re.finditer(r'&lt;img\s+[^>]*?src=["\'](https?://[^"\']+)["\']', text, flags=re.IGNORECASE):
+    for m in re.finditer(r'&lt;img\s+[^>]*?src=["\']((?:(?:\w+:)+//|//)[^"\']+)["\']', text, flags=re.IGNORECASE):
         found.add(m.group(1))
-    return found
+    return {normalize_image_url(u) for u in found if normalize_image_url(u).startswith(("http://", "https://"))}
 
 
 def get_thread_remote_image_urls(db: Session, thread_id: int) -> list[str]:
@@ -194,9 +206,11 @@ def extract_images_with_metadata_from_chapter(
     seen_urls = set()
 
     # 1. Markdown syntax: ![alt](url)
-    for m in re.finditer(r'!\[(.*?)\]\(((?:https?://|/images/)[^\s\)]+)\)', text):
+    for m in re.finditer(r'!\[(.*?)\]\(((?:(?:\w+:)+//|//|/images/|[^\s\)]+\.(?:jpe?g|png|webp|gif|file))[^\s\)]*)\)', text, flags=re.IGNORECASE):
         alt = m.group(1).strip()
-        url = m.group(2).strip()
+        url = normalize_image_url(m.group(2))
+        if (not url.startswith(("http://", "https://", "/images/"))) and alt.startswith(("http://", "https://")):
+            url = normalize_image_url(alt)
         if url and url not in seen_urls:
             seen_urls.add(url)
             results.append({
@@ -208,8 +222,8 @@ def extract_images_with_metadata_from_chapter(
             })
 
     # 2. HTML syntax: <img ... src="url" ...>
-    for m in re.finditer(r'<img\s+[^>]*?src=["\']((?:https?://|/images/)[^"\']+)["\']([^>]*?)>', text, flags=re.IGNORECASE):
-        url = m.group(1).strip()
+    for m in re.finditer(r'<img\s+[^>]*?src=["\']((?:(?:\w+:)+//|//|/images/|[^"\'<>]+\.(?:jpe?g|png|webp|gif|file))[^"\'<>]*)["\']([^>]*?)>', text, flags=re.IGNORECASE):
+        url = normalize_image_url(m.group(1))
         rest = m.group(2)
         alt_match = re.search(r'alt=["\'](.*?)["\']', rest, flags=re.IGNORECASE)
         alt = alt_match.group(1).strip() if alt_match else ""
@@ -224,8 +238,8 @@ def extract_images_with_metadata_from_chapter(
             })
 
     # 3. Escaped HTML: &lt;img ... src="url" ... &gt;
-    for m in re.finditer(r'&lt;img\s+[^>]*?src=["\']((?:https?://|/images/)[^"\']+)["\']([^&]*?)&gt;', text, flags=re.IGNORECASE):
-        url = m.group(1).strip()
+    for m in re.finditer(r'&lt;img\s+[^>]*?src=["\']((?:(?:\w+:)+//|//|/images/|[^"\'<>&]+\.(?:jpe?g|png|webp|gif|file))[^"\'<>&]*)["\']([^&]*?)&gt;', text, flags=re.IGNORECASE):
+        url = normalize_image_url(m.group(1))
         rest = m.group(2)
         alt_match = re.search(r'alt=["\'](.*?)["\']', rest, flags=re.IGNORECASE)
         alt = alt_match.group(1).strip() if alt_match else ""

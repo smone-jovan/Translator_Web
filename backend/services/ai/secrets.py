@@ -101,6 +101,16 @@ def get_key_stats(provider: str, gs) -> dict:
                 dict_key = f"{single_key}::{model}" if model else single_key
                 if dict_key in exhausted_gemini_keys:
                     stats["exhausted"] = 1
+    elif provider in ("openai", "openrouter", "groq") and gs:
+        attr = f"{provider}_api_keys"
+        raw_keys = getattr(gs, attr, None)
+        if raw_keys:
+            try:
+                keys = json.loads(raw_keys)
+                if isinstance(keys, list) and len(keys) > 0:
+                    stats["total"] = len(keys)
+            except Exception:
+                pass
     return stats
 
 
@@ -114,6 +124,7 @@ def load_secrets() -> dict:
         "openai_api_key": "",
         "gemini_api_key": "",
         "openrouter_api_key": "",
+        "groq_api_key": "",
         "novalpie_cookie": ""
     }
     if os.path.exists(ENV_FILE_PATH):
@@ -133,6 +144,8 @@ def load_secrets() -> dict:
                             secrets["gemini_api_key"] = val
                         elif key == "OPENROUTER_API_KEY":
                             secrets["openrouter_api_key"] = val
+                        elif key == "GROQ_API_KEY":
+                            secrets["groq_api_key"] = val
                         elif key == "NOVALPIE_COOKIE":
                             secrets["novalpie_cookie"] = val
         except Exception as e:
@@ -145,13 +158,15 @@ def load_secrets() -> dict:
         secrets["gemini_api_key"] = os.environ.get("GEMINI_API_KEY", "")
     if not secrets["openrouter_api_key"]:
         secrets["openrouter_api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+    if not secrets["groq_api_key"]:
+        secrets["groq_api_key"] = os.environ.get("GROQ_API_KEY", "")
     if not secrets["novalpie_cookie"]:
         secrets["novalpie_cookie"] = os.environ.get("NOVALPIE_COOKIE", "")
         
     return secrets
 
 
-def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None = None, openrouter_api_key: str | None = None, novalpie_cookie: str | None = None):
+def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None = None, openrouter_api_key: str | None = None, groq_api_key: str | None = None, novalpie_cookie: str | None = None):
     """
     Save API keys safely to backend/.env.
     """
@@ -162,6 +177,8 @@ def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None =
         secrets["gemini_api_key"] = gemini_api_key
     if openrouter_api_key is not None:
         secrets["openrouter_api_key"] = openrouter_api_key
+    if groq_api_key is not None:
+        secrets["groq_api_key"] = groq_api_key
     if novalpie_cookie is not None:
         secrets["novalpie_cookie"] = novalpie_cookie
         
@@ -172,6 +189,7 @@ def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None =
             f.write(f"OPENAI_API_KEY={secrets.get('openai_api_key', '')}\n")
             f.write(f"GEMINI_API_KEY={secrets.get('gemini_api_key', '')}\n")
             f.write(f"OPENROUTER_API_KEY={secrets.get('openrouter_api_key', '')}\n")
+            f.write(f"GROQ_API_KEY={secrets.get('groq_api_key', '')}\n")
             f.write(f"NOVALPIE_COOKIE={secrets.get('novalpie_cookie', '')}\n")
         print(f"[SECRETS] Secrets saved successfully to {ENV_FILE_PATH}")
     except Exception as e:
@@ -183,7 +201,8 @@ def save_secrets(openai_api_key: str | None = None, gemini_api_key: str | None =
 _key_rotation_counters: dict[str, int] = {
     "gemini": 0,
     "openai": 0,
-    "openrouter": 0
+    "openrouter": 0,
+    "groq": 0
 }
 
 def get_active_api_key(provider: str, gs=None, auto_advance: bool = False) -> str:
@@ -266,6 +285,23 @@ def get_active_api_key(provider: str, gs=None, auto_advance: bool = False) -> st
                         _key_rotation_counters["openrouter"] = (current_count + 1) % 1_000_000
                 return keys[chosen_idx]
         return secrets.get("openrouter_api_key", "")
+
+    elif provider == "groq":
+        if gs and getattr(gs, "groq_api_keys", None):
+            try:
+                keys = json.loads(gs.groq_api_keys)
+            except Exception:
+                keys = []
+            if keys:
+                if hasattr(gs, 'groq_active_key_index') and gs.groq_active_key_index is not None:
+                    chosen_idx = gs.groq_active_key_index % len(keys)
+                else:
+                    current_count = _key_rotation_counters["groq"]
+                    chosen_idx = current_count % len(keys)
+                    if auto_advance:
+                        _key_rotation_counters["groq"] = (current_count + 1) % 1_000_000
+                return keys[chosen_idx]
+        return secrets.get("groq_api_key", "")
     
     return ""
 
@@ -308,6 +344,14 @@ def rotate_api_key(provider: str, gs) -> str:
                 if keys:
                     gs.openrouter_active_key_index = ((gs.openrouter_active_key_index or 0) + 1) % len(keys)
                     _key_rotation_counters["openrouter"] = gs.openrouter_active_key_index
+            except Exception:
+                pass
+        elif provider == "groq" and getattr(gs, "groq_api_keys", None):
+            try:
+                keys = json.loads(gs.groq_api_keys)
+                if keys:
+                    gs.groq_active_key_index = ((getattr(gs, "groq_active_key_index", 0) or 0) + 1) % len(keys)
+                    _key_rotation_counters["groq"] = gs.groq_active_key_index
             except Exception:
                 pass
     else:

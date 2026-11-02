@@ -733,7 +733,9 @@ export default function ReaderPage({
               ? gs.openai_model || "gpt-4o-mini"
               : provider === "openrouter"
                 ? gs.openrouter_model || "deepseek/deepseek-chat"
-                : gs.lm_model || "qwen2.5-7b";
+                : provider === "groq"
+                  ? gs.groq_model || "llama-3.3-70b-versatile"
+                  : gs.lm_model || "qwen2.5-7b";
 
         setGlobalSettings({
           lm_url: gs.lm_url,

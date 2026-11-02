@@ -14,6 +14,7 @@ import {
   Plus,
   Check,
   ListTree,
+  FileText,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { cn, coverImageSrc } from "@/lib/utils";
 import { getApiUrl, invalidateThreadCache } from "@/lib/api";
 import { toast } from "sonner";
 import { TocImportModal, type TocChapter } from "@/components/TocImportModal";
+import { TxtImportModal, type TxtDraftItem } from "@/components/TxtImportModal";
 import { PdfTranslatePanel } from "@/components/PdfTranslatePanel";
 import {
   ImageFolderTranslatePanel,
@@ -169,12 +171,17 @@ export default function TranslatePage({
       return (
         localStorage.getItem("openrouter_model") || "deepseek/deepseek-chat"
       );
+    if (provider === "groq")
+      return (
+        localStorage.getItem("groq_model") || "llama-3.3-70b-versatile"
+      );
     return localStorage.getItem("lm_model") || "";
   });
   const [selectedThreadId, setSelectedThreadId] = useState<string>("new");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const txtCleanerInputRef = useRef<HTMLInputElement>(null);
+  const txtImportInputRef = useRef<HTMLInputElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const threadDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -186,6 +193,10 @@ export default function TranslatePage({
   const [tocChapters, setTocChapters] = useState<TocChapter[]>([]);
   const [tocNovelTitle, setTocNovelTitle] = useState("");
   const [tocBaseUrl, setTocBaseUrl] = useState("");
+
+  const [isTxtImportModalOpen, setIsTxtImportModalOpen] = useState(false);
+  const [txtImportTitle, setTxtImportTitle] = useState("");
+  const [txtImportDrafts, setTxtImportDrafts] = useState<TxtDraftItem[]>([]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -226,6 +237,7 @@ export default function TranslatePage({
         openai: "OpenAI",
         gemini: "Gemini",
         openrouter: "OpenRouter",
+        groq: "Groq Cloud",
       };
       setProviderLabel(providerLabels[provider] || provider);
 
@@ -282,6 +294,18 @@ export default function TranslatePage({
         setAvailableModels(Array.from(new Set([model, ...preset])));
         setSelectedModel(model);
         localStorage.setItem("openrouter_model", model);
+      } else if (provider === "groq") {
+        const model = gs.groq_model || "llama-3.3-70b-versatile";
+        const preset = [
+          "llama-3.3-70b-versatile",
+          "llama-3.1-8b-instant",
+          "mixtral-8x7b-32768",
+          "gemma2-9b-it",
+          "deepseek-r1-distill-llama-70b",
+        ];
+        setAvailableModels(Array.from(new Set([model, ...preset])));
+        setSelectedModel(model);
+        localStorage.setItem("groq_model", model);
       }
     } catch {
       console.error("Failed to fetch data");
@@ -426,6 +450,45 @@ export default function TranslatePage({
     }
   };
 
+  const handleTxtImportUpload = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".txt")) {
+      toast.error("File must be a .txt file.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    setIsProcessing(true);
+
+    try {
+      const res = await fetch(getApiUrl("/api/txt-import/preview"), {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to preview TXT file.");
+      }
+
+      const data = await res.json();
+      if (!data.drafts || data.drafts.length === 0) {
+        toast.error("No valid chapters found in TXT file.");
+        return;
+      }
+
+      setTxtImportTitle(data.title);
+      setTxtImportDrafts(data.drafts);
+      setIsTxtImportModalOpen(true);
+    } catch (err) {
+      const errorMsg =
+        err instanceof Error ? err.message : "TXT import preview failed.";
+      toast.error(errorMsg);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleTocExtract = async (overrideUrl?: string) => {
     const targetUrl = (overrideUrl || inputText).trim();
     if (!targetUrl.startsWith("http")) {
@@ -517,11 +580,18 @@ export default function TranslatePage({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".epub"
+                  accept=".epub,.txt"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) handleEpubUpload(file);
+                    if (file) {
+                      if (file.name.toLowerCase().endsWith(".txt")) {
+                        handleTxtImportUpload(file);
+                      } else {
+                        handleEpubUpload(file);
+                      }
+                      e.target.value = "";
+                    }
                   }}
                 />
                 <input
@@ -534,12 +604,25 @@ export default function TranslatePage({
                     if (file) handleTxtCleanerUpload(file);
                   }}
                 />
+                <input
+                  ref={txtImportInputRef}
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleTxtImportUpload(file);
+                      e.target.value = "";
+                    }
+                  }}
+                />
                 <Button
                   variant="ghost"
                   size="icon"
                   className="rounded-xl h-9 w-9 sm:h-10 sm:w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10 shrink-0"
                   onClick={() => fileInputRef.current?.click()}
-                  title="Upload EPUB"
+                  title="Upload EPUB / TXT" aria-label="Upload EPUB or TXT"
                 >
                   <UploadCloud size={18} />
                 </Button>
@@ -551,6 +634,17 @@ export default function TranslatePage({
                   title="TXT Cleaner"
                 >
                   <Eraser size={18} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-xl h-9 w-9 sm:h-10 sm:w-10 text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--primary)]/10 shrink-0"
+                  onClick={() => txtImportInputRef.current?.click()}
+                  title="Import TXT to EPUB"
+                  aria-label="Import TXT to EPUB"
+                  disabled={isProcessing}
+                >
+                  <FileText size={18} />
                 </Button>
                 <Button
                   variant="ghost"
@@ -636,7 +730,9 @@ export default function TranslatePage({
                                       ? "openai_model"
                                       : p === "openrouter"
                                         ? "openrouter_model"
-                                        : "lm_model";
+                                        : p === "groq"
+                                          ? "groq_model"
+                                          : "lm_model";
                                 localStorage.setItem(storageKey, m);
                                 setOpenModelDropdown(false);
                                 fetch(getApiUrl("/api/settings"), {
@@ -889,6 +985,16 @@ export default function TranslatePage({
         baseUrl={tocBaseUrl}
         onSuccess={(id) => {
           setInputText("");
+          onOpenThread?.(id);
+        }}
+      />
+
+      <TxtImportModal
+        open={isTxtImportModalOpen}
+        onClose={() => setIsTxtImportModalOpen(false)}
+        initialTitle={txtImportTitle}
+        initialDrafts={txtImportDrafts}
+        onSuccess={(id) => {
           onOpenThread?.(id);
         }}
       />

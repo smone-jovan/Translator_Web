@@ -170,9 +170,11 @@ class GlobalSetting(Base):
     openai_model: Mapped[str] = mapped_column(String(200), default="gpt-4o")
     gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
     openrouter_model: Mapped[str] = mapped_column(String(200), default="deepseek/deepseek-chat")
+    groq_model: Mapped[str] = mapped_column(String(200), default="llama-3.3-70b-versatile")
     openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     openrouter_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
+    groq_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     # Multiple API keys (JSON arrays) for key rotation on rate limits
     openai_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
     openai_active_key_index: Mapped[int] = mapped_column(default=0)
@@ -180,6 +182,8 @@ class GlobalSetting(Base):
     gemini_active_key_index: Mapped[int] = mapped_column(default=0)
     openrouter_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
     openrouter_active_key_index: Mapped[int] = mapped_column(default=0)
+    groq_api_keys: Mapped[Optional[str]] = mapped_column(Text, default="[]")
+    groq_active_key_index: Mapped[int] = mapped_column(default=0)
     # Ghost Mode PIN authentication
     ghost_pin: Mapped[str] = mapped_column(String(100), default="03697")
     display_mode: Mapped[str] = mapped_column(String(20), default="translated") # translated, original, both
@@ -569,6 +573,26 @@ def _migrate_engine(engine, db_label: str = "database"):
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN openrouter_active_key_index INTEGER DEFAULT 0"))
             conn.commit()
 
+        if 'groq_model' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_model' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_model VARCHAR(200) DEFAULT 'llama-3.3-70b-versatile'"))
+            conn.commit()
+
+        if 'groq_api_key' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_api_key' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_api_key VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+
+        if 'groq_api_keys' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_api_keys' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_api_keys TEXT DEFAULT '[]'"))
+            conn.commit()
+
+        if 'groq_active_key_index' not in columns_gs:
+            print("[MIGRASI] Menambahkan kolom 'groq_active_key_index' ke dalam tabel global_settings...")
+            conn.execute(text("ALTER TABLE global_settings ADD COLUMN groq_active_key_index INTEGER DEFAULT 0"))
+            conn.commit()
+
         if 'ghost_pin' not in columns_gs:
             print("[MIGRASI] Menambahkan kolom 'ghost_pin' ke dalam tabel global_settings...")
             conn.execute(text("ALTER TABLE global_settings ADD COLUMN ghost_pin VARCHAR(100) DEFAULT '03697'"))
@@ -650,9 +674,9 @@ def init_db(target: str = "all"):
 
 
 _SHARED_SETTINGS_MAIN_TO_GHOST = (
-    "openai_api_key", "gemini_api_key", "openrouter_api_key",
-    "openai_api_keys", "gemini_api_keys", "openrouter_api_keys",
-    "llm_provider", "openai_model", "gemini_model", "openrouter_model",
+    "openai_api_key", "gemini_api_key", "openrouter_api_key", "groq_api_key",
+    "openai_api_keys", "gemini_api_keys", "openrouter_api_keys", "groq_api_keys",
+    "llm_provider", "openai_model", "gemini_model", "openrouter_model", "groq_model",
     "ghost_pin",
     # The Novalpie token lives in the shared backend/.env, so its on/off flag follows main too;
     # otherwise adult novels (ADULT_VERIFICATION_REQUIRED) fail in ghost with the token present.
@@ -663,7 +687,8 @@ _SHARED_SETTINGS_MAIN_TO_GHOST = (
 def sync_shared_settings_to_ghost(gs_main, gs_ghost) -> None:
     """Copies the settings that are shared across workspaces from main onto ghost."""
     for name in _SHARED_SETTINGS_MAIN_TO_GHOST:
-        setattr(gs_ghost, name, getattr(gs_main, name))
+        if hasattr(gs_main, name):
+            setattr(gs_ghost, name, getattr(gs_main, name))
 
 
 def switch_workspace(target: str):

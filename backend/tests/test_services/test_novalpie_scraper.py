@@ -331,6 +331,8 @@ def test_parse_chapter_html_normalizes_image_urls():
         <img src="/assets/novalpie.cc/img2.jpg" alt="Illust 2">
         <p>Text line 3</p>
         <img src="https://jpg.freenovel.sbs/6e278b9fcdf8f356139dfeb0cbe268fe_351694_ori.file" alt="Illust 3">
+        <p>Cover line</p>
+        <img src="https://jpg.freenovel.sbs/cover_351694.jpg" alt="Cover 1">
         <p>Text line 4</p>
         <img src="https://novelkit.top/images/ab12345678_ori.file" alt="Illust 4">
         <p>Text line 5 with placeholder [[img:9876543210_test.file]]</p>
@@ -343,6 +345,7 @@ def test_parse_chapter_html_normalizes_image_urls():
     assert "![Illust 1](https://images.novelpia.com/content/img1.png)" in content
     assert "![Illust 2](https://novalpie.cc/assets/novalpie.cc/img2.jpg)" in content
     assert "![Illust 3](https://images.novelpia.com/imagebox/6e/6e278b9fcdf8f356139dfeb0cbe268fe_351694_ori.file)" in content
+    assert "![Cover 1](https://images.novelpia.com/imagebox/cover/cover_351694.jpg)" in content
     assert "![Illust 4](https://images.novelpia.com/imagebox/ab/ab12345678_ori.file)" in content
     assert "![插图](https://images.novelpia.com/imagebox/98/9876543210_test.file)" in content
     assert "![插图](https://images.novelpia.com/tupian_test.jpg)" in content

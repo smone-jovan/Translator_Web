@@ -999,6 +999,7 @@ export default function BulkTranslateModal({
                 if (provider === "gemini") return "G";
                 if (provider === "openai") return "O";
                 if (provider === "openrouter") return "R";
+                if (provider === "groq") return "Q";
                 return "L";
               })()}
             </Box>
@@ -1029,6 +1030,11 @@ export default function BulkTranslateModal({
                       localStorage.getItem("openrouter_model") ||
                       "deepseek/deepseek-chat"
                     );
+                  if (p === "groq")
+                    return (
+                      localStorage.getItem("groq_model") ||
+                      "llama-3.3-70b-versatile"
+                    );
                   return localStorage.getItem("lm_model") || "Local Model";
                 })()}
               </Typography>
@@ -1058,6 +1064,7 @@ export default function BulkTranslateModal({
                   }
                   if (provider === "openai") return "OpenAI Cloud";
                   if (provider === "openrouter") return "OpenRouter Cloud";
+                  if (provider === "groq") return "Groq Cloud (LPU)";
                   return "LM Studio (Local)";
                 })()}
               </Typography>

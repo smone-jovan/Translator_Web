@@ -864,7 +864,7 @@ class NovalpieAdapter(BaseScraperAdapter):
                 m_hash = re.search(r'jpg\.freenovel\.sbs/([^"\'\)\s]+)', src)
                 if m_hash:
                     f_name = m_hash.group(1)
-                    prefix = f_name[:2]
+                    prefix = "cover" if ("cover" in f_name.lower() or "cover" in src.lower() or "_q_ori" in f_name.lower()) else f_name[:2]
                     src = f"https://images.novelpia.com/imagebox/{prefix}/{f_name}"
 
             allowed_domains = ("novelpia.com", "novalpie.cc", "freenovel.sbs", "cloudflarestorage.com", "novelkit.top")
@@ -909,7 +909,8 @@ class NovalpieAdapter(BaseScraperAdapter):
                 m_h = re.search(r'jpg\.freenovel\.sbs/([^"\'\)\s]+)', u)
                 if m_h:
                     fn = m_h.group(1)
-                    u = f"https://images.novelpia.com/imagebox/{fn[:2]}/{fn}"
+                    prefix = "cover" if ("cover" in fn.lower() or "cover" in u.lower() or "_q_ori" in fn.lower()) else fn[:2]
+                    u = f"https://images.novelpia.com/imagebox/{prefix}/{fn}"
             return f"\n\n![插图]({u})\n\n"
 
         raw_text = re.sub(r'\[图片(?:[:：]|\s)*?(https?://[^\s\]]+|//[^\s\]]+|/[^\s\]]+)\]', _replace_tupian_placeholder, raw_text, flags=re.I)
@@ -926,7 +927,8 @@ class NovalpieAdapter(BaseScraperAdapter):
                 m_h = re.search(r'jpg\.freenovel\.sbs/([^"\'\)\s]+)', u)
                 if m_h:
                     fn = m_h.group(1)
-                    u = f"https://images.novelpia.com/imagebox/{fn[:2]}/{fn}"
+                    prefix = "cover" if ("cover" in fn.lower() or "cover" in u.lower() or "_q_ori" in fn.lower()) else fn[:2]
+                    u = f"https://images.novelpia.com/imagebox/{prefix}/{fn}"
             return f"\n\n![插图]({u})\n\n"
 
         raw_text = re.sub(
@@ -961,8 +963,32 @@ class NovalpieAdapter(BaseScraperAdapter):
             for img in soup.find_all("img"):
                 src = img.get("src") or img.get("data-src") or ""
                 alt = img.get("alt") or "插图"
-                if src:
-                    img.replace_with(f"\n\n![{alt}]({src})\n\n")
+                if src.startswith("//"):
+                    src = "https:" + src
+                elif src.startswith("/") and not src.startswith("//"):
+                    src = f"https://novalpie.cc{src}"
+
+                # Normalize Novalpie / Cloudflare R2 / Novelkit / Freenovel CDN aliases
+                if "photo.1695ffc38d5faf9827f7fbd055757d56.r2.cloudflarestorage.com" in src:
+                    src = src.replace("https://photo.1695ffc38d5faf9827f7fbd055757d56.r2.cloudflarestorage.com/", "https://jpg.freenovel.sbs/")
+                if "novelkit.top/images" in src:
+                    src = src.replace("https://novelkit.top/images/", "https://jpg.freenovel.sbs/")
+                if "jpg.freenovel.sbs" in src:
+                    m_hash = re.search(r'jpg\.freenovel\.sbs/([^"\'\)\s]+)', src)
+                    if m_hash:
+                        fn = m_hash.group(1)
+                        prefix = "cover" if ("cover" in fn.lower() or "cover" in src.lower() or "_q_ori" in fn.lower()) else fn[:2]
+                        src = f"https://images.novelpia.com/imagebox/{prefix}/{fn}"
+
+                allowed_domains = ("novelpia.com", "novalpie.cc", "freenovel.sbs", "cloudflarestorage.com", "novelkit.top")
+                is_valid_img = any(d in src for d in allowed_domains) or bool(re.search(r'\.(?:jpg|jpeg|png|webp|gif|file)(?:\?|$)', src, re.I))
+
+                if src and is_valid_img:
+                    wrapper = img.find_parent(class_="image-wrapper")
+                    if wrapper:
+                        wrapper.replace_with(f"\n\n![{alt}]({src})\n\n")
+                    else:
+                        img.replace_with(f"\n\n![{alt}]({src})\n\n")
             for tag in soup.find_all(["script", "style", "nav", "header", "footer"]):
                 tag.decompose()
             for br in soup.find_all("br"):
@@ -970,6 +996,31 @@ class NovalpieAdapter(BaseScraperAdapter):
             text = soup.get_text()
         else:
             text = raw_text
+
+        # Resolve [[img:hash]] placeholders (Novalpie illustration placeholder pattern)
+        def _clean_replace_img_placeholder(match):
+            h = match.group(1).strip()
+            prefix = "cover" if ("cover" in h.lower() or "_q_ori" in h.lower()) else h[:2]
+            return f"\n\n![插图](https://images.novelpia.com/imagebox/{prefix}/{h})\n\n"
+
+        text = re.sub(r'\[\[(?:img|image):([a-zA-Z0-9_\-\.]+)\]\]', _clean_replace_img_placeholder, text, flags=re.I)
+
+        # Resolve [图片: URL] or [图片 URL] placeholders
+        def _clean_replace_tupian_placeholder(match):
+            u = match.group(1).strip()
+            if u.startswith("//"):
+                u = "https:" + u
+            elif u.startswith("/") and not u.startswith("//"):
+                u = f"https://novalpie.cc{u}"
+            if "jpg.freenovel.sbs" in u:
+                m_h = re.search(r'jpg\.freenovel\.sbs/([^"\'\)\s]+)', u)
+                if m_h:
+                    fn = m_h.group(1)
+                    prefix = "cover" if ("cover" in fn.lower() or "cover" in u.lower() or "_q_ori" in fn.lower()) else fn[:2]
+                    u = f"https://images.novelpia.com/imagebox/{prefix}/{fn}"
+            return f"\n\n![插图]({u})\n\n"
+
+        text = re.sub(r'\[图片(?:[:：]|\s)*?(https?://[^\s\]]+|//[^\s\]]+|/[^\s\]]+)\]', _clean_replace_tupian_placeholder, text, flags=re.I)
 
         lines = []
         for line in text.splitlines():

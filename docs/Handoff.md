@@ -510,6 +510,8 @@ Recent completed platform work (ADR-034 through ADR-125):
 - ADR-123: Settings ↔ Lorebook sync (default 150 terms, bidirectional rebalancing, include_archived/stats/bulk APIs), bilingual presets, mode-aware Glossary Studio
 - ADR-124: Pocket Offline Cache (IndexedDB per workspace), side-effect-free `?track=0` chapter reads, offline/slow-network fallback in the reader
 - ADR-125: audit follow-up (workspace-explicit metadata scraper, ErrorBoundary session key, hermetic tests), Ghost PIN limitation documented, council + judge verification
+- ADR-138: high-resolution web novel illustration pipeline (25MB ceiling), multi-tier defensive URL normalization, Pixiv inverted markdown syntax recovery, and gallery empty-state resiliency
+- ADR-139: reviewable TXT-to-EPUB import pipeline (two-phase preview/confirm, strict CJK/UTF decoding, chapter splitting, N+1 query caching in EPUB export, TOC/volume hierarchy merging, smart upload routing, library import & EPUB export)
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

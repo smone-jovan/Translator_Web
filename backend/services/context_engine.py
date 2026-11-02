@@ -679,10 +679,10 @@ class ContextEngine:
         return cleaned.strip()
 
     @staticmethod
-    def enforce_glossary_locking(db: Session, thread_id: int | None, text: str) -> str:
-        if not text or not thread_id:
-            return text
-        from services.glossary_lock import build_glossary_lock_rules, apply_glossary_lock
+    def get_glossary_lock_rules(db: Session, thread_id: int | None):
+        if not thread_id:
+            return []
+        from services.glossary_lock import build_glossary_lock_rules
 
         entries_stmt = (
             select(LorebookEntry)
@@ -691,10 +691,24 @@ class ContextEngine:
         )
         entries = db.execute(entries_stmt).scalars().all()
         if not entries:
-            return text
+            return []
 
         valid_entries = [e for e in entries if not ContextEngine.is_garbage_lorebook_entry(e.original_term, e.translated_term)]
-        rules = build_glossary_lock_rules(valid_entries)
+        return build_glossary_lock_rules(valid_entries)
+
+    @staticmethod
+    def enforce_glossary_locking(db: Session, thread_id: int | None, text: str, rules: list | None = None) -> str:
+        if not text:
+            return text
+        from services.glossary_lock import apply_glossary_lock
+
+        if rules is None:
+            if not thread_id:
+                return text
+            rules = ContextEngine.get_glossary_lock_rules(db, thread_id)
+
+        if not rules:
+            return text
         return apply_glossary_lock(text, rules)
 
     @staticmethod

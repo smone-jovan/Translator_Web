@@ -43,9 +43,11 @@ class GlobalSettingsUpdate(BaseModel):
     openai_model: str | None = None
     gemini_model: str | None = None
     openrouter_model: str | None = None
+    groq_model: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
     openrouter_api_key: str | None = None
+    groq_api_key: str | None = None
     # Multiple API keys
     openai_api_keys: list[str] | None = None
     openai_active_key_index: int | None = None
@@ -53,6 +55,8 @@ class GlobalSettingsUpdate(BaseModel):
     gemini_active_key_index: int | None = None
     openrouter_api_keys: list[str] | None = None
     openrouter_active_key_index: int | None = None
+    groq_api_keys: list[str] | None = None
+    groq_active_key_index: int | None = None
     # Ghost Mode PIN authentication
     ghost_pin: str | None = None
 
@@ -89,15 +93,19 @@ def get_global_context(db: Session = Depends(get_db)):
         "openai_model": gs.openai_model if gs else "gpt-4o",
         "gemini_model": gs.gemini_model if gs else "gemini-2.5-flash",
         "openrouter_model": gs.openrouter_model if gs else "deepseek/deepseek-chat",
+        "groq_model": getattr(gs, "groq_model", "llama-3.3-70b-versatile") if gs else "llama-3.3-70b-versatile",
         "openai_api_key": mask_secret(secrets.get("openai_api_key", "")),
         "gemini_api_key": mask_secret(secrets.get("gemini_api_key", "")),
         "openrouter_api_key": mask_secret(secrets.get("openrouter_api_key", "")),
+        "groq_api_key": mask_secret(secrets.get("groq_api_key", "")),
         "openai_api_keys": [mask_secret(k) for k in json.loads(gs.openai_api_keys)] if gs and gs.openai_api_keys else [],
         "openai_active_key_index": gs.openai_active_key_index if gs else 0,
         "gemini_api_keys": [mask_secret(k) for k in json.loads(gs.gemini_api_keys)] if gs and gs.gemini_api_keys else [],
         "gemini_active_key_index": gs.gemini_active_key_index if gs else 0,
         "openrouter_api_keys": [mask_secret(k) for k in json.loads(gs.openrouter_api_keys)] if gs and gs.openrouter_api_keys else [],
         "openrouter_active_key_index": gs.openrouter_active_key_index if gs else 0,
+        "groq_api_keys": [mask_secret(k) for k in json.loads(gs.groq_api_keys)] if gs and getattr(gs, "groq_api_keys", None) else [],
+        "groq_active_key_index": getattr(gs, "groq_active_key_index", 0) if gs else 0,
         "ghost_pin": mask_secret(gs.ghost_pin if gs else "03697"),
         "scraper_concurrency": getattr(gs, "scraper_concurrency", 2) if gs else 2,
         "novalpie_auth_enabled": getattr(gs, "novalpie_auth_enabled", 0) if gs else 0,
@@ -171,6 +179,7 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.openai_model is not None: gs.openai_model = req.openai_model
     if req.gemini_model is not None: gs.gemini_model = req.gemini_model
     if req.openrouter_model is not None: gs.openrouter_model = req.openrouter_model
+    if req.groq_model is not None: gs.groq_model = req.groq_model
     if req.ghost_pin is not None and not is_masked_secret(req.ghost_pin):
         if not pin.verify_pin(gs.ghost_pin, req.current_ghost_pin):
             raise HTTPException(status_code=403, detail="PIN lama salah")
@@ -181,13 +190,15 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     real_openai = req.openai_api_key if (req.openai_api_key is not None and not is_masked_secret(req.openai_api_key)) else None
     real_gemini = req.gemini_api_key if (req.gemini_api_key is not None and not is_masked_secret(req.gemini_api_key)) else None
     real_openrouter = req.openrouter_api_key if (req.openrouter_api_key is not None and not is_masked_secret(req.openrouter_api_key)) else None
+    real_groq = req.groq_api_key if (req.groq_api_key is not None and not is_masked_secret(req.groq_api_key)) else None
     real_cookie = req.novalpie_cookie.strip() if (req.novalpie_cookie is not None and not is_masked_secret(req.novalpie_cookie)) else None
 
-    if real_openai is not None or real_gemini is not None or real_openrouter is not None or real_cookie is not None:
+    if real_openai is not None or real_gemini is not None or real_openrouter is not None or real_groq is not None or real_cookie is not None:
         save_secrets(
             openai_api_key=real_openai,
             gemini_api_key=real_gemini,
             openrouter_api_key=real_openrouter,
+            groq_api_key=real_groq,
             novalpie_cookie=real_cookie,
         )
         gs.novalpie_cookie = ""
@@ -216,6 +227,14 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
         gs.openrouter_api_keys = json.dumps(resolve_masked_keys(req.openrouter_api_keys, existing_openrouter))
     if req.openrouter_active_key_index is not None:
         gs.openrouter_active_key_index = req.openrouter_active_key_index
+    if req.groq_api_keys is not None:
+        try:
+            existing_groq = json.loads(gs.groq_api_keys) if getattr(gs, "groq_api_keys", None) else []
+        except Exception:
+            existing_groq = []
+        gs.groq_api_keys = json.dumps(resolve_masked_keys(req.groq_api_keys, existing_groq))
+    if req.groq_active_key_index is not None:
+        gs.groq_active_key_index = req.groq_active_key_index
 
     db.commit()
 

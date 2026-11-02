@@ -25,12 +25,25 @@ IMAGE_RETRY_REPEAT_PENALTY = 1.2
 _IMAGE_DATA_URL = re.compile(r"data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})")
 
 DEFAULT_GLOSSARY_LIMIT = 30
+MAX_INDEX_CONTEXT_CHARS = 300
 _MODEL_MARKER = "indextranslate"
 _TARGET_NAMES = {"indonesian": "印尼语"}
 _FALLBACK_TARGET_NAME = "英语"
 _NOVEL_GENRE = "小说"
 _PLAIN_SUFFIX = "直接输出翻译结果，不要进行任何解释。"
 _CONSTRAINED_SUFFIX = "只输出译文，不要有任何额外说明。"
+_GENRE_MAP = {
+    "cultivation": "修仙小说",
+    "wuxia": "武侠小说",
+    "xuanhuan": "玄幻小说",
+    "urban": "都市小说",
+    "system": "系统小说",
+    "transmigration": "穿越小说",
+    "sci-fi": "科幻小说",
+    "historical": "历史小说",
+    "romance": "言情小说",
+    "horror": "悬疑惊悚小说",
+}
 
 
 def is_index_translate_model(model: str | None) -> bool:
@@ -45,26 +58,49 @@ def _target_name(target_lang: str) -> str:
 
 
 def build_index_translate_prompt(
-    text: str, target_lang: str, glossary: Sequence[GlossaryPair] = ()
+    text: str,
+    target_lang: str,
+    glossary: Sequence[GlossaryPair] = (),
+    genre: str = _NOVEL_GENRE,
+    notes: Sequence[str] = (),
 ) -> str:
     target = _target_name(target_lang)
     source = text.strip()
-    if not glossary:
+    constraints: List[str] = []
+    if glossary:
+        terms = "、".join(f"{original}→{translated}" for original, translated in glossary)
+        constraints.append(f"1. 【硬性要求】专名/术语对照: {terms}")
+
+    for note in notes:
+        clean_note = note.strip()
+        if clean_note:
+            num = len(constraints) + 1
+            constraints.append(f"{num}. 【注意】{clean_note}")
+
+    if not constraints:
         return f"请将以下文本翻译为{target}，{_PLAIN_SUFFIX}\n\n{source}"
 
-    terms = "、".join(f"{original}→{translated}" for original, translated in glossary)
+    joined_constraints = "\n".join(constraints)
+    genre_label = genre.strip() or _NOVEL_GENRE
     return (
-        f"请将以下{_NOVEL_GENRE}翻译成{target}，并且严格遵循所有约束要求。\n\n"
+        f"请将以下{genre_label}翻译成{target}，并且严格遵循所有约束要求。\n\n"
         f"【源文】\n{source}\n\n"
-        f"【约束要求】\n1. 【硬性要求】专名/术语对照: {terms}\n\n"
+        f"【约束要求】\n{joined_constraints}\n\n"
         f"{_CONSTRAINED_SUFFIX}"
     )
 
 
 def build_index_translate_messages(
-    text: str, target_lang: str, glossary: Sequence[GlossaryPair] = ()
+    text: str,
+    target_lang: str,
+    glossary: Sequence[GlossaryPair] = (),
+    genre: str = _NOVEL_GENRE,
+    notes: Sequence[str] = (),
 ) -> List[Dict[str, str]]:
-    return [{"role": "user", "content": build_index_translate_prompt(text, target_lang, glossary)}]
+    return [{
+        "role": "user",
+        "content": build_index_translate_prompt(text, target_lang, glossary, genre=genre, notes=notes),
+    }]
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -148,18 +184,65 @@ def build_index_translate_image_messages(image_data_url: str, target_lang: str) 
     ]
 
 
+def get_index_genre(db, thread_id: int | None) -> str:
+    """Detect specific novel genre (e.g. 修仙小说) or fallback to generic '小说'."""
+    if not db or not thread_id:
+        return _NOVEL_GENRE
+    from sqlalchemy import select
+    from database import Thread
+    from services.prompt_templates import detect_primary_genre
+
+    thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+    if not thread:
+        return _NOVEL_GENRE
+    detected = detect_primary_genre(thread.genres, thread.tags)
+    return _GENRE_MAP.get(detected.lower(), _NOVEL_GENRE)
+
+
+def collect_context_notes(
+    db,
+    thread_id: int | None,
+    custom_instructions: str | None = None,
+    max_chars: int = MAX_INDEX_CONTEXT_CHARS,
+) -> List[str]:
+    """Collect brief context notes (style guide, custom instructions) formatted for Index-Translate constraints."""
+    notes: List[str] = []
+    if custom_instructions and custom_instructions.strip():
+        notes.append(custom_instructions.strip()[:max_chars])
+
+    if db and thread_id:
+        from sqlalchemy import select
+        from database import Thread
+
+        thread = db.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+        if thread:
+            if thread.style_guide and thread.style_guide.strip():
+                notes.append(thread.style_guide.strip()[:max_chars])
+            elif thread.thread_context and thread.thread_context.strip():
+                notes.append(thread.thread_context.strip()[:max_chars])
+
+    return notes
+
+
 def collect_glossary_pairs(
-    db, thread_id: int | None, text: str, limit: int = DEFAULT_GLOSSARY_LIMIT
+    db, thread_id: int | None, text: str, limit: int | None = None
 ) -> List[GlossaryPair]:
     """Lorebook terms that actually occur in `text`, longest first. Small models only get relevant terms."""
-    if not thread_id or not text:
+    if not thread_id or not text or db is None:
         return []
 
     # Imported here: context_engine pulls in the AI package at import time.
     from sqlalchemy import select
 
-    from database import LorebookEntry
+    from database import LorebookEntry, GlobalSetting
     from services.context_engine import ContextEngine
+
+    if limit is None:
+        try:
+            gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+            limit = gs.max_context_terms if (gs and gs.max_context_terms) else DEFAULT_GLOSSARY_LIMIT
+        except Exception:
+            limit = DEFAULT_GLOSSARY_LIMIT
 
     entries = db.execute(
         select(LorebookEntry).where(

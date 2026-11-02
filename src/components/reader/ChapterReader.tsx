@@ -1,4 +1,11 @@
-import { useState, useRef, useEffect, useEffectEvent, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useCallback,
+} from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -16,8 +23,11 @@ import {
   Palette,
   RefreshCw,
   BookOpen,
+  Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import DictionaryPopup from "./DictionaryPopup";
+import TextToSpeechPlayer from "./TextToSpeechPlayer";
 import {
   getApiUrl,
   getActiveWorkspace,
@@ -141,9 +151,83 @@ export default function ChapterReader({
     () => Number(localStorage.getItem("reader_line_height")) || 1.8
   );
 
+  const [activeDictionary, setActiveDictionary] = useState<{
+    word: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [selectionMenu, setSelectionMenu] = useState<{
+    word: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [isTtsOpen, setIsTtsOpen] = useState(false);
+
+  const speakWord = useCallback(
+    (word: string) => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(word);
+        u.rate = 0.9;
+        if (displayMode === "translated") {
+          u.lang = "id-ID";
+        } else if (/[\u3040-\u30ff]/.test(word)) {
+          u.lang = "ja-JP";
+        } else if (/[\u4e00-\u9fff]/.test(word)) {
+          u.lang = "zh-CN";
+        } else if (/[\uac00-\ud7af]/.test(word)) {
+          u.lang = "ko-KR";
+        } else {
+          u.lang = "en-US";
+        }
+        window.speechSynthesis.speak(u);
+      }
+    },
+    [displayMode]
+  );
+
+  const handleSelectionCheck = useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) {
+      return;
+    }
+    const rawText = sel.toString().trim();
+    if (rawText.length >= 1 && rawText.length <= 60 && !rawText.includes("\n")) {
+      try {
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setSelectionMenu({
+            word: rawText,
+            position: {
+              x: rect.left + rect.width / 2,
+              y: rect.top - 8,
+            },
+          });
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleDocSelection = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        setSelectionMenu(null);
+      }
+    };
+    document.addEventListener("selectionchange", handleDocSelection);
+    return () => {
+      document.removeEventListener("selectionchange", handleDocSelection);
+    };
+  }, []);
+
   if (chapterContent !== prevChapterContent) {
     setIsBookmarked(chapterContent?.is_bookmarked || false);
     setPrevChapterContent(chapterContent);
+    setSelectionMenu(null);
+    setActiveDictionary(null);
   }
 
   const handleDismissWarning = async () => {
@@ -1079,7 +1163,24 @@ export default function ChapterReader({
         </div>
 
         {/* Right Controls: Appearance Popover & Chapter Navigation */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* TTS Player Toggle */}
+          <Button
+            variant={isTtsOpen ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => setIsTtsOpen((prev) => !prev)}
+            className={`rounded-xl border-[var(--border)] h-8 px-2 sm:px-2.5 gap-1.5 text-xs font-bold shadow-sm ${
+              isTtsOpen
+                ? "text-[var(--primary)] border-[var(--primary)]/50 bg-[var(--primary)]/10"
+                : ""
+            }`}
+            title="Dengarkan Teks Bab Ini (Text-to-Speech)"
+            aria-label="Text to speech"
+          >
+            <Volume2 className="w-3.5 h-3.5 text-[var(--primary)]" />
+            <span className="hidden sm:inline text-[11px] font-black">TTS</span>
+          </Button>
+
           {/* In-Reader Appearance Popover Toggle */}
           <div className="relative">
             <Button
@@ -1393,6 +1494,8 @@ export default function ChapterReader({
               onScroll={handleScrollOriginal}
               onPointerDown={handleReaderPointerDown}
               onPointerMove={handleReaderPointerMove}
+              onMouseUp={handleSelectionCheck}
+              onTouchEnd={handleSelectionCheck}
               onWheel={() => {
                 userInteractedRef.current = true;
               }}
@@ -1562,6 +1665,8 @@ export default function ChapterReader({
               onScroll={handleScrollTranslated}
               onPointerDown={handleReaderPointerDown}
               onPointerMove={handleReaderPointerMove}
+              onMouseUp={handleSelectionCheck}
+              onTouchEnd={handleSelectionCheck}
               onWheel={() => {
                 userInteractedRef.current = true;
               }}
@@ -1885,6 +1990,79 @@ export default function ChapterReader({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Quick Selection Floating Menu (Kamus & Pronounce) */}
+      {selectionMenu && !activeDictionary && (
+        <div
+          role="toolbar"
+          aria-label="Selection Actions"
+          style={{
+            position: "fixed",
+            left: `${Math.max(12, Math.min(selectionMenu.position.x - 70, typeof window !== "undefined" ? window.innerWidth - 160 : 500))}px`,
+            top: `${Math.max(12, selectionMenu.position.y - 40)}px`,
+            zIndex: 60,
+          }}
+          className="bg-[var(--card)]/95 backdrop-blur-xl border border-[var(--border)] rounded-xl shadow-2xl px-2 py-1 flex items-center gap-1.5 text-xs animate-in fade-in zoom-in-95 duration-150 select-none"
+        >
+          <button
+            onClick={() => {
+              setActiveDictionary({
+                word: selectionMenu.word,
+                position: selectionMenu.position,
+              });
+              setSelectionMenu(null);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-[var(--primary)] hover:bg-[var(--primary)]/10 transition-colors cursor-pointer"
+            title="Cari definisi kata di kamus"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Kamus</span>
+          </button>
+          <div className="w-px h-3.5 bg-[var(--border)]" />
+          <button
+            onClick={() => {
+              speakWord(selectionMenu.word);
+              setSelectionMenu(null);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors cursor-pointer"
+            title="Dengarkan pengucapan kata"
+          >
+            <Volume2 className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span>Dengar</span>
+          </button>
+        </div>
+      )}
+
+      {/* Free Dictionary Pop-up Modal */}
+      {activeDictionary && (
+        <DictionaryPopup
+          word={activeDictionary.word}
+          position={activeDictionary.position}
+          onClose={() => setActiveDictionary(null)}
+          onSpeakWord={speakWord}
+        />
+      )}
+
+      {/* Chapter Text-to-Speech Player */}
+      {isTtsOpen && (
+        <TextToSpeechPlayer
+          text={
+            displayMode === "original"
+              ? chapterContent?.content_original || ""
+              : translatedText ||
+                chapterContent?.content_translated ||
+                chapterContent?.content_original ||
+                ""
+          }
+          title={
+            chapterContent?.title_translated ||
+            chapterContent?.title_original ||
+            `Bab ${selectedChapterIdx + 1}`
+          }
+          displayMode={displayMode}
+          onClose={() => setIsTtsOpen(false)}
+        />
       )}
     </div>
   );

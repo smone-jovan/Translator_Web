@@ -50,6 +50,8 @@ class AIProviderFactory:
                         provider = "openrouter"
                     elif is_trusted_provider_url("openai", base_url, gs):
                         provider = "openai"
+                    elif is_trusted_provider_url("groq", base_url):
+                        provider = "groq"
                     elif "localhost" in base_url or "127.0.0.1" in base_url:
                         provider = "lm_studio"
 
@@ -112,8 +114,19 @@ class AIProviderFactory:
                 if is_trusted_provider_url("openai", base_url, gs):
                     resolved_url = base_url
                 return OpenAIAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
+
+            # 4. Groq Cloud Provider
+            elif provider == "groq":
+                from services.ai.groq import GroqAdapter
+                is_groq_model = model and any(x in model.lower() for x in ["llama", "groq", "mixtral", "gemma", "deepseek", "qwen"])
+                resolved_model = model if is_groq_model else (getattr(gs, "groq_model", None) if gs else "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile"
+                resolved_key = api_key or get_active_api_key("groq", gs) or "gsk-dummy"
+                resolved_url = OFFICIAL_PROVIDER_URLS["groq"]
+                if is_trusted_provider_url("groq", base_url):
+                    resolved_url = base_url
+                return GroqAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
                 
-            # 4. LM Studio / Local LLM Provider
+            # 5. LM Studio / Local LLM Provider
             else:
                 from services.ai.lm_studio import LMStudioAdapter
                 resolved_url = base_url or (gs.lm_url if gs else "http://localhost:1234")

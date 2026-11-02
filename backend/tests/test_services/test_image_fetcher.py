@@ -37,6 +37,17 @@ def test_referer_for_uses_target_origin_unless_overridden():
 
 
 @pytest.mark.asyncio
+async def test_protocol_relative_url_normalized(monkeypatch):
+    monkeypatch.setattr(imf, "validate_external_url", lambda u: None)
+    t1 = AsyncMock(return_value=imf.TierResult(PNG, False))
+    monkeypatch.setattr(imf, "_fetch_httpx", t1)
+
+    result = await imf.fetch_image_adaptive("//images.novelpia.com/img.png")
+    assert result == (PNG, "png")
+    assert t1.call_args[0][0] == "https://images.novelpia.com/img.png"
+
+
+@pytest.mark.asyncio
 async def test_tier1_success_does_not_escalate(monkeypatch):
     monkeypatch.setattr(imf, "validate_external_url", lambda u: None)
     t1 = AsyncMock(return_value=imf.TierResult(PNG, False))

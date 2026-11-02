@@ -11,11 +11,13 @@ OFFICIAL_PROVIDER_HOSTS = {
     "gemini": "generativelanguage.googleapis.com",
     "openrouter": "openrouter.ai",
     "openai": "api.openai.com",
+    "groq": "api.groq.com",
 }
 OFFICIAL_PROVIDER_URLS = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "openrouter": "https://openrouter.ai/api/v1",
     "openai": "https://api.openai.com/v1",
+    "groq": "https://api.groq.com/openai/v1",
 }
 
 
@@ -92,6 +94,16 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
             return requested_model
         return saved_or_model
 
+    if provider == "groq":
+        saved_groq = getattr(gs, "groq_model", None) or "llama-3.3-70b-versatile"
+        if (
+            requested_model
+            and requested_model != local_lm_model
+            and any(x in requested_model.lower() for x in ["llama", "groq", "mixtral", "gemma", "deepseek"])
+        ):
+            return requested_model
+        return saved_groq
+
     if requested_model:
         return requested_model
     return local_lm_model
@@ -134,6 +146,11 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
         if is_trusted_provider_url("openrouter", req_clean):
             return req_clean
         return OFFICIAL_PROVIDER_URLS["openrouter"]
+
+    if provider == "groq":
+        if is_trusted_provider_url("groq", req_clean):
+            return req_clean
+        return OFFICIAL_PROVIDER_URLS["groq"]
 
     return local_lm_url
 

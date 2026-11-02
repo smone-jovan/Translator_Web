@@ -11,6 +11,7 @@ error transport). Miss definitif (404/410) langsung berhenti.
 """
 
 import base64
+import re
 from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
@@ -25,7 +26,7 @@ from services.security import (
     validate_external_url,
 )
 
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 _BLOCK_STATUSES = frozenset({403, 429, 503})
 _BROWSER_TIMEOUT_MS = 45000
 _USER_AGENT = (
@@ -78,6 +79,17 @@ def sniff_raster_ext(data: bytes) -> Optional[str]:
     return None
 
 
+def normalize_image_url(url: Optional[str]) -> str:
+    """Strip duplicate schemes and convert protocol-relative // to https:."""
+    if not url:
+        return ""
+    u = url.strip()
+    u = re.sub(r'^(?:https?:)+(//)', r'https:\1', u, flags=re.IGNORECASE)
+    if u.startswith("//"):
+        u = f"https:{u}"
+    return u
+
+
 def is_image_bytes(data: bytes) -> bool:
     """Sniff magic bytes. Berbeda dari guess_image_ext_from_bytes, tidak default ke jpeg."""
     return sniff_raster_ext(data) is not None
@@ -118,7 +130,7 @@ async def _fetch_httpx(url: str, referer: Optional[str]) -> TierResult:
     try:
         async with create_safe_async_client(
             follow_redirects=True,
-            timeout=httpx.Timeout(12.0, connect=4.0),
+            timeout=httpx.Timeout(25.0, connect=5.0),
             max_response_bytes=MAX_IMAGE_BYTES,
         ) as client:
             resp = await client.get(url, headers=_headers(url, referer))
@@ -198,6 +210,7 @@ async def fetch_image_adaptive(
     Ambil gambar dari URL eksternal. Mengembalikan (bytes, ext) atau None.
     HTTPException(400) dari validasi SSRF sengaja dilempar ulang.
     """
+    url = normalize_image_url(url)
     validate_external_url(url)
 
     result = await _fetch_httpx(url, referer)

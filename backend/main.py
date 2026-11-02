@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from services.image_fetcher import sniff_raster_ext
 
-from routers import scrape, epub, translate, image_translate, pdf_translate, image_batch_translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images
+from routers import scrape, epub, translate, image_translate, pdf_translate, image_batch_translate, threads, lorebook, context, export, settings, polish, batch, tools, relationships, discovery, toc, system, images, txt_import
 
 
 @asynccontextmanager
@@ -190,3 +190,4 @@ app.include_router(discovery.router)
 app.include_router(toc.router)
 app.include_router(system.router)
 app.include_router(images.router)
+app.include_router(txt_import.router)

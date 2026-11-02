@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { RefreshCw, ImageOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, normalizeImageUrl } from "@/lib/utils";
 
 interface SafeReaderImageProps {
   src: string;
@@ -19,9 +19,10 @@ export default function SafeReaderImage({
   const [retryKey, setRetryKey] = useState(0);
 
   const getEffectiveSrc = useCallback(() => {
-    if (retryKey === 0) return src;
-    const sep = src.includes("?") ? "&" : "?";
-    return `${src}${sep}force=true&t=${retryKey}`;
+    const baseSrc = normalizeImageUrl(src);
+    if (retryKey === 0) return baseSrc;
+    const sep = baseSrc.includes("?") ? "&" : "?";
+    return `${baseSrc}${sep}force=true&t=${retryKey}`;
   }, [src, retryKey]);
 
   const handleRetry = (e: React.MouseEvent) => {

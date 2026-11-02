@@ -217,4 +217,90 @@ def test_export_enforces_glossary_locking(client, db_session):
     assert "Rahmat pergi ke pasar dan membeli pedang." in ch_html
     assert "Luo Yi" not in ch_html
 
+def test_export_epub_escapes_xhtml_title(client, db_session):
+    import zipfile
+    import io
+
+    test_thread = Thread(title="XHTML Escape Test", source_type="syosetu")
+    db_session.add(test_thread)
+    db_session.commit()
+    db_session.refresh(test_thread)
+
+    xss_title = "<script>alert('xss')</script> & Chapter 1"
+    ch = Chapter(
+        thread_id=test_thread.id,
+        title_original=xss_title,
+        title_translated=xss_title,
+        content_translated="Normal safe content paragraph.",
+        order=0
+    )
+    db_session.add(ch)
+    db_session.commit()
+    db_session.refresh(ch)
+
+    res = client.post(
+        f"/api/threads/{test_thread.id}/export",
+        json={
+            "format": "epub",
+            "title": "Novel with <Special> & Title",
+            "author": "Author <One>",
+            "chapter_ids": [ch.id],
+            "hide_thoughts": False
+        }
+    )
+    assert res.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(res.content))
+    ch_html = zf.read("EPUB/chapter_1.xhtml").decode("utf-8")
+    assert "<script>alert" not in ch_html
+    assert "&lt;script&gt;alert" in ch_html
+    assert "&amp; Chapter 1</h1>" in ch_html
+
+    toc_html = zf.read("EPUB/toc_page.xhtml").decode("utf-8")
+    assert "<script>alert" not in toc_html
+    assert "&lt;script&gt;alert" in toc_html
+    assert "&lt;Special&gt; &amp; Title" in toc_html
+
+def test_export_caches_glossary_rules_outside_loop(client, db_session, monkeypatch):
+    from services.context_engine import ContextEngine
+
+    test_thread = Thread(title="Cache Rules Novel", source_type="syosetu")
+    db_session.add(test_thread)
+    db_session.commit()
+    db_session.refresh(test_thread)
+
+    chapters = [
+        Chapter(thread_id=test_thread.id, title_original=f"Ch {i}", content_translated=f"Body {i}", order=i)
+        for i in range(5)
+    ]
+    db_session.add_all(chapters)
+    db_session.commit()
+    for ch in chapters:
+        db_session.refresh(ch)
+
+    call_count = 0
+    orig_get_rules = ContextEngine.get_glossary_lock_rules
+
+    def spied_get_rules(db, thread_id):
+        nonlocal call_count
+        call_count += 1
+        return orig_get_rules(db, thread_id)
+
+    monkeypatch.setattr(ContextEngine, "get_glossary_lock_rules", spied_get_rules)
+
+    # Export 5 chapters to EPUB
+    res = client.post(
+        f"/api/threads/{test_thread.id}/export",
+        json={
+            "format": "epub",
+            "title": "Cached Novel",
+            "author": "Tester",
+            "chapter_ids": [c.id for c in chapters],
+            "hide_thoughts": False
+        }
+    )
+    assert res.status_code == 200
+    # Must only call get_glossary_lock_rules ONCE for all 5 chapters, not 2*5 = 10 times!
+    assert call_count == 1
+
+
 
