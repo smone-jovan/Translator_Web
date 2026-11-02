@@ -104,6 +104,12 @@ def _merge_continuation(partial: str, continuation: str) -> str | None:
     return base + separator + continuation.lstrip(" ")
 
 
+def _is_retryable_recovery_error(exc: Exception) -> bool:
+    """Check if the error is a transient upstream/network failure that must trigger a chapter retry."""
+    err_str = str(exc).lower()
+    return any(p in err_str for p in ("429", "503", "502", "504", "rate limit", "ratelimit", "too many requests", "resource_exhausted", "quota", "timeout", "connection"))
+
+
 async def complete_truncated_translation(
     original: str,
     raw_translation: str,
@@ -118,6 +124,9 @@ async def complete_truncated_translation(
         try:
             continuation = await continue_fn(text)
         except Exception as exc:
+            if _is_retryable_recovery_error(exc):
+                logger.error("[RECOVERY] continuation failed with retryable error: %s; re-raising to retry chapter", exc)
+                raise
             logger.warning("[RECOVERY] continuation failed, keeping partial translation: %s", exc)
             break
         continuation = limit_new_paragraphs(original, clean_fn(text), continuation or "")
@@ -148,6 +157,9 @@ async def retry_if_summarized(
     try:
         retried = await retry_fn()
     except Exception as exc:
+        if _is_retryable_recovery_error(exc):
+            logger.error("[RECOVERY] anti-summary retry failed with retryable error: %s; re-raising to retry chapter", exc)
+            raise
         logger.warning("[RECOVERY] anti-summary retry failed, keeping original translation: %s", exc)
         return raw_translation, False
     if not retried or not retried.strip():

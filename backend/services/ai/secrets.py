@@ -60,16 +60,20 @@ class QuotaExhaustedError(Exception):
     """Raised when all available API keys for a provider have hit their RPD quota limits."""
     pass
 
-# Global RAM-based blacklist for API keys that hit their daily RPD limit
+# Global RAM-based blacklist for API keys that hit their daily RPD/TPD limit
 # Format: { "api_key::model_name": "YYYY-MM-DD" }
 exhausted_gemini_keys: dict[str, str] = {}
+exhausted_groq_keys: dict[str, str] = {}
 
 def _clear_stale_exhausted_keys():
     """Clears keys from the blacklist if their stored date is no longer today."""
     today = datetime.date.today().isoformat()
-    stale_keys = [k for k, date_str in exhausted_gemini_keys.items() if date_str != today]
-    for k in stale_keys:
+    stale_gemini = [k for k, date_str in exhausted_gemini_keys.items() if date_str != today]
+    for k in stale_gemini:
         del exhausted_gemini_keys[k]
+    stale_groq = [k for k, date_str in exhausted_groq_keys.items() if date_str != today]
+    for k in stale_groq:
+        del exhausted_groq_keys[k]
 
 def mark_key_exhausted(provider: str, api_key: str, model: str = ""):
     """Marks an API key as exhausted for the current day."""
@@ -79,6 +83,12 @@ def mark_key_exhausted(provider: str, api_key: str, model: str = ""):
         exhausted_gemini_keys[dict_key] = today
         model_str = f" for model '{model}'" if model else ""
         print(f"[QUOTA] Gemini API key starting with '{api_key[:8]}...' has been marked as EXHAUSTED{model_str} until {today} ends.")
+    elif provider == "groq" and api_key:
+        today = datetime.date.today().isoformat()
+        dict_key = f"{api_key}::{model}" if model else api_key
+        exhausted_groq_keys[dict_key] = today
+        model_str = f" for model '{model}'" if model else ""
+        print(f"[QUOTA] Groq API key starting with '{api_key[:8]}...' has been marked as EXHAUSTED{model_str} until {today} ends.")
 
 def get_key_stats(provider: str, gs) -> dict:
     """Returns total keys and currently exhausted keys for a provider."""
@@ -101,7 +111,25 @@ def get_key_stats(provider: str, gs) -> dict:
                 dict_key = f"{single_key}::{model}" if model else single_key
                 if dict_key in exhausted_gemini_keys:
                     stats["exhausted"] = 1
-    elif provider in ("openai", "openrouter", "groq") and gs:
+    elif provider == "groq":
+        _clear_stale_exhausted_keys()
+        model = getattr(gs, "groq_model", "") if gs else ""
+        raw_keys = getattr(gs, "groq_api_keys", None) if gs else None
+        if raw_keys:
+            try:
+                keys = json.loads(raw_keys)
+                if isinstance(keys, list) and len(keys) > 0:
+                    stats["total"] = len(keys)
+                    stats["exhausted"] = sum(1 for k in keys if (f"{k}::{model}" if model else k) in exhausted_groq_keys)
+            except Exception:
+                pass
+        else:
+            single_key = load_secrets().get("groq_api_key", "")
+            if single_key:
+                dict_key = f"{single_key}::{model}" if model else single_key
+                if dict_key in exhausted_groq_keys:
+                    stats["exhausted"] = 1
+    elif provider in ("openai", "openrouter") and gs:
         attr = f"{provider}_api_keys"
         raw_keys = getattr(gs, attr, None)
         if raw_keys:
@@ -287,21 +315,42 @@ def get_active_api_key(provider: str, gs=None, auto_advance: bool = False) -> st
         return secrets.get("openrouter_api_key", "")
 
     elif provider == "groq":
+        _clear_stale_exhausted_keys()
+        model = getattr(gs, "groq_model", "") if gs else ""
         if gs and getattr(gs, "groq_api_keys", None):
             try:
                 keys = json.loads(gs.groq_api_keys)
             except Exception:
                 keys = []
             if keys:
+                def _is_healthy_groq(k):
+                    return (f"{k}::{model}" if model else k) not in exhausted_groq_keys
+
+                healthy_keys = [k for k in keys if _is_healthy_groq(k)]
+                if not healthy_keys:
+                    model_str = f" for model '{model}'" if model else ""
+                    raise QuotaExhaustedError(f"All available Groq API keys ({len(keys)} keys) have hit their daily quota limit{model_str}.")
+
                 if hasattr(gs, 'groq_active_key_index') and gs.groq_active_key_index is not None:
-                    chosen_idx = gs.groq_active_key_index % len(keys)
+                    start = gs.groq_active_key_index % len(keys)
                 else:
                     current_count = _key_rotation_counters["groq"]
-                    chosen_idx = current_count % len(keys)
+                    start = current_count % len(keys)
                     if auto_advance:
                         _key_rotation_counters["groq"] = (current_count + 1) % 1_000_000
-                return keys[chosen_idx]
-        return secrets.get("groq_api_key", "")
+
+                for offset in range(len(keys)):
+                    candidate = keys[(start + offset) % len(keys)]
+                    if _is_healthy_groq(candidate):
+                        return candidate
+
+        single_key = secrets.get("groq_api_key", "")
+        if single_key:
+            dict_key = f"{single_key}::{model}" if model else single_key
+            if dict_key in exhausted_groq_keys:
+                model_str = f" for model '{model}'" if model else ""
+                raise QuotaExhaustedError(f"The single Groq API key has hit its daily quota limit{model_str}.")
+        return single_key
     
     return ""
 
@@ -350,7 +399,14 @@ def rotate_api_key(provider: str, gs) -> str:
             try:
                 keys = json.loads(gs.groq_api_keys)
                 if keys:
-                    gs.groq_active_key_index = ((getattr(gs, "groq_active_key_index", 0) or 0) + 1) % len(keys)
+                    _clear_stale_exhausted_keys()
+                    model = getattr(gs, "groq_model", "") or ""
+                    idx = getattr(gs, "groq_active_key_index", 0) or 0
+                    for _ in range(len(keys)):
+                        idx = (idx + 1) % len(keys)
+                        if (f"{keys[idx]}::{model}" if model else keys[idx]) not in exhausted_groq_keys:
+                            break
+                    gs.groq_active_key_index = idx
                     _key_rotation_counters["groq"] = gs.groq_active_key_index
             except Exception:
                 pass

@@ -95,11 +95,14 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
         return saved_or_model
 
     if provider == "groq":
-        saved_groq = getattr(gs, "groq_model", None) or "llama-3.3-70b-versatile"
+        saved_groq = getattr(gs, "groq_model", None) or "openai/gpt-oss-120b"
         if (
             requested_model
             and requested_model != local_lm_model
-            and any(x in requested_model.lower() for x in ["llama", "groq", "mixtral", "gemma", "deepseek"])
+            and any(
+                x in requested_model.lower()
+                for x in ["llama", "groq", "mixtral", "gemma", "deepseek", "qwen", "gpt-oss", "allam", "orpheus"]
+            )
         ):
             return requested_model
         return saved_groq
@@ -158,12 +161,27 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
 def get_chapter_translation_max_tokens(gs: GlobalSetting | None = None) -> int | None:
     if not gs:
         return DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS
-    # Gemii models: no hard cap, but flash-lite has ~16K output limit
+    # Gemini models: no hard cap, but flash-lite has ~16K output limit
     if gs.llm_provider == "gemini":
         # gemini-3.1-flash-lite has a hard ~16K output token limit
         if gs.gemini_model and "gemini-3.1-flash-lite" in gs.gemini_model.lower():
             return 14000  # Leave buffer under 16K limit
         return None
+
+    # Groq models: strict per-model token limits on free/on-demand tier
+    if gs.llm_provider == "groq":
+        groq_m = (getattr(gs, "groq_model", "") or "").lower()
+        # Qwen models on Groq Free/On-Demand have a hard 1,000 OTPM ceiling
+        if "qwen" in groq_m:
+            return 900
+        if "allam" in groq_m:
+            return 4096
+        # gpt-oss-120b / gpt-oss-20b and others: limit to 4096 to prevent prompt+output exceeding 8k TPM ceiling
+        if getattr(gs, "chapter_token_cap_enabled", 1) != 1:
+            return 4096
+        cap = getattr(gs, "chapter_token_cap", 4096) or 4096
+        return min(int(cap), 4096)
+
     if getattr(gs, "chapter_token_cap_enabled", 1) != 1:
         return None
     cap = getattr(gs, "chapter_token_cap", DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS) or DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS
@@ -195,6 +213,10 @@ _MODEL_CONTEXT_WINDOWS = {
     "o1": 200_000,
     "o3": 200_000,
     "o3-mini": 200_000,
+    # Groq active models
+    "openai/gpt-oss-120b": 128_000,
+    "openai/gpt-oss-20b": 128_000,
+    "qwen/qwen3.8-27b": 32_000,
     # Local LLM defaults (conservative)
     "qwen": 32_000,
     "deepseek": 128_000,
@@ -215,6 +237,11 @@ def get_context_scale_for_model(model: str | None = None) -> float:
         return 1.0
 
     model_lower = model.lower()
+
+    # Groq models operate under strict TPM/ITPM rate limit buckets on on-demand tier (8,000 TPM).
+    # Inflating context to 4.0x causes requests to consume the entire minute's quota and trigger 429.
+    if any(k in model_lower for k in ["groq", "gpt-oss", "qwen", "allam", "orpheus"]):
+        return 1.0
 
     # Look up the context window
     context_window = None

@@ -93,7 +93,7 @@ def get_global_context(db: Session = Depends(get_db)):
         "openai_model": gs.openai_model if gs else "gpt-4o",
         "gemini_model": gs.gemini_model if gs else "gemini-2.5-flash",
         "openrouter_model": gs.openrouter_model if gs else "deepseek/deepseek-chat",
-        "groq_model": getattr(gs, "groq_model", "llama-3.3-70b-versatile") if gs else "llama-3.3-70b-versatile",
+        "groq_model": getattr(gs, "groq_model", "openai/gpt-oss-120b") if gs else "openai/gpt-oss-120b",
         "openai_api_key": mask_secret(secrets.get("openai_api_key", "")),
         "gemini_api_key": mask_secret(secrets.get("gemini_api_key", "")),
         "openrouter_api_key": mask_secret(secrets.get("openrouter_api_key", "")),

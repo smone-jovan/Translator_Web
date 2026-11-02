@@ -718,6 +718,15 @@ class BackgroundTranslator:
             except Exception as e:
                 # For retryable errors (429/503/etc), re-raise so batch worker can retry
                 if _is_retryable_error(e):
+                    try:
+                        with get_session(workspace) as db:
+                            ch = db.get(Chapter, chapter_id)
+                            if ch and ch.translation_status != "done":
+                                ch.content_translated = None
+                                ch.translation_status = "idle"
+                                db.commit()
+                    except Exception:
+                        pass
                     raise
                 print(f"[ERROR] Failed to translate chapter {chapter_id}: {e}")
                 with get_session(workspace) as db:
@@ -977,13 +986,21 @@ class BackgroundTranslator:
                 required_delay = 6.2  # 10 RPM = 6.0s (Safety margin: 6.2s)
             else:
                 required_delay = 12.2  # 5 RPM models (gemini-3.6-flash, gemini-3.5-flash, gemini-3-flash, gemini-2.5-flash, etc.)
+        elif llm_provider == "groq":
+            m_lower = (resolved_model or "").lower()
+            if "qwen" in m_lower:
+                required_delay = 12.0
+            elif "allam" in m_lower:
+                required_delay = 5.0
+            else:
+                required_delay = 6.0
 
         # Divide delay by number of active API keys to multiply RPM
         required_delay = required_delay / num_keys
 
-        # Hard cap minimum delay to avoid aggressive banning (e.g. 1.0s minimum for multiple keys)
+        # Hard cap minimum delay to avoid aggressive banning (e.g. 1.5s minimum for multiple keys)
         if num_keys > 1:
-            required_delay = max(required_delay, 1.0)
+            required_delay = max(required_delay, 1.5)
 
         global _pacing_lock
         try:
@@ -1053,6 +1070,8 @@ class BackgroundTranslator:
             except Exception:
                 pass
                 
+        if provider == "groq":
+            return max(1, min(num_keys, 3))
         return min(max(num_keys * 3, 2), 20)
 
     @staticmethod
@@ -1120,6 +1139,12 @@ class BackgroundTranslator:
 
             async def worker(worker_id: int):
                 while batch.chapter_ids and not batch.is_stopped:
+                    # Respect batch-wide rate limit cooldown (e.g. from upstream 429 Retry-After)
+                    cooldown_until = getattr(batch, "rate_limit_cooldown_until", 0)
+                    if cooldown_until > time.time():
+                        cooldown_wait = cooldown_until - time.time()
+                        await asyncio.sleep(cooldown_wait)
+
                     try:
                         ch_id = queue.get_nowait()
                     except asyncio.QueueEmpty:
@@ -1143,7 +1168,7 @@ class BackgroundTranslator:
                         if batch.force_extract and not batch.fetch_only:
                             with get_session(ws) as db:
                                 ch_obj = db.get(Chapter, ch_id)
-                                is_skipped = bool(ch_obj and ch_obj.content_translated and not batch.force_overwrite)
+                                is_skipped = bool(ch_obj and ch_obj.translation_status == "done" and ch_obj.content_translated and not batch.force_overwrite)
                                 gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 extract_limit = gs.extract_chapter_count if gs else 12
 
@@ -1184,20 +1209,35 @@ class BackgroundTranslator:
                     except Exception as e:
                         if isinstance(e, QuotaExhaustedError):
                             fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemma-4-31b', 'gemma-4-26b', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+                            groq_fallback_sequence = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
                             with get_session(ws) as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
-                                current_model = gs_fresh.gemini_model if (gs_fresh and gs_fresh.gemini_model) else ""
-                                if gs_fresh and gs_fresh.llm_provider == "gemini" and current_model in fallback_sequence:
-                                    idx = fallback_sequence.index(current_model)
-                                    if idx + 1 < len(fallback_sequence):
-                                        next_model = fallback_sequence[idx + 1]
-                                        print(f"[AUTO-FALLBACK] Gemini model '{current_model}' exhausted on all keys. Switching to '{next_model}'.")
-                                        gs_fresh.gemini_model = next_model
-                                        batch.model = next_model
-                                        db.commit()
-                                        pending_retries[ch_id] = 0
-                                        queue.put_nowait(ch_id)
-                                        continue
+                                if gs_fresh and gs_fresh.llm_provider == "gemini":
+                                    current_model = gs_fresh.gemini_model if (gs_fresh and gs_fresh.gemini_model) else ""
+                                    if current_model in fallback_sequence:
+                                        idx = fallback_sequence.index(current_model)
+                                        if idx + 1 < len(fallback_sequence):
+                                            next_model = fallback_sequence[idx + 1]
+                                            print(f"[AUTO-FALLBACK] Gemini model '{current_model}' exhausted on all keys. Switching to '{next_model}'.")
+                                            gs_fresh.gemini_model = next_model
+                                            batch.model = next_model
+                                            db.commit()
+                                            pending_retries[ch_id] = 0
+                                            queue.put_nowait(ch_id)
+                                            continue
+                                elif gs_fresh and gs_fresh.llm_provider == "groq":
+                                    current_groq_m = gs_fresh.groq_model if (gs_fresh and gs_fresh.groq_model) else ""
+                                    if current_groq_m in groq_fallback_sequence:
+                                        idx = groq_fallback_sequence.index(current_groq_m)
+                                        if idx + 1 < len(groq_fallback_sequence):
+                                            next_model = groq_fallback_sequence[idx + 1]
+                                            print(f"[AUTO-FALLBACK] Groq model '{current_groq_m}' exhausted on all keys. Switching to '{next_model}'.")
+                                            gs_fresh.groq_model = next_model
+                                            batch.model = next_model
+                                            db.commit()
+                                            pending_retries[ch_id] = 0
+                                            queue.put_nowait(ch_id)
+                                            continue
 
                             print(f"[FATAL] Batch translation stopped: {e}")
                             batch.is_stopped = True
@@ -1214,8 +1254,28 @@ class BackgroundTranslator:
                                 retry_count = pending_retries.get(ch_id, 0) + 1
 
                             pending_retries[ch_id] = retry_count
-                            delay = RETRY_BASE_DELAY * (2 ** (retry_count - 1)) if retry_count > 0 else RETRY_BASE_DELAY
-                            print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/15). Re-queuing after {delay:.0f}s. Error: {e}")
+
+                            # Extract retry delay hint from error message if available (e.g. "retry in 5.2s" or "try again in 4s")
+                            wait_hint = 0.0
+                            match = re.search(r"(?:retry in|try again in|wait)\s*(\d+(?:\.\d+)?)\s*(ms|s|m)?", err_str)
+                            if match:
+                                val = float(match.group(1))
+                                unit = (match.group(2) or "s").lower()
+                                if unit == "ms":
+                                    wait_hint = max(0.5, val / 1000.0)
+                                elif unit == "m":
+                                    wait_hint = val * 60.0
+                                else:
+                                    wait_hint = val
+                                wait_hint += 1.0  # Buffer
+
+                            base_exp = RETRY_BASE_DELAY * (2 ** (retry_count - 1)) if retry_count > 0 else RETRY_BASE_DELAY
+                            delay = max(base_exp, wait_hint)
+
+                            # Apply rate limit cooldown to the whole batch so other workers don't hammer upstream
+                            batch.rate_limit_cooldown_until = max(getattr(batch, "rate_limit_cooldown_until", 0), time.time() + delay)
+
+                            print(f"[RETRY] Chapter {ch_id} hit service error (attempt {retry_count}/15). Pausing batch and re-queuing after {delay:.1f}s. Error: {e}")
                             is_quota_limit = "429" in err_str and any(q in err_str for q in ["quota", "exhausted", "resource_exhausted"])
                             is_per_minute = "perminute" in err_str or "per minute" in err_str or "requestsperminute" in err_str
                             is_daily_quota = is_quota_limit and not is_per_minute and any(d in err_str for d in ["perday", "per day", "requestsperday", "daily"])
@@ -1230,13 +1290,16 @@ class BackgroundTranslator:
                                         if is_daily_quota:
                                             current_key = get_active_api_key(gs_fresh.llm_provider, gs_fresh)
                                             if current_key:
-                                                mark_key_exhausted(gs_fresh.llm_provider, current_key, gs_fresh.gemini_model)
+                                                active_m = batch.model or (gs_fresh.groq_model if gs_fresh.llm_provider == "groq" else gs_fresh.gemini_model)
+                                                mark_key_exhausted(gs_fresh.llm_provider, current_key, active_m)
                                         rotate_api_key(gs_fresh.llm_provider, gs_fresh)
                                     except QuotaExhaustedError as qe:
                                         pass
 
                                 ch = db.get(Chapter, ch_id)
                                 if ch:
+                                    if ch.translation_status != "done":
+                                        ch.content_translated = None
                                     ch.translation_status = "idle"
                                 db.commit()
 
@@ -1246,6 +1309,8 @@ class BackgroundTranslator:
                                     queue.put_nowait(cid)
 
                             spawn_background_task(delayed_requeue(ch_id, delay))
+                            # Pause this worker to respect cooldown before pulling next chapter
+                            await asyncio.sleep(delay)
                         else:
                             pending_retries.pop(ch_id, None)
                             print(f"[ERROR] Batch chapter {ch_id} failed permanently: {e}")

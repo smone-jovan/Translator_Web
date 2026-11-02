@@ -284,3 +284,23 @@ def test_trim_runaway_round_leaves_normal_rounds_untouched():
     after = before + " it was fine.\n\n" + _paragraphs(6, "Next paragraph {i} of the real translation.")
 
     assert trim_runaway_round(SRC, before, after) == after
+
+
+@pytest.mark.asyncio
+async def test_complete_truncated_translation_raises_on_429():
+    async def failing_continue_fn(text: str) -> str:
+        raise RuntimeError("Upstream service error: HTTP 429: Rate limit reached. (retry in 5.0s)")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await complete_truncated_translation("原文。", "She walked on,", failing_continue_fn)
+    assert "429" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_retry_if_summarized_raises_on_429():
+    async def failing_retry_fn() -> str:
+        raise RuntimeError("Upstream service error: HTTP 429: Rate limit reached.")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await retry_if_summarized(ORIGINAL, SUMMARIZED, failing_retry_fn)
+    assert "429" in str(exc_info.value)

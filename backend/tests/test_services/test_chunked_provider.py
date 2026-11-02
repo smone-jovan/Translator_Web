@@ -119,6 +119,60 @@ class TestChunkedTranslationProvider:
         provider = ChunkedTranslationProvider(FakeProvider(), 20)
         assert provider.translation_temperature == 0.0
 
+    @pytest.mark.asyncio
+    async def test_chunk_delay_and_retry_on_429(self):
+        import time
+
+        class FlakyChunkProvider(FakeProvider):
+            def __init__(self):
+                super().__init__()
+                self.chunk_delay_seconds = 0.05
+                self.first_attempt = True
+
+            async def stream_chat(self, messages, temperature=0.3, max_tokens=None):
+                self.calls.append(messages)
+                if len(self.calls) == 2 and self.first_attempt:
+                    self.first_attempt = False
+                    raise RuntimeError("Upstream HTTP 429: Rate limit reached. retry in 0.05s")
+                for piece in ["chunk_out"]:
+                    yield piece
+
+        inner = FlakyChunkProvider()
+        provider = ChunkedTranslationProvider(inner, 20)
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "aaaaaaaa\nbbbbbbbb\ncccccccc\ndddddddd"},
+        ]
+        start_t = time.time()
+        pieces = await collect(provider.stream_chat(messages))
+        elapsed = time.time() - start_t
+        # Verified delay + retry wait took place
+        assert elapsed >= 0.05
+        # Total calls: chunk 1 (call 1), chunk 2 attempt 1 (call 2 fails 429), chunk 2 attempt 2 (call 3 succeeds)
+        assert len(inner.calls) == 3
+        assert "chunk_out" in pieces
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_does_not_retry_if_tokens_already_yielded(self):
+        class MidwayFailingProvider(FakeProvider):
+            async def stream_chat(self, messages, temperature=0.3, max_tokens=None):
+                self.calls.append(messages)
+                yield "first_part"
+                raise RuntimeError("Upstream HTTP 429: Rate limit reached. retry in 1s")
+
+        inner = MidwayFailingProvider()
+        provider = ChunkedTranslationProvider(inner, 20)
+        messages = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "aaaaaaaa\nbbbbbbbb\ncccccccc\ndddddddd"},
+        ]
+        # Must re-raise without attempting retry, preventing repeated duplicate text in output
+        with pytest.raises(RuntimeError) as exc_info:
+            await collect(provider.stream_chat(messages))
+        assert "429" in str(exc_info.value)
+        # Exactly 1 call attempted, not 3 repeated calls
+        assert len(inner.calls) == 1
+
 
 class TestMaybeChunk:
     def test_lm_studio_is_wrapped(self):

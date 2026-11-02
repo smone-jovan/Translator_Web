@@ -170,7 +170,7 @@ class GlobalSetting(Base):
     openai_model: Mapped[str] = mapped_column(String(200), default="gpt-4o")
     gemini_model: Mapped[str] = mapped_column(String(200), default="gemini-2.5-flash")
     openrouter_model: Mapped[str] = mapped_column(String(200), default="deepseek/deepseek-chat")
-    groq_model: Mapped[str] = mapped_column(String(200), default="qwen/qwen3.8-27b")
+    groq_model: Mapped[str] = mapped_column(String(200), default="openai/gpt-oss-120b")
     openai_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")
     openrouter_api_key: Mapped[Optional[str]] = mapped_column(String(500), default="")

@@ -114,11 +114,38 @@ class ChunkedTranslationProvider:
         for index, request in enumerate(requests):
             if index:
                 yield CHUNK_SEPARATOR
+                chunk_delay = getattr(self._inner, "chunk_delay_seconds", 0.0)
+                if chunk_delay > 0:
+                    import asyncio
+                    await asyncio.sleep(chunk_delay)
             self._note_chunk(index + 1, len(requests))
-            async for piece in self._inner.stream_chat(request, temperature=temperature, max_tokens=max_tokens):
-                yield piece
-                if piece in (TRUNCATED_MARKER, PROHIBITED_MARKER):
-                    return
+            chunk_yielded = False
+            for chunk_attempt in range(3):
+                try:
+                    async for piece in self._inner.stream_chat(request, temperature=temperature, max_tokens=max_tokens):
+                        chunk_yielded = True
+                        yield piece
+                        if piece in (TRUNCATED_MARKER, PROHIBITED_MARKER):
+                            return
+                    break
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_retryable = any(p in err_str for p in ("429", "503", "502", "rate limit", "too many requests", "timeout"))
+                    if is_retryable and chunk_attempt < 2:
+                        if chunk_yielded:
+                            # If tokens were already sent downstream, we cannot re-stream from start without duplicating text
+                            raise
+                        import asyncio, re
+                        match = re.search(r"(?:retry in|try again in|wait)\s*(\d+(?:\.\d+)?)\s*(ms|s|m)?", err_str)
+                        wait_sec = 6.0
+                        if match:
+                            v = float(match.group(1))
+                            u = (match.group(2) or "s").lower()
+                            wait_sec = v / 1000.0 if u == "ms" else (v * 60.0 if u == "m" else v)
+                            wait_sec += 1.0
+                        await asyncio.sleep(max(wait_sec, 4.0))
+                        continue
+                    raise
 
     async def chat_completion(
         self, messages: List[Dict[str, str]], temperature: float = 0.3, max_tokens: int | None = None
@@ -129,8 +156,32 @@ class ChunkedTranslationProvider:
             return await self._inner.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
         results = []
         for index, request in enumerate(requests):
+            if index:
+                chunk_delay = getattr(self._inner, "chunk_delay_seconds", 0.0)
+                if chunk_delay > 0:
+                    import asyncio
+                    await asyncio.sleep(chunk_delay)
             self._note_chunk(index + 1, len(requests))
-            results.append(await self._inner.chat_completion(request, temperature=temperature, max_tokens=max_tokens))
+            for chunk_attempt in range(3):
+                try:
+                    res = await self._inner.chat_completion(request, temperature=temperature, max_tokens=max_tokens)
+                    results.append(res)
+                    break
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_retryable = any(p in err_str for p in ("429", "503", "502", "rate limit", "too many requests", "timeout"))
+                    if is_retryable and chunk_attempt < 2:
+                        import asyncio, re
+                        match = re.search(r"(?:retry in|try again in|wait)\s*(\d+(?:\.\d+)?)\s*(ms|s|m)?", err_str)
+                        wait_sec = 6.0
+                        if match:
+                            v = float(match.group(1))
+                            u = (match.group(2) or "s").lower()
+                            wait_sec = v / 1000.0 if u == "ms" else (v * 60.0 if u == "m" else v)
+                            wait_sec += 1.0
+                        await asyncio.sleep(max(wait_sec, 4.0))
+                        continue
+                    raise
         return CHUNK_SEPARATOR.join(results)
 
 

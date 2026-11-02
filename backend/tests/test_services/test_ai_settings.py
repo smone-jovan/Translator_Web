@@ -162,6 +162,16 @@ class TestGetChapterTranslationMaxTokens:
 
         assert get_chapter_translation_max_tokens(gs) == DEFAULT_CHAPTER_TRANSLATION_MAX_TOKENS
 
+    def test_groq_caps_qwen_to_900_and_gpt_oss_to_4096(self, db_session):
+        gs_qwen = GlobalSetting(llm_provider="groq", groq_model="qwen/qwen3.8-27b", chapter_token_cap=8000)
+        assert get_chapter_translation_max_tokens(gs_qwen) == 900
+
+        gs_gpt_oss = GlobalSetting(llm_provider="groq", groq_model="openai/gpt-oss-120b", chapter_token_cap=8000)
+        assert get_chapter_translation_max_tokens(gs_gpt_oss) == 4096
+
+        gs_disabled = GlobalSetting(llm_provider="groq", groq_model="openai/gpt-oss-120b", chapter_token_cap_enabled=0)
+        assert get_chapter_translation_max_tokens(gs_disabled) == 4096
+
 
 class TestGetContextScaleForModel:
     """Tests for get_context_scale_for_model() (ADR-075)."""

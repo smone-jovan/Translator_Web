@@ -275,9 +275,13 @@ class ContextEngine:
         gs = db.execute(gs_stmt).scalar_one_or_none()
 
         scale = get_context_scale_for_model(model)
-        gc_max = int(GLOBAL_CONTEXT_MAX_CHARS * scale)
-        tc_max = int(THREAD_CONTEXT_MAX_CHARS * scale)
-        sg_max = int(STYLE_GUIDE_MAX_CHARS * scale)
+        is_groq = (
+            (gs and getattr(gs, "llm_provider", None) == "groq")
+            or (model and any(x in model.lower() for x in ["groq", "gpt-oss", "qwen", "allam", "orpheus"]))
+        )
+        gc_max = min(int(GLOBAL_CONTEXT_MAX_CHARS * scale), 600) if is_groq else int(GLOBAL_CONTEXT_MAX_CHARS * scale)
+        tc_max = min(int(THREAD_CONTEXT_MAX_CHARS * scale), 600) if is_groq else int(THREAD_CONTEXT_MAX_CHARS * scale)
+        sg_max = min(int(STYLE_GUIDE_MAX_CHARS * scale), 600) if is_groq else int(STYLE_GUIDE_MAX_CHARS * scale)
 
         if gs and gs.global_context:
             gc_trunc = gs.global_context[:gc_max] + "... (truncated)" if len(gs.global_context) > gc_max else gs.global_context
@@ -344,11 +348,20 @@ class ContextEngine:
                     reverse=True,
                 )
 
-                entries = matched_entries[:effective_limit]
-                if len(entries) < effective_limit:
-                    entries.extend(unmatched_entries[: effective_limit - len(entries)])
+                if is_groq:
+                    # Groq free tier has strict 7k ITPM / 8k TPM limits.
+                    # Inject only terms that appear in original_text plus up to 5 locked terms,
+                    # avoiding 150-term padding that blows past the token limit.
+                    entries = matched_entries[:min(effective_limit, 30)]
+                    if len(entries) < 10 and unmatched_entries:
+                        locked_unmatched = [e for e in unmatched_entries if e.is_locked][:5]
+                        entries.extend(locked_unmatched)
+                else:
+                    entries = matched_entries[:effective_limit]
+                    if len(entries) < effective_limit:
+                        entries.extend(unmatched_entries[: effective_limit - len(entries)])
             else:
-                entries = all_entries[:effective_limit]
+                entries = all_entries[:min(effective_limit, 25)] if is_groq else all_entries[:effective_limit]
 
             active_translated_names = set()
             if entries:
@@ -906,8 +919,13 @@ class ContextEngine:
 
         try:
             gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+            is_groq = (
+                (gs and getattr(gs, "llm_provider", None) == "groq")
+                or (model and any(x in model.lower() for x in ["groq", "gpt-oss", "qwen", "allam", "orpheus"]))
+            )
             base_sample_size = gs.extract_sample_size if gs else 1000
-            chapter_sample_limit = max_input_chars if max_input_chars is not None else max(base_sample_size * 6, 6000)
+            default_limit = 1800 if is_groq else max(base_sample_size * 6, 6000)
+            chapter_sample_limit = max_input_chars if max_input_chars is not None else default_limit
 
             if len(original_text) <= chapter_sample_limit:
                 sampled_text = original_text
@@ -924,11 +942,12 @@ class ContextEngine:
                     + original_text[-tail_n:]
                 )
 
+            max_existing = 15 if is_groq else 60
             existing_entries = db.execute(
                 select(LorebookEntry)
                 .where(LorebookEntry.thread_id == thread_id)
                 .order_by(desc(LorebookEntry.is_locked), desc(LorebookEntry.usage_count), LorebookEntry.id)
-                .limit(60)
+                .limit(max_existing)
             ).scalars().all()
             if existing_entries:
                 existing_lines = [
@@ -948,7 +967,12 @@ class ContextEngine:
                 {"role": "user", "content": f"Extract NEW terms from this text:\n\n{sampled_text}"},
             ]
 
-            response = await provider.chat_completion(messages=messages, temperature=0.2)
+            import inspect
+            kwargs = {"temperature": 0.2}
+            if "max_tokens" in inspect.signature(provider.chat_completion).parameters:
+                kwargs["max_tokens"] = 500
+
+            response = await provider.chat_completion(messages=messages, **kwargs)
             cleaned_response = ContextEngine.strip_thinking_blocks(response or "")
             if save_lock is not None:
                 async with save_lock:
@@ -987,7 +1011,12 @@ class ContextEngine:
                 {"role": "user", "content": f"Extract relationships from this text:\n\n{original_text[:sample_limit]}"},
             ]
 
-            response = await provider.chat_completion(messages=messages, temperature=0.1)
+            import inspect
+            rel_kwargs = {"temperature": 0.1}
+            if "max_tokens" in inspect.signature(provider.chat_completion).parameters:
+                rel_kwargs["max_tokens"] = 500
+
+            response = await provider.chat_completion(messages=messages, **rel_kwargs)
 
             # Strip thinking blocks (<think> / <thought>) and markdown fences before JSON parsing
             cleaned = ContextEngine.strip_thinking_blocks(response or "").strip()
