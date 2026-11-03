@@ -512,6 +512,9 @@ Recent completed platform work (ADR-034 through ADR-125):
 - ADR-125: audit follow-up (workspace-explicit metadata scraper, ErrorBoundary session key, hermetic tests), Ghost PIN limitation documented, council + judge verification
 - ADR-138: high-resolution web novel illustration pipeline (25MB ceiling), multi-tier defensive URL normalization, Pixiv inverted markdown syntax recovery, and gallery empty-state resiliency
 - ADR-139: reviewable TXT-to-EPUB import pipeline (two-phase preview/confirm, strict CJK/UTF decoding, chapter splitting, N+1 query caching in EPUB export, TOC/volume hierarchy merging, smart upload routing, library import & EPUB export)
+- ADR-140: NVIDIA NIM provider integration (nemotron-3.5-bolt-e4b, riva-translate-4b-instruct-v2, mistral-large-4-1t-a52b, anti-stall epoch timestamp parsing in rate-limit headers, multi-key round-robin rotation on 429 quota exhaustion, ADR-126 host allowlist)
+- ADR-141: Public API Integrations (In-reader Free Dictionary popover with CJK Unicode regex support, native Web Speech API Text-to-Speech with anti-freeze sentence chunking, and concurrent Open Library/Google Books catalog auto-fill)
+- ADR-142: Groq LPU Provider Architecture, Batch Translation Resilience, and Multi-Tier Quota Budgeting (calibrated 600-char chunking, strict 1.0x context scaling, lorebook term budgeting, multi-key rotation with daily TTL exhaustion)
 - Fix truncated translations endpoint (`POST /api/threads/{id}/fix-truncated`) with Library menu button
 - Delete chapter endpoint (`DELETE /api/threads/{id}/chapters/{chapter_id}`) with automatic re-ordering
 - TOC page skip in title polish — auto-detects Table of Contents pages (5+ chapter indicators in <5000 chars) and skips polishing

@@ -326,6 +326,7 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 ### 5. Multi-Tenancy & Ghost Mode Dual-Database
 - **ADR-006 & ADR-008**: Server-Side `GlobalSetting` Configuration Storage.
 - **ADR-029**: Multi-Provider Cloud LLM Swapping (Gemini, OpenAI, OpenRouter).
+- **ADR-140**: NVIDIA NIM Provider Integration, RPM Rate Limiting & Multi-Key Quota Rotation (OpenAI-compatible adapter, anti-stall epoch rate-limit parsing, multi-key round-robin rotation, and namespaced custom model resolution).
 - **ADR-115, ADR-117 & ADR-118**: Ghost Mode Dual-DB Isolation (`app.db` vs `ghost.db`), In-Memory Compound Key Tenancy (`make_workspace_key`), and Client-Side Storage Scoping (`getWorkspaceStorageKey`).
 - **ADR-125**: Batasan PIN Ghost Mode (penyamar UI, bukan kontrol akses) didokumentasikan; verifikasi council + judge.
 - **ADR-126**: Allowlist host API key per provider dan egress proxy SSRF yang memvalidasi untuk browser scraper.
@@ -350,6 +351,11 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-037**: TXT Cleaner & Book Builder Cleanup Preview.
 - **ADR-138**: Pipeline ilustrasi resolusi tinggi (plafon 25MB), normalisasi URL defensif bertingkat, dan pemulihan sintaks markdown gambar terbalik.
 - **ADR-139**: Reviewable TXT-to-EPUB Import Pipeline (two-phase preview/confirm, strict CJK/UTF decoding, paragraph-safe splitting, atomic commit & Book Builder EPUB export).
+
+### 9. Public APIs, Reading Assistance & Inference Scaling
+- **ADR-140**: NVIDIA NIM provider integration (RPM rate-limiting, epoch timestamp parsing, multi-key round-robin rotation).
+- **ADR-141**: Public API Integrations (In-reader Free Dictionary popover dengan dukungan CJK Unicode regex, native Web Speech API Text-to-Speech dengan anti-freeze sentence chunking, dan concurrent Open Library/Google Books catalog auto-fill).
+- **ADR-142**: Groq LPU Provider Architecture, Batch Translation Resilience, dan Multi-Tier Quota Budgeting (calibrated 600-char chunking, strict 1.0x context scaling, lorebook term budgeting, multi-key rotation dengan daily TTL exhaustion).
 
 ---
 
