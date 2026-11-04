@@ -281,3 +281,148 @@ class TestAdapterOptions:
     def test_other_models_get_no_extra_payload(self):
         assert LMStudioAdapter(model="gemma-3-4b")._extra_payload() == {}
         assert LMStudioAdapter()._extra_payload() == {}
+
+
+class TestIndexTranslateAdapter:
+    def test_adapter_class_inherits_and_configures(self):
+        from services.ai.index_translate import IndexTranslateAdapter
+        adapter = IndexTranslateAdapter(model="index-translate-2b")
+        assert isinstance(adapter, LMStudioAdapter)
+        assert adapter.translation_temperature == 0.0
+        assert adapter.translation_chunk_chars == 2500
+        assert adapter._extra_payload() == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def test_factory_returns_index_translate_adapter(self, db_session):
+        from services.ai.factory import AIProviderFactory
+        from services.ai.index_translate import IndexTranslateAdapter
+        provider = AIProviderFactory.get_provider(model="index-translate-2b", db_session=db_session)
+        assert isinstance(provider, IndexTranslateAdapter)
+
+    def test_prompt_and_messages_with_custom_instructions(self):
+        from services.ai.index_translate import build_index_translate_prompt, build_index_translate_messages
+        prompt = build_index_translate_prompt(
+            "测试", "Indonesian", custom_instructions="Gunakan bahasa santai tapi sopan."
+        )
+        assert "【注意】Gunakan bahasa santai tapi sopan." in prompt
+
+        messages = build_index_translate_messages(
+            "测试", "Indonesian", custom_instructions="Gunakan bahasa santai tapi sopan."
+        )
+        assert len(messages) == 1
+        assert "【注意】Gunakan bahasa santai tapi sopan." in messages[0]["content"]
+
+    def test_adapter_helper_methods(self, db_session):
+        from services.ai.index_translate import IndexTranslateAdapter
+        thread = Thread(title="Novel", genres="xianxia", style_guide="Nama jurus pertahankan.")
+        db_session.add(thread)
+        db_session.commit()
+        adapter = IndexTranslateAdapter()
+        notes = adapter.collect_notes(db_session, thread.id, custom_instructions="Jangan singkat nama.")
+        assert len(notes) == 2
+        assert "Jangan singkat nama." in notes
+        assert "Nama jurus pertahankan." in notes
+        genre = adapter.get_genre(db_session, thread.id)
+        assert genre == "修仙小说"
+
+    @pytest.mark.asyncio
+    async def test_do_translate_index_model_no_name_error(self, monkeypatch):
+        from services.background_translator import BackgroundTranslator
+        from database import Chapter, Thread, get_session
+
+        with get_session("main") as db:
+            thread = Thread(title="Cultivation Tale", genres="xianxia")
+            db.add(thread)
+            db.flush()
+            chapter = Chapter(thread_id=thread.id, order=1, content_original="林动笑了笑。")
+            db.add(chapter)
+            db.commit()
+            thread_id, chapter_id = thread.id, chapter.id
+
+        # Mock the provider chat_completion to avoid network call
+        class MockProvider:
+            translation_temperature = 0.0
+            translation_chunk_chars = 2500
+            async def chat_completion(self, messages, temperature=0.0, max_tokens=None):
+                return "Lin Dong tersenyum kecil."
+            async def stream_chat(self, messages, temperature=0.0, max_tokens=None):
+                yield "Lin Dong tersenyum kecil."
+
+        from services.ai.factory import AIProviderFactory
+        monkeypatch.setattr(AIProviderFactory, "get_provider", lambda **kwargs: MockProvider())
+
+        # Test without custom_instructions (should NOT raise NameError: custom_instructions)
+        success = await BackgroundTranslator._do_translate(
+            chapter_id=chapter_id,
+            thread_id=thread_id,
+            target_lang="Indonesian",
+            model="IndexTeam/Index-Translate-2B-GGUF",
+        )
+        assert success is True
+
+        # Test with custom_instructions explicitly passed
+        success2 = await BackgroundTranslator._do_translate(
+            chapter_id=chapter_id,
+            thread_id=thread_id,
+            target_lang="Indonesian",
+            model="index-translate-2b",
+            custom_instructions="Jangan ubah nada bicara.",
+            force_overwrite=True,
+        )
+        assert success2 is True
+
+    def test_factory_routes_to_index_translate_adapter_even_when_llm_provider_is_cloud(self):
+        from database import GlobalSetting
+        from services.ai.factory import AIProviderFactory
+        from services.ai.index_translate import IndexTranslateAdapter
+
+        class DummyDB:
+            def execute(self, stmt):
+                class Res:
+                    def scalar_one_or_none(self):
+                        return GlobalSetting(llm_provider="gemini", gemini_model="gemini-2.5-flash")
+                return Res()
+
+        provider = AIProviderFactory.get_provider(
+            model="IndexTeam/Index-Translate-2B-GGUF", db_session=DummyDB()
+        )
+        assert isinstance(provider, IndexTranslateAdapter)
+
+    def test_resolve_active_model_preserves_index_translate_model_across_all_providers(self):
+        from database import GlobalSetting
+        from services.ai.settings import resolve_active_model
+
+        for prov in ("gemini", "openai", "groq", "openrouter", "nvidia", "lm_studio"):
+            gs = GlobalSetting(llm_provider=prov)
+            res = resolve_active_model(gs, "IndexTeam/Index-Translate-2B-GGUF")
+            assert res == "IndexTeam/Index-Translate-2B-GGUF"
+
+    def test_build_translation_prompt_custom_instructions_without_thread_id(self):
+        from services.context_engine import ContextEngine
+
+        class DummyDB:
+            def execute(self, stmt):
+                class Res:
+                    def scalar_one_or_none(self):
+                        return None
+                return Res()
+
+        prompt = ContextEngine.build_translation_prompt(
+            DummyDB(),
+            thread_id=None,
+            target_lang="Indonesian",
+            original_text="Testing instructions",
+            custom_instructions="Gunakan gaya bahasa formal.",
+        )
+        assert "[Custom Instructions]:\nGunakan gaya bahasa formal." in prompt
+
+    def test_index_translate_adapter_temperature_defaults_to_greedy(self):
+        import inspect
+        from services.ai.index_translate import IndexTranslateAdapter
+
+        adapter = IndexTranslateAdapter()
+        assert adapter.translation_temperature == 0.0
+        sig_chat = inspect.signature(adapter.chat_completion)
+        assert sig_chat.parameters["temperature"].default is None
+        sig_stream = inspect.signature(adapter.stream_chat)
+        assert sig_stream.parameters["temperature"].default is None
+

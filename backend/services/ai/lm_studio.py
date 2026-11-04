@@ -3,7 +3,6 @@ import httpx
 import json
 from typing import List, Dict, AsyncGenerator
 from services.ai.base import BaseAIProviderAdapter, Completion, TRUNCATED_MARKER, PROHIBITED_MARKER, PROHIBITED_FINISH_REASONS
-from services.ai.index_translate import is_index_translate_model
 
 _PROTECTED_PAYLOAD_KEYS = {"messages", "model", "stream"}
 
@@ -32,6 +31,7 @@ class LMStudioAdapter(BaseAIProviderAdapter):
 
     def _extra_payload(self) -> Dict[str, object]:
         # Index-Translate is a Qwen3.5 base; its model card says to run it with thinking disabled.
+        from services.ai.index_translate import is_index_translate_model
         if is_index_translate_model(self.model):
             return {"chat_template_kwargs": {"enable_thinking": False}}
         return {}

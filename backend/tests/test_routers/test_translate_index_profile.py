@@ -89,3 +89,21 @@ def test_other_models_keep_system_plus_user_prompt(client, db_session):
     assert resp.status_code == 200
     (messages,) = provider.calls
     assert [m["role"] for m in messages] == ["system", "user"]
+
+
+def test_index_translate_model_receives_custom_instructions_from_request(client, db_session):
+    provider = RecordingProvider()
+    with patch("services.ai.factory.AIProviderFactory.get_provider", return_value=provider):
+        resp = client.post(
+            "/api/translate",
+            json={
+                "text": "林动笑了。",
+                "target_lang": "Indonesian",
+                "model": "IndexTeam/Index-Translate-2B-GGUF",
+                "custom_instructions": "Jaga konsistensi kata ganti.",
+            },
+        )
+    assert resp.status_code == 200
+    (messages,) = provider.calls
+    assert "【注意】Jaga konsistensi kata ganti." in messages[0]["content"]
+

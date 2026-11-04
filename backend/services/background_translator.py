@@ -13,6 +13,7 @@ from services.ai.base import TRUNCATED_MARKER, PROHIBITED_MARKER
 from services.ai.chunking import maybe_chunk
 from services.ai.request_trace import TracedProvider
 from services.ai.index_translate import (
+    IndexTranslateAdapter,
     build_index_translate_messages,
     collect_context_notes,
     collect_glossary_pairs,
@@ -72,12 +73,13 @@ def get_thread_glossary_lock(workspace_id: str, thread_id: int) -> asyncio.Lock:
 _last_api_call_time = 0.0
 
 class ActiveBatch:
-    def __init__(self, thread_id: int, chapter_ids: list, target_lang: str, model: str | None, lm_url: str | None, force_extract: bool, force_overwrite: bool, translation_mode: str = "quality", fetch_only: bool = False, load_mode: str = "soft", workspace: str = "main"):
+    def __init__(self, thread_id: int, chapter_ids: list, target_lang: str, model: str | None, lm_url: str | None, force_extract: bool, force_overwrite: bool, translation_mode: str = "quality", fetch_only: bool = False, load_mode: str = "soft", workspace: str = "main", custom_instructions: str | None = None):
         self.thread_id = thread_id
         self.chapter_ids = list(chapter_ids)
         self.total = len(chapter_ids)
         self.load_mode = load_mode
         self.workspace = workspace
+        self.custom_instructions = custom_instructions
         self.completed = 0
         self.failed_ids = []
         self.current_chapter_id = None
@@ -132,6 +134,8 @@ def _is_retryable_error(error: Exception) -> bool:
         "try again",
         "empty content",       # Added to handle Gemini blank responses
         "empty translation",   # Added to handle over-truncation
+        "quota",               # API key quota or credit exhaustion (triggers key rotation)
+        "exhausted",           # Provider quota exhaustion
     ]
     return any(pattern in err_str for pattern in retryable_patterns)
 
@@ -148,6 +152,7 @@ class BackgroundTranslator:
         force_overwrite: bool = False,
         translation_mode: str = "quality",
         workspace: str = "main",
+        custom_instructions: str | None = None,
     ) -> bool:
         if make_workspace_key(workspace, chapter_id) in active_tasks:
             # Duplicate request: the running owner streams to every listener and sends [DONE] itself.
@@ -156,7 +161,8 @@ class BackgroundTranslator:
         try:
             return await cls._run_translation_internal(
                 chapter_id, thread_id, target_lang, model, lm_url, force_extract, force_overwrite, translation_mode,
-                workspace=workspace
+                workspace=workspace,
+                custom_instructions=custom_instructions,
             )
         finally:
             target_queues = get_chapter_translation_queues(workspace, chapter_id)
@@ -178,6 +184,7 @@ class BackgroundTranslator:
         force_overwrite: bool = False,
         translation_mode: str = "quality",
         workspace: str = "main",
+        custom_instructions: str | None = None,
     ) -> bool:
         """Start background chapter translation task."""
         task_key = make_workspace_key(workspace, chapter_id)
@@ -188,7 +195,8 @@ class BackgroundTranslator:
         task = asyncio.create_task(
             BackgroundTranslator._do_translate(
                 chapter_id, thread_id, target_lang, model, lm_url, force_extract, force_overwrite, translation_mode,
-                workspace=workspace
+                workspace=workspace,
+                custom_instructions=custom_instructions,
             )
         )
         active_tasks[task_key] = task
@@ -245,6 +253,7 @@ class BackgroundTranslator:
         fetch_only: bool = False,
         load_mode: str | None = None,
         workspace: str = "main",
+        custom_instructions: str | None = None,
     ) -> bool:
         # 1. Siapkan data bab-nya
         content_original = None
@@ -411,12 +420,14 @@ class BackgroundTranslator:
                 db.commit()
 
                 # 2. Rakit prompt-nya lewat ContextEngine
+                active_model = resolve_active_model(gs, model) or model
                 system_prompt = ContextEngine.build_translation_prompt(
                     db, thread_id, target_lang, content_original, translation_mode,
-                    model=model
+                    model=active_model,
+                    custom_instructions=custom_instructions,
                 )
                 print(f"[DEBUG] Chapter {chapter_id} - System Prompt Length: {len(system_prompt)} chars, Original Content Length: {len(content_original)} chars")
-                use_index_prompt = is_index_translate_model(model)
+                use_index_prompt = is_index_translate_model(active_model)
                 if use_index_prompt:
                     index_glossary = collect_glossary_pairs(db, thread_id, content_original)
                     index_notes = collect_context_notes(db, thread_id, custom_instructions=custom_instructions)
@@ -427,22 +438,28 @@ class BackgroundTranslator:
                     index_genre = "小说" 
 
             # Pace the API requests based on selected model's strict RPM limits (ADR-029)
-            await BackgroundTranslator._enforce_pacing(model, gs, workspace=workspace)
+            await BackgroundTranslator._enforce_pacing(active_model, gs, workspace=workspace)
 
             # 3. Panggil AI-nya (LM Studio)
             try:
                 # Resolve settings from this job's own workspace DB, never the process-global ACTIVE_WORKSPACE.
                 with get_session(workspace) as provider_db:
                     raw_provider = AIProviderFactory.get_provider(
-                        base_url=lm_url or "http://localhost:1234", model=model, db_session=provider_db
+                        base_url=lm_url or "http://localhost:1234", model=active_model, db_session=provider_db
                     )
                 raw_provider = TracedProvider(raw_provider, f"chapter {chapter_id}")
 
-                if use_index_prompt:
+                if use_index_prompt or isinstance(getattr(raw_provider, "_inner", raw_provider), IndexTranslateAdapter):
                     # Index-Translate expects its own single-message template, not the long system prompt.
                     def build_request(text: str) -> list:
+                        if hasattr(raw_provider, "build_messages"):
+                            return raw_provider.build_messages(
+                                text, target_lang, index_glossary, genre=index_genre, notes=index_notes,
+                                custom_instructions=custom_instructions,
+                            )
                         return build_index_translate_messages(
-                            text, target_lang, index_glossary, genre=index_genre, notes=index_notes
+                            text, target_lang, index_glossary, genre=index_genre, notes=index_notes,
+                            custom_instructions=custom_instructions,
                         )
 
                     base_messages = build_request(protected_content)
@@ -801,6 +818,7 @@ class BackgroundTranslator:
         fetch_only: bool = False,
         load_mode: str = "soft",
         workspace: str = "main",
+        custom_instructions: str | None = None,
     ):
         """Mulai proses batch translation secara berurutan (Sequential Queue)."""
         ws_str = normalize_workspace(workspace)
@@ -821,6 +839,7 @@ class BackgroundTranslator:
             fetch_only=fetch_only,
             load_mode=load_mode,
             workspace=workspace,
+            custom_instructions=custom_instructions,
         )
         active_batches[batch_key] = batch
 
@@ -974,6 +993,14 @@ class BackgroundTranslator:
                         num_keys = len(keys)
                 except Exception:
                     pass
+            elif llm_provider == "nvidia" and getattr(gs, "nvidia_api_keys", None):
+                try:
+                    import json
+                    keys = json.loads(gs.nvidia_api_keys)
+                    if isinstance(keys, list) and len(keys) > 0:
+                        num_keys = len(keys)
+                except Exception:
+                    pass
 
         required_delay = 1.0
         if llm_provider == "gemini":
@@ -994,6 +1021,14 @@ class BackgroundTranslator:
                 required_delay = 5.0
             else:
                 required_delay = 6.0
+        elif llm_provider == "nvidia":
+            m_lower = (resolved_model or "").lower()
+            if "mistral" in m_lower:
+                required_delay = 3.2
+            elif "riva" in m_lower:
+                required_delay = 2.0
+            else:
+                required_delay = 1.8
 
         # Divide delay by number of active API keys to multiply RPM
         required_delay = required_delay / num_keys
@@ -1061,7 +1096,7 @@ class BackgroundTranslator:
                     num_keys = len(keys)
             except Exception:
                 pass
-        elif provider in ("openai", "openrouter", "groq") and api_keys_json:
+        elif provider in ("openai", "openrouter", "groq", "nvidia") and api_keys_json:
             try:
                 import json
                 keys = json.loads(api_keys_json)
@@ -1070,7 +1105,7 @@ class BackgroundTranslator:
             except Exception:
                 pass
                 
-        if provider == "groq":
+        if provider in ("groq", "nvidia"):
             return max(1, min(num_keys, 3))
         return min(max(num_keys * 3, 2), 20)
 
@@ -1109,6 +1144,8 @@ class BackgroundTranslator:
                         api_keys_json = getattr(gs, "openrouter_api_keys", None)
                     elif provider == "groq":
                         api_keys_json = getattr(gs, "groq_api_keys", None)
+                    elif provider == "nvidia":
+                        api_keys_json = getattr(gs, "nvidia_api_keys", None)
 
             if getattr(batch, "fetch_only", False):
                 with get_session(ws) as db:
@@ -1186,6 +1223,7 @@ class BackgroundTranslator:
                             force_overwrite=batch.force_overwrite,
                             translation_mode=batch.translation_mode, fetch_only=batch.fetch_only,
                             load_mode=batch.load_mode,
+                            custom_instructions=getattr(batch, "custom_instructions", None),
                         )
 
                         if batch.fetch_only and success:
@@ -1210,6 +1248,7 @@ class BackgroundTranslator:
                         if isinstance(e, QuotaExhaustedError):
                             fallback_sequence = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemma-4-31b', 'gemma-4-26b', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
                             groq_fallback_sequence = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+                            nvidia_fallback_sequence = ['nvidia/nemotron-3.5-bolt-e4b', 'nvidia/riva-translate-4b-instruct-v2', 'mistralai/mistral-large-4-1t-a52b']
                             with get_session(ws) as db:
                                 gs_fresh = db.execute(select(GlobalSetting)).scalar_one_or_none()
                                 if gs_fresh and gs_fresh.llm_provider == "gemini":
@@ -1233,6 +1272,19 @@ class BackgroundTranslator:
                                             next_model = groq_fallback_sequence[idx + 1]
                                             print(f"[AUTO-FALLBACK] Groq model '{current_groq_m}' exhausted on all keys. Switching to '{next_model}'.")
                                             gs_fresh.groq_model = next_model
+                                            batch.model = next_model
+                                            db.commit()
+                                            pending_retries[ch_id] = 0
+                                            queue.put_nowait(ch_id)
+                                            continue
+                                elif gs_fresh and gs_fresh.llm_provider == "nvidia":
+                                    current_nvidia_m = batch.model or (gs_fresh.nvidia_model if (gs_fresh and gs_fresh.nvidia_model) else "")
+                                    if current_nvidia_m in nvidia_fallback_sequence:
+                                        idx = nvidia_fallback_sequence.index(current_nvidia_m)
+                                        if idx + 1 < len(nvidia_fallback_sequence):
+                                            next_model = nvidia_fallback_sequence[idx + 1]
+                                            print(f"[AUTO-FALLBACK] NVIDIA model '{current_nvidia_m}' exhausted on all keys. Switching to '{next_model}'.")
+                                            gs_fresh.nvidia_model = next_model
                                             batch.model = next_model
                                             db.commit()
                                             pending_retries[ch_id] = 0
@@ -1290,7 +1342,7 @@ class BackgroundTranslator:
                                         if is_daily_quota:
                                             current_key = get_active_api_key(gs_fresh.llm_provider, gs_fresh)
                                             if current_key:
-                                                active_m = batch.model or (gs_fresh.groq_model if gs_fresh.llm_provider == "groq" else gs_fresh.gemini_model)
+                                                active_m = batch.model or (gs_fresh.nvidia_model if gs_fresh.llm_provider == "nvidia" else (gs_fresh.groq_model if gs_fresh.llm_provider == "groq" else gs_fresh.gemini_model))
                                                 mark_key_exhausted(gs_fresh.llm_provider, current_key, active_m)
                                         rotate_api_key(gs_fresh.llm_provider, gs_fresh)
                                     except QuotaExhaustedError as qe:

@@ -35,6 +35,13 @@ class AIProviderFactory:
             provider = gs.llm_provider if gs else "lm_studio"
             from services.ai.secrets import get_active_api_key
             from services.ai.settings import OFFICIAL_PROVIDER_URLS, is_trusted_provider_url
+            from services.ai.index_translate import is_index_translate_model, IndexTranslateAdapter
+
+            # 0. Dedicated Index-Translate Provider
+            if is_index_translate_model(model) or provider in ("index_translate", "index"):
+                resolved_url = base_url or (getattr(gs, "lm_url", None) or "http://localhost:1234")
+                resolved_model = model or (getattr(gs, "lm_model", None) or "IndexTeam/Index-Translate-2B-GGUF") or "IndexTeam/Index-Translate-2B-GGUF"
+                return IndexTranslateAdapter(base_url=resolved_url, model=resolved_model)
 
             # If the user explicitly passed a custom base_url, respect it
             if base_url:
@@ -52,6 +59,8 @@ class AIProviderFactory:
                         provider = "openai"
                     elif is_trusted_provider_url("groq", base_url):
                         provider = "groq"
+                    elif is_trusted_provider_url("nvidia", base_url):
+                        provider = "nvidia"
                     elif "localhost" in base_url or "127.0.0.1" in base_url:
                         provider = "lm_studio"
 
@@ -125,12 +134,29 @@ class AIProviderFactory:
                 if is_trusted_provider_url("groq", base_url):
                     resolved_url = base_url
                 return GroqAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
-                
-            # 5. LM Studio / Local LLM Provider
+
+            # 5. NVIDIA NIM Cloud Provider
+            elif provider == "nvidia":
+                from services.ai.nvidia import NvidiaAdapter
+                local_lm_model = getattr(gs, "lm_model", None) if gs else None
+                is_nvidia_model = model and (
+                    ("/" in model and model != local_lm_model)
+                    or any(x in model.lower() for x in ["nvidia", "nemotron", "riva", "mistral"])
+                )
+                resolved_model = model if is_nvidia_model else (getattr(gs, "nvidia_model", None) if gs else "nvidia/nemotron-3.5-bolt-e4b") or "nvidia/nemotron-3.5-bolt-e4b"
+                resolved_key = api_key or get_active_api_key("nvidia", gs) or "nvapi-dummy"
+                resolved_url = OFFICIAL_PROVIDER_URLS["nvidia"]
+                if is_trusted_provider_url("nvidia", base_url):
+                    resolved_url = base_url
+                return NvidiaAdapter(api_key=resolved_key, model=resolved_model, base_url=resolved_url)
+
+            # 6. LM Studio / Local LLM Provider
             else:
                 from services.ai.lm_studio import LMStudioAdapter
-                resolved_url = base_url or (gs.lm_url if gs else "http://localhost:1234")
-                resolved_model = model or (gs.lm_model if gs else None)
+                resolved_url = base_url or (getattr(gs, "lm_url", None) or "http://localhost:1234")
+                resolved_model = model or (getattr(gs, "lm_model", None) if gs else None)
+                if is_index_translate_model(resolved_model):
+                    return IndexTranslateAdapter(base_url=resolved_url, model=resolved_model)
                 return LMStudioAdapter(base_url=resolved_url, model=resolved_model)
         finally:
             if local_session:

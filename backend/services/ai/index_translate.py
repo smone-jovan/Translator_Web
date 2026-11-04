@@ -10,7 +10,9 @@ inference/llm/translate.py).
 import base64
 import binascii
 import re
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import AsyncGenerator, Callable, Dict, List, Sequence, Tuple
+
+from services.ai.lm_studio import LMStudioAdapter
 
 GlossaryPair = Tuple[str, str]
 
@@ -63,6 +65,7 @@ def build_index_translate_prompt(
     glossary: Sequence[GlossaryPair] = (),
     genre: str = _NOVEL_GENRE,
     notes: Sequence[str] = (),
+    custom_instructions: str | None = None,
 ) -> str:
     target = _target_name(target_lang)
     source = text.strip()
@@ -71,7 +74,13 @@ def build_index_translate_prompt(
         terms = "、".join(f"{original}→{translated}" for original, translated in glossary)
         constraints.append(f"1. 【硬性要求】专名/术语对照: {terms}")
 
-    for note in notes:
+    all_notes: List[str] = list(notes)
+    if custom_instructions and custom_instructions.strip():
+        inst_clean = custom_instructions.strip()[:MAX_INDEX_CONTEXT_CHARS]
+        if inst_clean not in all_notes:
+            all_notes.append(inst_clean)
+
+    for note in all_notes:
         clean_note = note.strip()
         if clean_note:
             num = len(constraints) + 1
@@ -96,10 +105,13 @@ def build_index_translate_messages(
     glossary: Sequence[GlossaryPair] = (),
     genre: str = _NOVEL_GENRE,
     notes: Sequence[str] = (),
+    custom_instructions: str | None = None,
 ) -> List[Dict[str, str]]:
     return [{
         "role": "user",
-        "content": build_index_translate_prompt(text, target_lang, glossary, genre=genre, notes=notes),
+        "content": build_index_translate_prompt(
+            text, target_lang, glossary, genre=genre, notes=notes, custom_instructions=custom_instructions
+        ),
     }]
 
 
@@ -258,3 +270,100 @@ def collect_glossary_pairs(
     ]
     matched.sort(key=lambda entry: (bool(entry.is_locked), len(entry.original_term)), reverse=True)
     return [(entry.original_term.strip(), entry.translated_term.strip()) for entry in matched[:limit]]
+
+
+class IndexTranslateAdapter(LMStudioAdapter):
+    """
+    Dedicated adapter for Index-Translate models (Bilibili Index team).
+    Inherits LMStudioAdapter (local OpenAI-compatible server) with greedy decoding (temperature=0.0),
+    disabled thinking, and specialized prompt/notes builders.
+    """
+    translation_temperature = 0.0
+    translation_chunk_chars = 2500
+
+    def __init__(self, base_url: str | None = None, model: str | None = None, **kwargs):
+        super().__init__(base_url=base_url or "http://localhost:1234", model=model or "IndexTeam/Index-Translate-2B-GGUF")
+
+    def _extra_payload(self) -> Dict[str, object]:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def build_prompt(
+        self,
+        text: str,
+        target_lang: str,
+        glossary: Sequence[GlossaryPair] = (),
+        genre: str = _NOVEL_GENRE,
+        notes: Sequence[str] = (),
+        custom_instructions: str | None = None,
+    ) -> str:
+        return build_index_translate_prompt(
+            text, target_lang, glossary=glossary, genre=genre, notes=notes, custom_instructions=custom_instructions
+        )
+
+    def build_messages(
+        self,
+        text: str,
+        target_lang: str,
+        glossary: Sequence[GlossaryPair] = (),
+        genre: str = _NOVEL_GENRE,
+        notes: Sequence[str] = (),
+        custom_instructions: str | None = None,
+    ) -> List[Dict[str, str]]:
+        return build_index_translate_messages(
+            text, target_lang, glossary=glossary, genre=genre, notes=notes, custom_instructions=custom_instructions
+        )
+
+    def collect_notes(
+        self,
+        db,
+        thread_id: int | None,
+        custom_instructions: str | None = None,
+        max_chars: int = MAX_INDEX_CONTEXT_CHARS,
+    ) -> List[str]:
+        return collect_context_notes(
+            db, thread_id, custom_instructions=custom_instructions, max_chars=max_chars
+        )
+
+    def collect_glossary(
+        self,
+        db,
+        thread_id: int | None,
+        text: str,
+        limit: int | None = None,
+    ) -> List[GlossaryPair]:
+        return collect_glossary_pairs(db, thread_id, text, limit=limit)
+
+    def get_genre(self, db, thread_id: int | None) -> str:
+        return get_index_genre(db, thread_id)
+
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        temp = self.translation_temperature if temperature is None else temperature
+        return (await self.chat_completion_detailed(messages, temperature=temp, max_tokens=max_tokens)).text
+
+    async def chat_completion_detailed(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra: Dict[str, object] | None = None,
+    ):
+        temp = self.translation_temperature if temperature is None else temperature
+        return await super().chat_completion_detailed(
+            messages=messages, temperature=temp, max_tokens=max_tokens, extra=extra
+        )
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncGenerator[str, None]:
+        temp = self.translation_temperature if temperature is None else temperature
+        async for chunk in super().stream_chat(messages=messages, temperature=temp, max_tokens=max_tokens):
+            yield chunk
+

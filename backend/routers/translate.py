@@ -17,6 +17,7 @@ from services.context_engine import ContextEngine
 from services.ai.factory import AIProviderFactory
 from services.ai.chunking import maybe_chunk
 from services.ai.index_translate import (
+    IndexTranslateAdapter,
     build_index_translate_messages,
     collect_context_notes,
     collect_glossary_pairs,
@@ -38,6 +39,7 @@ class TranslateRequest(BaseModel):
     target_lang: str = "Indonesian"
     lm_url: str | None = None
     force_overwrite: bool = False
+    custom_instructions: str | None = None
 
 class TranslateResponse(BaseModel):
     translation: str
@@ -85,6 +87,7 @@ async def translate_stream(req: TranslateRequest, db: Session = Depends(get_db))
             lm_url=ai_url,
             force_overwrite=req.force_overwrite,
             workspace=ws,
+            custom_instructions=req.custom_instructions,
         )
     )
 
@@ -133,7 +136,8 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
 
     provider = AIProviderFactory.get_provider(base_url=ai_url, model=selected_model, db_session=db)
     system_prompt = ContextEngine.build_translation_prompt(
-        db, req.thread_id, target_lang, req.text, model=selected_model, translation_mode=translation_mode
+        db, req.thread_id, target_lang, req.text, model=selected_model, translation_mode=translation_mode,
+        custom_instructions=req.custom_instructions,
     )
     max_tokens = get_chapter_translation_max_tokens(gs)
 
@@ -142,18 +146,24 @@ async def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     protected_images = image_pattern.findall(req.text)
     protected_text = req.text
     # Normalize repeating symbol bursts before feeding into LLM
-    protected_text = re.sub(r"([□■•�■-◿])\1{3,}", r"\1\1\1", protected_text)
+    protected_text = re.sub(r"([□■•■-◿])\1{3,}", r"\1\1\1", protected_text)
     for i, img_md in enumerate(protected_images):
         protected_text = protected_text.replace(img_md, f"\n❖IMAGE_{i}❖\n")
 
-    if is_index_translate_model(selected_model):
+    if is_index_translate_model(selected_model) or isinstance(getattr(provider, "_inner", provider), IndexTranslateAdapter):
         # Index-Translate expects its own single-message template, not the long system prompt.
         glossary = collect_glossary_pairs(db, req.thread_id, req.text)
-        notes = collect_context_notes(db, req.thread_id)
+        notes = collect_context_notes(db, req.thread_id, custom_instructions=req.custom_instructions)
         genre = get_index_genre(db, req.thread_id)
 
         def build_request(text: str) -> list:
-            return build_index_translate_messages(text, target_lang, glossary, genre=genre, notes=notes)
+            if hasattr(provider, "build_messages"):
+                return provider.build_messages(
+                    text, target_lang, glossary, genre=genre, notes=notes, custom_instructions=req.custom_instructions
+                )
+            return build_index_translate_messages(
+                text, target_lang, glossary, genre=genre, notes=notes, custom_instructions=req.custom_instructions
+            )
 
         messages = build_request(protected_text)
         provider = maybe_chunk(provider, source_text=protected_text, message_builder=build_request)

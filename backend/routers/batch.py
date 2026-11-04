@@ -18,6 +18,7 @@ class BatchTranslateRequest(BaseModel):
     translation_mode: str = "quality"  # "quality" or "fast"
     fetch_only: bool = False
     load_mode: Optional[str] = None  # "soft" or "hard"
+    custom_instructions: Optional[str] = None
 
 @router.post("/threads/{thread_id}/batch-translate")
 async def batch_translate(
@@ -62,6 +63,7 @@ async def batch_translate(
         fetch_only=req.fetch_only,
         load_mode=load_mode,
         workspace=ws,
+        custom_instructions=req.custom_instructions,
     )
 
     return {

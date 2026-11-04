@@ -287,6 +287,9 @@ class ContextEngine:
             gc_trunc = gs.global_context[:gc_max] + "... (truncated)" if len(gs.global_context) > gc_max else gs.global_context
             full_prompt += f"\n[Global Literary Style]:\n{gc_trunc}\n"
 
+        if custom_instructions and custom_instructions.strip():
+            full_prompt += f"\n[Custom Instructions]:\n{custom_instructions.strip()}\n"
+
         if thread_id:
             if original_text:
                 ContextEngine.reactivate_referenced_archived_terms(db, thread_id, original_text)
@@ -300,9 +303,6 @@ class ContextEngine:
             if is_quality and thread and thread.style_guide:
                 sg_trunc = thread.style_guide[:sg_max] + "... (truncated)" if len(thread.style_guide) > sg_max else thread.style_guide
                 full_prompt += f"\n[Style Guide for This Novel]:\n{sg_trunc}\n"
-
-            if custom_instructions:
-                full_prompt += f"\n[Custom Instructions]:\n{custom_instructions}\n"
 
             global_limit = gs.max_context_terms if (gs and gs.max_context_terms) else 150
             effective_limit = limit if limit is not None else (global_limit if is_quality else min(10, global_limit))

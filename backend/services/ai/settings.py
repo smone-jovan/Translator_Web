@@ -12,12 +12,14 @@ OFFICIAL_PROVIDER_HOSTS = {
     "openrouter": "openrouter.ai",
     "openai": "api.openai.com",
     "groq": "api.groq.com",
+    "nvidia": "integrate.api.nvidia.com",
 }
 OFFICIAL_PROVIDER_URLS = {
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "openrouter": "https://openrouter.ai/api/v1",
     "openai": "https://api.openai.com/v1",
     "groq": "https://api.groq.com/openai/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
 }
 
 
@@ -61,8 +63,17 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
     if not gs:
         return requested_model
 
+    from services.ai.index_translate import is_index_translate_model
+    if is_index_translate_model(requested_model):
+        return requested_model
+
     provider = getattr(gs, "llm_provider", "lm_studio")
     local_lm_model = getattr(gs, "lm_model", None)
+
+    if provider in ("index_translate", "index"):
+        if is_index_translate_model(requested_model):
+            return requested_model
+        return local_lm_model or "IndexTeam/Index-Translate-2B-GGUF"
 
     if provider == "gemini":
         saved_gemini = getattr(gs, "gemini_model", None) or "gemini-2.5-flash"
@@ -107,6 +118,22 @@ def resolve_active_model(gs: GlobalSetting | None, requested_model: str | None =
             return requested_model
         return saved_groq
 
+    if provider == "nvidia":
+        saved_nvidia = getattr(gs, "nvidia_model", None) or "nvidia/nemotron-3.5-bolt-e4b"
+        if (
+            requested_model
+            and requested_model != local_lm_model
+            and (
+                "/" in requested_model
+                or any(
+                    x in requested_model.lower()
+                    for x in ["nvidia", "nemotron", "riva", "mistral"]
+                )
+            )
+        ):
+            return requested_model
+        return saved_nvidia
+
     if requested_model:
         return requested_model
     return local_lm_model
@@ -133,6 +160,9 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
     local_lm_url = (getattr(gs, "lm_url", None) or "http://localhost:1234").rstrip("/")
     req_clean = _normalize_url(requested_url) or None
 
+    if provider in ("index_translate", "index"):
+        return local_lm_url
+
     # Provider cloud: URL dari request hanya dipakai bila host-nya tepercaya, karena
     # API key ikut terkirim ke URL tersebut (ADR-126).
     if provider == "gemini":
@@ -154,6 +184,11 @@ def resolve_active_base_url(gs: GlobalSetting | None, requested_url: str | None 
         if is_trusted_provider_url("groq", req_clean):
             return req_clean
         return OFFICIAL_PROVIDER_URLS["groq"]
+
+    if provider == "nvidia":
+        if is_trusted_provider_url("nvidia", req_clean):
+            return req_clean
+        return OFFICIAL_PROVIDER_URLS["nvidia"]
 
     return local_lm_url
 
@@ -181,6 +216,16 @@ def get_chapter_translation_max_tokens(gs: GlobalSetting | None = None) -> int |
             return 4096
         cap = getattr(gs, "chapter_token_cap", 4096) or 4096
         return min(int(cap), 4096)
+
+    # NVIDIA NIM models: strict per-model token limits (e.g. Riva/Nemotron 4096 ceiling)
+    if gs.llm_provider == "nvidia":
+        nvidia_m = (getattr(gs, "nvidia_model", "") or "").lower()
+        if "riva" in nvidia_m or "nemotron" in nvidia_m:
+            return 4096
+        if getattr(gs, "chapter_token_cap_enabled", 1) != 1:
+            return 8192
+        cap = getattr(gs, "chapter_token_cap", 8192) or 8192
+        return min(int(cap), 8192)
 
     if getattr(gs, "chapter_token_cap_enabled", 1) != 1:
         return None
@@ -217,6 +262,12 @@ _MODEL_CONTEXT_WINDOWS = {
     "openai/gpt-oss-120b": 128_000,
     "openai/gpt-oss-20b": 128_000,
     "qwen/qwen3.8-27b": 32_000,
+    # NVIDIA NIM models
+    "nvidia/nemotron-3.5-bolt-e4b": 128_000,
+    "nvidia/riva-translate-4b-instruct-v2": 32_000,
+    "mistralai/mistral-large-4-1t-a52b": 128_000,
+    "nemotron": 128_000,
+    "riva": 32_000,
     # Local LLM defaults (conservative)
     "qwen": 32_000,
     "deepseek": 128_000,
