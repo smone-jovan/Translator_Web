@@ -356,6 +356,8 @@ Untuk mempermudah navigasi keputusan teknis, berikut pengelompokan seluruh ADR b
 - **ADR-140**: NVIDIA NIM provider integration (RPM rate-limiting, epoch timestamp parsing, multi-key round-robin rotation).
 - **ADR-141**: Public API Integrations (In-reader Free Dictionary popover dengan dukungan CJK Unicode regex, native Web Speech API Text-to-Speech dengan anti-freeze sentence chunking, dan concurrent Open Library/Google Books catalog auto-fill).
 - **ADR-142**: Groq LPU Provider Architecture, Batch Translation Resilience, dan Multi-Tier Quota Budgeting (calibrated 600-char chunking, strict 1.0x context scaling, lorebook term budgeting, multi-key rotation dengan daily TTL exhaustion).
+- **ADR-143**: Backend Proxy for Local Inference (LM Studio Model Discovery dan Remote VRAM Loading Across LAN/Mobile Devices).
+- **ADR-144**: Index-Translate Dedicated Adapter Priority Routing, Greedy Decoding Enforcement, dan Custom Instructions Scope Decoupling.
 
 ---
 

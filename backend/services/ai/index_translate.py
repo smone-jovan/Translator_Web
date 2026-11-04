@@ -251,7 +251,7 @@ def collect_glossary_pairs(
 
     if limit is None:
         try:
-            gs = db.execute(select(GlobalSetting)).scalar_one_or_none()
+            gs = db.execute(select(GlobalSetting).order_by(GlobalSetting.id.desc())).scalars().first()
             limit = gs.max_context_terms if (gs and gs.max_context_terms) else DEFAULT_GLOSSARY_LIMIT
         except Exception:
             limit = DEFAULT_GLOSSARY_LIMIT

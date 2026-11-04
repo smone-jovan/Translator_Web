@@ -1,39 +1,13 @@
 import pytest
 import httpx
 from unittest.mock import patch, AsyncMock, MagicMock
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from database import Base, GlobalSetting
+from database import GlobalSetting
 from routers.settings import get_lm_studio_models, load_lm_studio_model, LMStudioLoadRequest
-
-@pytest.fixture
-def db_session():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-
-    gs = GlobalSetting(
-        lm_url="http://localhost:1234",
-        lm_model="qwen2.5-7b-instruct",
-    )
-    session.add(gs)
-    session.commit()
-
-    try:
-        yield session
-    finally:
-        session.close()
 
 
 @pytest.mark.asyncio
-async def test_get_lm_studio_models_success(db_session):
+async def test_get_lm_studio_models_success(db_session, default_global_settings):
     mock_models_response = {
         "data": [
             {"id": "qwen2.5-7b-instruct", "object": "model"},
@@ -54,7 +28,7 @@ async def test_get_lm_studio_models_success(db_session):
 
 
 @pytest.mark.asyncio
-async def test_get_lm_studio_models_unreachable(db_session):
+async def test_get_lm_studio_models_unreachable(db_session, default_global_settings):
     with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("Connection refused")):
         res = await get_lm_studio_models(url=None, db=db_session)
         assert res["status"] == "error"
@@ -63,7 +37,7 @@ async def test_get_lm_studio_models_unreachable(db_session):
 
 
 @pytest.mark.asyncio
-async def test_load_lm_studio_model_success(db_session):
+async def test_load_lm_studio_model_success(db_session, default_global_settings):
     req = LMStudioLoadRequest(model="deepseek-r1-distill-qwen-7b")
 
     mock_resp = AsyncMock()
