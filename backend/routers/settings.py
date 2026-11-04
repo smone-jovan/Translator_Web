@@ -44,10 +44,12 @@ class GlobalSettingsUpdate(BaseModel):
     gemini_model: str | None = None
     openrouter_model: str | None = None
     groq_model: str | None = None
+    nvidia_model: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
     openrouter_api_key: str | None = None
     groq_api_key: str | None = None
+    nvidia_api_key: str | None = None
     # Multiple API keys
     openai_api_keys: list[str] | None = None
     openai_active_key_index: int | None = None
@@ -57,6 +59,8 @@ class GlobalSettingsUpdate(BaseModel):
     openrouter_active_key_index: int | None = None
     groq_api_keys: list[str] | None = None
     groq_active_key_index: int | None = None
+    nvidia_api_keys: list[str] | None = None
+    nvidia_active_key_index: int | None = None
     # Ghost Mode PIN authentication
     ghost_pin: str | None = None
 
@@ -94,10 +98,12 @@ def get_global_context(db: Session = Depends(get_db)):
         "gemini_model": gs.gemini_model if gs else "gemini-2.5-flash",
         "openrouter_model": gs.openrouter_model if gs else "deepseek/deepseek-chat",
         "groq_model": getattr(gs, "groq_model", "openai/gpt-oss-120b") if gs else "openai/gpt-oss-120b",
+        "nvidia_model": getattr(gs, "nvidia_model", "nvidia/nemotron-3.5-bolt-e4b") if gs else "nvidia/nemotron-3.5-bolt-e4b",
         "openai_api_key": mask_secret(secrets.get("openai_api_key", "")),
         "gemini_api_key": mask_secret(secrets.get("gemini_api_key", "")),
         "openrouter_api_key": mask_secret(secrets.get("openrouter_api_key", "")),
         "groq_api_key": mask_secret(secrets.get("groq_api_key", "")),
+        "nvidia_api_key": mask_secret(secrets.get("nvidia_api_key", "")),
         "openai_api_keys": [mask_secret(k) for k in json.loads(gs.openai_api_keys)] if gs and gs.openai_api_keys else [],
         "openai_active_key_index": gs.openai_active_key_index if gs else 0,
         "gemini_api_keys": [mask_secret(k) for k in json.loads(gs.gemini_api_keys)] if gs and gs.gemini_api_keys else [],
@@ -106,6 +112,8 @@ def get_global_context(db: Session = Depends(get_db)):
         "openrouter_active_key_index": gs.openrouter_active_key_index if gs else 0,
         "groq_api_keys": [mask_secret(k) for k in json.loads(gs.groq_api_keys)] if gs and getattr(gs, "groq_api_keys", None) else [],
         "groq_active_key_index": getattr(gs, "groq_active_key_index", 0) if gs else 0,
+        "nvidia_api_keys": [mask_secret(k) for k in json.loads(gs.nvidia_api_keys)] if gs and getattr(gs, "nvidia_api_keys", None) else [],
+        "nvidia_active_key_index": getattr(gs, "nvidia_active_key_index", 0) if gs else 0,
         "ghost_pin": mask_secret(gs.ghost_pin if gs else "03697"),
         "scraper_concurrency": getattr(gs, "scraper_concurrency", 2) if gs else 2,
         "novalpie_auth_enabled": getattr(gs, "novalpie_auth_enabled", 0) if gs else 0,
@@ -180,6 +188,7 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     if req.gemini_model is not None: gs.gemini_model = req.gemini_model
     if req.openrouter_model is not None: gs.openrouter_model = req.openrouter_model
     if req.groq_model is not None: gs.groq_model = req.groq_model
+    if req.nvidia_model is not None: gs.nvidia_model = req.nvidia_model
     if req.ghost_pin is not None and not is_masked_secret(req.ghost_pin):
         if not pin.verify_pin(gs.ghost_pin, req.current_ghost_pin):
             raise HTTPException(status_code=403, detail="PIN lama salah")
@@ -191,14 +200,16 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
     real_gemini = req.gemini_api_key if (req.gemini_api_key is not None and not is_masked_secret(req.gemini_api_key)) else None
     real_openrouter = req.openrouter_api_key if (req.openrouter_api_key is not None and not is_masked_secret(req.openrouter_api_key)) else None
     real_groq = req.groq_api_key if (req.groq_api_key is not None and not is_masked_secret(req.groq_api_key)) else None
+    real_nvidia = req.nvidia_api_key if (req.nvidia_api_key is not None and not is_masked_secret(req.nvidia_api_key)) else None
     real_cookie = req.novalpie_cookie.strip() if (req.novalpie_cookie is not None and not is_masked_secret(req.novalpie_cookie)) else None
 
-    if real_openai is not None or real_gemini is not None or real_openrouter is not None or real_groq is not None or real_cookie is not None:
+    if real_openai is not None or real_gemini is not None or real_openrouter is not None or real_groq is not None or real_nvidia is not None or real_cookie is not None:
         save_secrets(
             openai_api_key=real_openai,
             gemini_api_key=real_gemini,
             openrouter_api_key=real_openrouter,
             groq_api_key=real_groq,
+            nvidia_api_key=real_nvidia,
             novalpie_cookie=real_cookie,
         )
         gs.novalpie_cookie = ""
@@ -235,6 +246,14 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
         gs.groq_api_keys = json.dumps(resolve_masked_keys(req.groq_api_keys, existing_groq))
     if req.groq_active_key_index is not None:
         gs.groq_active_key_index = req.groq_active_key_index
+    if req.nvidia_api_keys is not None:
+        try:
+            existing_nvidia = json.loads(gs.nvidia_api_keys) if getattr(gs, "nvidia_api_keys", None) else []
+        except Exception:
+            existing_nvidia = []
+        gs.nvidia_api_keys = json.dumps(resolve_masked_keys(req.nvidia_api_keys, existing_nvidia))
+    if req.nvidia_active_key_index is not None:
+        gs.nvidia_active_key_index = req.nvidia_active_key_index
 
     db.commit()
 
@@ -249,3 +268,132 @@ def update_settings(req: GlobalSettingsUpdate, db: Session = Depends(get_db)):
             print(f"[SETTINGS] Failed to re-enforce lorebook limits: {e}")
 
     return {"status": "ok"}
+
+
+class LMStudioLoadRequest(BaseModel):
+    model: str
+    lm_url: str | None = None
+
+
+@router.get("/settings/lm-studio/models")
+async def get_lm_studio_models(url: str | None = None, db: Session = Depends(get_db)):
+    """
+    Proxy endpoint allowing mobile phones and remote devices to fetch the model list
+    from the host PC's LM Studio instance without hitting client-side CORS or localhost resolution errors.
+    """
+    stmt = select(GlobalSetting)
+    gs = db.execute(stmt).scalar_one_or_none()
+
+    base_url = (url or (gs.lm_url if gs else "http://localhost:1234") or "http://localhost:1234").strip().rstrip("/")
+    if "/v1" not in base_url:
+        primary = f"{base_url}/v1"
+    else:
+        primary = base_url
+
+    urls_to_try = [primary]
+    if "localhost" in primary:
+        urls_to_try.append(primary.replace("localhost", "127.0.0.1"))
+    elif "127.0.0.1" in primary:
+        urls_to_try.append(primary.replace("127.0.0.1", "localhost"))
+
+    import httpx
+    last_err = ""
+    for target_url in urls_to_try:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(f"{target_url}/models")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = data.get("data", [])
+                    return {
+                        "status": "connected",
+                        "data": models,
+                        "lm_url": base_url,
+                    }
+                last_err = f"HTTP {resp.status_code}: {resp.text[:100]}"
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    return {
+        "status": "error",
+        "data": [],
+        "detail": f"Connection failed. Ensure LM Studio is running on host machine. ({last_err})",
+        "lm_url": base_url,
+    }
+
+
+@router.post("/settings/lm-studio/load")
+async def load_lm_studio_model(req: LMStudioLoadRequest, db: Session = Depends(get_db)):
+    """
+    Proxy endpoint to set active LM Studio model and trigger model loading.
+    """
+    stmt = select(GlobalSetting)
+    gs = db.execute(stmt).scalar_one_or_none()
+    if not gs:
+        gs = GlobalSetting()
+        db.add(gs)
+
+    # 1. Update model in DB
+    gs.lm_model = req.model.strip()
+    db.commit()
+
+    # 2. Instruct LM Studio to load model into VRAM
+    base_url = (req.lm_url or (gs.lm_url if gs else "http://localhost:1234") or "http://localhost:1234").strip().rstrip("/")
+    if "/v1" not in base_url:
+        primary = f"{base_url}/v1"
+    else:
+        primary = base_url
+
+    urls_to_try = [primary]
+    if "localhost" in primary:
+        urls_to_try.append(primary.replace("localhost", "127.0.0.1"))
+    elif "127.0.0.1" in primary:
+        urls_to_try.append(primary.replace("127.0.0.1", "localhost"))
+
+    import httpx
+    loaded = False
+    detail = ""
+
+    for target_url in urls_to_try:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Try v0 load
+                root_url = target_url.replace("/v1", "")
+                resp = await client.post(f"{root_url}/api/v0/models/load", json={"model": req.model})
+                if resp.status_code in (200, 204):
+                    loaded = True
+                    detail = "Loaded via LM Studio API v0"
+                    break
+
+                # Try v1 load
+                resp = await client.post(f"{target_url}/models/load", json={"model": req.model})
+                if resp.status_code in (200, 204):
+                    loaded = True
+                    detail = "Loaded via LM Studio API v1"
+                    break
+
+                # JIT probe: send minimal 1-token prompt to trigger JIT auto-loader
+                probe_resp = await client.post(
+                    f"{target_url}/chat/completions",
+                    json={
+                        "model": req.model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1
+                    },
+                    timeout=5.0
+                )
+                if probe_resp.status_code == 200:
+                    loaded = True
+                    detail = "Model initialized and verified via JIT"
+                    break
+        except Exception as e:
+            detail = str(e)
+            continue
+
+    return {
+        "status": "ok",
+        "model": req.model,
+        "loaded": loaded,
+        "detail": detail
+    }

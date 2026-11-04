@@ -25,6 +25,7 @@ import {
   User,
   X,
   Zap,
+  Cpu,
   Folder,
   Trash2,
 } from "lucide-react";
@@ -97,6 +98,12 @@ const POPULAR_GROQ_MODELS = [
   "allam-2-7b",
 ];
 
+const POPULAR_NVIDIA_MODELS = [
+  "nvidia/nemotron-3.5-bolt-e4b",
+  "nvidia/riva-translate-4b-instruct-v2",
+  "mistralai/mistral-large-4-1t-a52b",
+];
+
 const CHAPTER_TOKEN_CAP_OPTIONS = [7000, 15000, 22000, 30000] as const;
 
 interface ModelInfo {
@@ -104,7 +111,7 @@ interface ModelInfo {
   object: string;
 }
 
-type LlmProvider = "lm_studio" | "openai" | "gemini" | "openrouter" | "groq";
+type LlmProvider = "lm_studio" | "openai" | "gemini" | "openrouter" | "groq" | "nvidia";
 
 function isLlmProvider(value: string | null): value is LlmProvider {
   return (
@@ -112,7 +119,8 @@ function isLlmProvider(value: string | null): value is LlmProvider {
     value === "openai" ||
     value === "gemini" ||
     value === "openrouter" ||
-    value === "groq"
+    value === "groq" ||
+    value === "nvidia"
   );
 }
 
@@ -432,6 +440,12 @@ export default function SettingsPage() {
   const [groqApiKey, setGroqApiKey] = useState(
     () => localStorage.getItem("groq_api_key") || ""
   );
+  const [nvidiaModel, setNvidiaModel] = useState(
+    () => localStorage.getItem("nvidia_model") || "nvidia/nemotron-3.5-bolt-e4b"
+  );
+  const [nvidiaApiKey, setNvidiaApiKey] = useState(
+    () => localStorage.getItem("nvidia_api_key") || ""
+  );
 
   // Multiple API keys
   const [geminiApiKeys, setGeminiApiKeys] = useState<string[]>([]);
@@ -442,11 +456,14 @@ export default function SettingsPage() {
   const [openrouterActiveKeyIndex, setOpenrouterActiveKeyIndex] = useState(0);
   const [groqApiKeys, setGroqApiKeys] = useState<string[]>([]);
   const [groqActiveKeyIndex, setGroqActiveKeyIndex] = useState(0);
+  const [nvidiaApiKeys, setNvidiaApiKeys] = useState<string[]>([]);
+  const [nvidiaActiveKeyIndex, setNvidiaActiveKeyIndex] = useState(0);
   // UI password toggles
   const [showOpenaiKey, setShowOpenaiKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showOpenrouterKey, setShowOpenrouterKey] = useState(false);
   const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showNvidiaKey, setShowNvidiaKey] = useState(false);
 
   // Ghost Mode PIN State
   const [currentGhostPinInput, setCurrentGhostPinInput] = useState("");
@@ -491,6 +508,10 @@ export default function SettingsPage() {
         setGroqModel(data.groq_model);
         localStorage.setItem("groq_model", data.groq_model);
       }
+      if (data.nvidia_model) {
+        setNvidiaModel(data.nvidia_model);
+        localStorage.setItem("nvidia_model", data.nvidia_model);
+      }
       if (data.openai_api_key !== undefined) {
         setOpenaiApiKey(data.openai_api_key);
         localStorage.setItem("openai_api_key", data.openai_api_key);
@@ -506,6 +527,10 @@ export default function SettingsPage() {
       if (data.groq_api_key !== undefined) {
         setGroqApiKey(data.groq_api_key);
         localStorage.setItem("groq_api_key", data.groq_api_key);
+      }
+      if (data.nvidia_api_key !== undefined) {
+        setNvidiaApiKey(data.nvidia_api_key);
+        localStorage.setItem("nvidia_api_key", data.nvidia_api_key);
       }
       // Multiple API keys
       if (data.gemini_api_keys) {
@@ -531,6 +556,12 @@ export default function SettingsPage() {
       }
       if (data.groq_active_key_index !== undefined) {
         setGroqActiveKeyIndex(data.groq_active_key_index);
+      }
+      if (data.nvidia_api_keys) {
+        setNvidiaApiKeys(data.nvidia_api_keys);
+      }
+      if (data.nvidia_active_key_index !== undefined) {
+        setNvidiaActiveKeyIndex(data.nvidia_active_key_index);
       }
       if (data.target_language) {
         setTargetLang(data.target_language);
@@ -653,7 +684,7 @@ export default function SettingsPage() {
 
   // Generic key management helpers
   const addKey = (
-    provider: "gemini" | "openai" | "openrouter" | "groq",
+    provider: "gemini" | "openai" | "openrouter" | "groq" | "nvidia",
     key: string
   ) => {
     const [keys, setKeys] =
@@ -663,14 +694,16 @@ export default function SettingsPage() {
           ? [openaiApiKeys, setOpenaiApiKeys]
           : provider === "openrouter"
             ? [openrouterApiKeys, setOpenrouterApiKeys]
-            : [groqApiKeys, setGroqApiKeys];
+            : provider === "groq"
+              ? [groqApiKeys, setGroqApiKeys]
+              : [nvidiaApiKeys, setNvidiaApiKeys];
     const updated = [...keys, key];
     setKeys(updated);
     saveSettingsToServer({ [`${provider}_api_keys`]: updated });
   };
 
   const removeKey = (
-    provider: "gemini" | "openai" | "openrouter" | "groq",
+    provider: "gemini" | "openai" | "openrouter" | "groq" | "nvidia",
     index: number
   ) => {
     const [keys, setKeys, activeIndex, setActiveIndex] =
@@ -695,12 +728,19 @@ export default function SettingsPage() {
                 openrouterActiveKeyIndex,
                 setOpenrouterActiveKeyIndex,
               ]
-            : [
-                groqApiKeys,
-                setGroqApiKeys,
-                groqActiveKeyIndex,
-                setGroqActiveKeyIndex,
-              ];
+            : provider === "groq"
+              ? [
+                  groqApiKeys,
+                  setGroqApiKeys,
+                  groqActiveKeyIndex,
+                  setGroqActiveKeyIndex,
+                ]
+              : [
+                  nvidiaApiKeys,
+                  setNvidiaApiKeys,
+                  nvidiaActiveKeyIndex,
+                  setNvidiaActiveKeyIndex,
+                ];
     const updated = keys.filter((_, i) => i !== index);
     setKeys(updated);
     const newIndex =
@@ -715,7 +755,7 @@ export default function SettingsPage() {
   };
 
   const setActiveKey = (
-    provider: "gemini" | "openai" | "openrouter" | "groq",
+    provider: "gemini" | "openai" | "openrouter" | "groq" | "nvidia",
     index: number
   ) => {
     const setActiveIndex =
@@ -725,7 +765,9 @@ export default function SettingsPage() {
           ? setOpenaiActiveKeyIndex
           : provider === "openrouter"
             ? setOpenrouterActiveKeyIndex
-            : setGroqActiveKeyIndex;
+            : provider === "groq"
+              ? setGroqActiveKeyIndex
+              : setNvidiaActiveKeyIndex;
     setActiveIndex(index);
     saveSettingsToServer({ [`${provider}_active_key_index`]: index });
   };
@@ -782,6 +824,9 @@ export default function SettingsPage() {
     localStorage.setItem("groq_model", groqModel);
   }, [groqModel]);
   useEffect(() => {
+    localStorage.setItem("nvidia_model", nvidiaModel);
+  }, [nvidiaModel]);
+  useEffect(() => {
     localStorage.setItem("openai_api_key", openaiApiKey);
   }, [openaiApiKey]);
   useEffect(() => {
@@ -793,6 +838,9 @@ export default function SettingsPage() {
   useEffect(() => {
     localStorage.setItem("groq_api_key", groqApiKey);
   }, [groqApiKey]);
+  useEffect(() => {
+    localStorage.setItem("nvidia_api_key", nvidiaApiKey);
+  }, [nvidiaApiKey]);
 
   useEffect(() => {
     if (!isSettingsLoadedRef.current) return;
@@ -813,6 +861,30 @@ export default function SettingsPage() {
   const testConnection = async () => {
     setStatus("checking");
     try {
+      // 1. Try backend proxy first so mobile phones and remote devices can query host PC LM Studio
+      try {
+        const proxyRes = await fetch(
+          getApiUrl(`/api/settings/lm-studio/models?url=${encodeURIComponent(lmUrl)}`)
+        );
+        if (proxyRes.ok) {
+          const proxyData = await proxyRes.json();
+          if (proxyData.status === "connected" && Array.isArray(proxyData.data)) {
+            const list: ModelInfo[] = proxyData.data;
+            setModels(list);
+            setStatus("connected");
+            saveSettingsToServer({ lm_url: lmUrl });
+            if (list.length > 0 && !selectedModel) {
+              setSelectedModel(list[0].id);
+              saveSettingsToServer({ lm_model: list[0].id });
+            }
+            return;
+          }
+        }
+      } catch {
+        // Fall back to direct client fetch
+      }
+
+      // 2. Direct client fetch fallback
       const res = await fetch(`${lmUrl}/v1/models`);
       const data = await res.json();
       const list: ModelInfo[] = data.data || [];
@@ -837,10 +909,25 @@ export default function SettingsPage() {
     saveSettingsToServer({ llm_provider: provider });
   };
 
-  const handleModelChange = (val: string) => {
+
+  const handleModelChange = async (val: string) => {
     setSelectedModel(val);
     localStorage.setItem("lm_model", val);
     saveSettingsToServer({ lm_model: val });
+    if (val) {
+      try {
+        const res = await fetch(getApiUrl("/api/settings/lm-studio/load"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: val, lm_url: lmUrl }),
+        });
+        if (res.ok) {
+          toast.success(`Model ${val} siap di LM Studio!`);
+        }
+      } catch {
+        // Silent fallback
+      }
+    }
   };
 
   const handlePrefetchToggle = (enabled: boolean) => {
@@ -958,7 +1045,7 @@ export default function SettingsPage() {
           <h2 className="text-xl font-bold">AI Translation Model</h2>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <ProviderCard
             id="lm_studio"
             label="LM Studio (Local)"
@@ -998,6 +1085,14 @@ export default function SettingsPage() {
             active={llmProvider === "groq"}
             onClick={() => handleLlmProviderChange("groq")}
             icon={Zap}
+          />
+          <ProviderCard
+            id="nvidia"
+            label="NVIDIA NIM"
+            description="Inference mikroservis performa tinggi dengan Nemotron, Riva, & Mistral (integrate.api.nvidia.com)."
+            active={llmProvider === "nvidia"}
+            onClick={() => handleLlmProviderChange("nvidia")}
+            icon={Cpu}
           />
         </div>
 
@@ -1563,6 +1658,122 @@ export default function SettingsPage() {
                   <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
                     Model LPU Groq menghasilkan terjemahan dalam hitungan detik
                     dengan performa tinggi menggunakan arsitektur LPU terspesialisasi.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {llmProvider === "nvidia" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-300">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      NVIDIA API Key
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showNvidiaKey ? "text" : "password"}
+                        value={nvidiaApiKey}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNvidiaApiKey(val);
+                          saveSettingsToServer({ nvidia_api_key: val });
+                        }}
+                        placeholder="nvapi-..."
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNvidiaKey(!showNvidiaKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                      >
+                        {showNvidiaKey ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-[var(--secondary)] border border-[var(--border)] rounded-xl p-4 text-xs space-y-1.5 text-[var(--muted-foreground)] leading-relaxed">
+                    <p className="font-semibold text-[var(--foreground)]">
+                      ⚡ NVIDIA NIM Microservices
+                    </p>
+                    <p>
+                      Mikroservis inferensi NVIDIA resmi dengan model Nemotron 3.5, Riva Machine Translation, & Mistral Large!
+                    </p>
+                    <a
+                      href="https://build.nvidia.com/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block text-[var(--primary)] hover:underline font-bold mt-1"
+                    >
+                      Dapatkan API Key di NVIDIA NIM Console &rarr;
+                    </a>
+                  </div>
+
+                  <ApiKeyManager
+                    label="Multiple Keys"
+                    keys={nvidiaApiKeys}
+                    activeIndex={nvidiaActiveKeyIndex}
+                    onAdd={(key) => addKey("nvidia", key)}
+                    onRemove={(i) => removeKey("nvidia", i)}
+                    onSetActive={(i) => setActiveKey("nvidia", i)}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      NVIDIA Model
+                    </label>
+                    <select
+                      value={
+                        POPULAR_NVIDIA_MODELS.includes(nvidiaModel)
+                          ? nvidiaModel
+                          : "custom"
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val !== "custom") {
+                          setNvidiaModel(val);
+                          saveSettingsToServer({ nvidia_model: val });
+                        }
+                      }}
+                      className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                    >
+                      {POPULAR_NVIDIA_MODELS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value="custom">Custom (Type below)...</option>
+                    </select>
+                  </div>
+
+                  {(!POPULAR_NVIDIA_MODELS.includes(nvidiaModel) ||
+                    !nvidiaModel) && (
+                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-xs font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
+                        Custom Model Name
+                      </label>
+                      <input
+                        value={nvidiaModel}
+                        onChange={(e) => {
+                          setNvidiaModel(e.target.value);
+                          saveSettingsToServer({
+                            nvidia_model: e.target.value,
+                          });
+                        }}
+                        placeholder="nvidia/nemotron-3.5-bolt-e4b"
+                        className="w-full bg-[var(--background)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--primary)] transition-all"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-[var(--muted-foreground)] leading-relaxed italic">
+                    Model NVIDIA NIM di-host di integrate.api.nvidia.com dengan rate-limit backoff otomatis dan throughput tinggi.
                   </p>
                 </div>
               </div>

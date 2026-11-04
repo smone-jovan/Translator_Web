@@ -175,6 +175,10 @@ export default function TranslatePage({
       return (
         localStorage.getItem("groq_model") || "llama-3.3-70b-versatile"
       );
+    if (provider === "nvidia")
+      return (
+        localStorage.getItem("nvidia_model") || "nvidia/nemotron-3.5-bolt-e4b"
+      );
     return localStorage.getItem("lm_model") || "";
   });
   const [selectedThreadId, setSelectedThreadId] = useState<string>("new");
@@ -238,6 +242,7 @@ export default function TranslatePage({
         gemini: "Gemini",
         openrouter: "OpenRouter",
         groq: "Groq Cloud",
+        nvidia: "NVIDIA NIM",
       };
       setProviderLabel(providerLabels[provider] || provider);
 
@@ -248,9 +253,34 @@ export default function TranslatePage({
           gs.lm_url ||
           "http://localhost:1234";
         try {
-          const resModels = await fetch(`${lmUrl}/v1/models`);
-          const modelData = await resModels.json();
-          const models = modelData.data?.map((m: { id: string }) => m.id) || [];
+          // Try backend proxy first so mobile phones and remote devices can query host LM Studio
+          let models: string[] = [];
+          try {
+            const proxyRes = await fetch(
+              getApiUrl(
+                `/api/settings/lm-studio/models?url=${encodeURIComponent(lmUrl)}`
+              )
+            );
+            if (proxyRes.ok) {
+              const proxyData = await proxyRes.json();
+              if (
+                proxyData.status === "connected" &&
+                Array.isArray(proxyData.data)
+              ) {
+                models = proxyData.data.map((m: { id: string }) => m.id);
+              }
+            }
+          } catch {
+            // Fall back to direct client fetch
+          }
+
+          if (models.length === 0) {
+            const resModels = await fetch(`${lmUrl}/v1/models`);
+            const modelData = await resModels.json();
+            models =
+              modelData.data?.map((m: { id: string }) => m.id) || [];
+          }
+
           setAvailableModels(models);
           if (models.length > 0) {
             const currentLmModel = localStorage.getItem("lm_model") || "";
@@ -306,6 +336,16 @@ export default function TranslatePage({
         setAvailableModels(Array.from(new Set([model, ...preset])));
         setSelectedModel(model);
         localStorage.setItem("groq_model", model);
+      } else if (provider === "nvidia") {
+        const model = gs.nvidia_model || "nvidia/nemotron-3.5-bolt-e4b";
+        const preset = [
+          "nvidia/nemotron-3.5-bolt-e4b",
+          "nvidia/riva-translate-4b-instruct-v2",
+          "mistralai/mistral-large-4-1t-a52b",
+        ];
+        setAvailableModels(Array.from(new Set([model, ...preset])));
+        setSelectedModel(model);
+        localStorage.setItem("nvidia_model", model);
       }
     } catch {
       console.error("Failed to fetch data");
@@ -732,7 +772,9 @@ export default function TranslatePage({
                                         ? "openrouter_model"
                                         : p === "groq"
                                           ? "groq_model"
-                                          : "lm_model";
+                                          : p === "nvidia"
+                                            ? "nvidia_model"
+                                            : "lm_model";
                                 localStorage.setItem(storageKey, m);
                                 setOpenModelDropdown(false);
                                 fetch(getApiUrl("/api/settings"), {
